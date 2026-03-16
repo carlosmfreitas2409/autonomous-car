@@ -20,11 +20,13 @@ class PS5Controller(InputController):
     Mapping:
         R2 trigger   (axis 5) — throttle (0..1, forward only)
         Left stick X (axis 0) — steering
-        Circle       (btn 1)  — emergency stop (held = stopped, released = resume)
+        Circle       (btn 1)  — toggle emergency stop
     """
 
     def __init__(self):
         self._joystick: pygame.joystick.JoystickType | None = None
+        self._emergency_stop = False
+        self._prev_circle = False
 
         try:
             if pygame.joystick.get_count() > 0:
@@ -42,19 +44,22 @@ class PS5Controller(InputController):
             r2_raw = self._joystick.get_axis(5)
             raw_throttle = (r2_raw + 1.0) / 2.0
 
-            # Left stick X (axis 0) for steering
-            raw_steering = self._joystick.get_axis(0)
+            # Left stick X (axis 0) for steering (inverted: stick right = turn right)
+            raw_steering = -self._joystick.get_axis(0)
 
             throttle = _apply_deadzone(raw_throttle, DEADZONE_THRESHOLD)
             steering = _apply_deadzone(raw_steering, DEADZONE_THRESHOLD)
 
-            # Circle button (button 1) — hold to stop
-            emergency_stop = bool(self._joystick.get_button(1))
+            # Circle button (button 1) — toggle emergency stop (edge-triggered)
+            circle_pressed = bool(self._joystick.get_button(1))
+            if circle_pressed and not self._prev_circle:
+                self._emergency_stop = not self._emergency_stop
+            self._prev_circle = circle_pressed
 
             return ControlCommand(
                 throttle=throttle,
                 steering=steering,
-                emergency_stop=emergency_stop,
+                emergency_stop=self._emergency_stop,
             )
         except pygame.error:
             return ControlCommand(throttle=0.0, steering=0.0, emergency_stop=True)
