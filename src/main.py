@@ -11,6 +11,8 @@ from src.input.base import InputController
 from src.input.keyboard_controller import KeyboardController
 from src.input.ps5_controller import PS5Controller
 from src.models.commands import MotorCommand
+from src.safety.emergency_stop import EStopManager
+from src.safety.watchdog import CommandWatchdog
 from src.simulation.renderer import Renderer
 from src.vehicle.simulated import SimulatedVehicle
 
@@ -57,7 +59,9 @@ def main():
 
     input_controller = create_input_controller(args.input)
     vehicle = SimulatedVehicle()
-    controller = Controller()
+    estop = EStopManager()
+    watchdog = CommandWatchdog()
+    controller = Controller(estop=estop)
     renderer = Renderer(screen)
 
     running = True
@@ -74,22 +78,31 @@ def main():
             # 1. Read input
             command = input_controller.read()
 
-            # 2. Process through controller
+            # 2. Feed watchdog after reading input
+            watchdog.feed()
+
+            # 3. Check watchdog expiry → activate estop if expired
+            if watchdog.is_expired():
+                estop.activate()
+
+            # 4. Handle e-stop reset: if input says no emergency and estop is active, reset
+            if not command.emergency_stop and estop.is_active():
+                estop.reset()
+
+            # 5. Process through controller (will activate estop if cmd.emergency_stop)
             motor_cmd = controller.process(command, dt)
 
-            # 3. Handle e-stop
-            if command.emergency_stop:
-                motor_cmd = MotorCommand(left=0, right=0)
+            # 6. Send to vehicle (controller returns zero motor if estop active)
+            if estop.is_active():
                 vehicle.stop()
             else:
-                # 4. Send to vehicle
                 vehicle.send_command(motor_cmd)
 
-            # 5. Get state
+            # 7. Get state
             state = vehicle.get_state()
 
-            # 6. Render
-            renderer.render(state, motor_cmd, command.emergency_stop)
+            # 8. Render
+            renderer.render(state, motor_cmd, estop.is_active())
 
             clock.tick(TICK_RATE)
     finally:
