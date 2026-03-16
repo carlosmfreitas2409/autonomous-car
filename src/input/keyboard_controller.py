@@ -43,7 +43,7 @@ class KeyboardController(InputController):
         # Emergency stop toggle (edge-triggered)
         space_pressed = bool(keys[pygame.K_SPACE])
         if space_pressed and not self._prev_space:
-            self._emergency_stop = True
+            self._emergency_stop = not self._emergency_stop
         self._prev_space = space_pressed
 
         # Reset emergency stop (edge-triggered)

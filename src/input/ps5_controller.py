@@ -52,7 +52,7 @@ class PS5Controller(InputController):
             # Circle button (button 1) — toggle emergency stop (edge-triggered)
             circle_pressed = bool(self._joystick.get_button(1))
             if circle_pressed and not self._prev_circle:
-                self._emergency_stop = True
+                self._emergency_stop = not self._emergency_stop
             self._prev_circle = circle_pressed
 
             # Triangle button (button 3) — reset emergency stop (edge-triggered)
