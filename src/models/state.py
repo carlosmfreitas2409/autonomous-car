@@ -1,7 +1,7 @@
 """Vehicle state data model."""
 
-from dataclasses import dataclass, field
 import time
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -24,5 +24,5 @@ class VehicleState:
     speed: float = 0.0
     left_motor: int = 0
     right_motor: int = 0
-    sensors: dict = field(default_factory=dict)
+    sensors: dict[str, float] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)

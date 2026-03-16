@@ -1,7 +1,6 @@
 """Entry point for the autonomous vehicle simulator."""
 
 import argparse
-import sys
 
 import pygame
 
@@ -39,17 +38,17 @@ def main():
     clock = pygame.time.Clock()
 
     running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
+    try:
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
 
-        screen.fill(DARK_GRAY)
-        pygame.display.flip()
-        clock.tick(TICK_RATE)
-
-    pygame.quit()
-    sys.exit(0)
+            screen.fill(DARK_GRAY)
+            pygame.display.flip()
+            clock.tick(TICK_RATE)
+    finally:
+        pygame.quit()
 
 
 if __name__ == "__main__":

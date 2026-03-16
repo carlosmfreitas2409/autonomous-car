@@ -26,5 +26,3 @@ SERIAL_PORT = "/dev/ttyUSB0"   # default serial port for Arduino
 SERIAL_BAUD = 115200           # baud rate
 COMMAND_FREQUENCY = 30         # commands per second sent to Arduino
 
-# --- Input ---
-CONTROLLER_DEADZONE = 0.08    # joystick deadzone threshold
