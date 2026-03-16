@@ -13,6 +13,7 @@ from src.input.ps5_controller import PS5Controller
 from src.models.commands import MotorCommand
 from src.safety.emergency_stop import EStopManager
 from src.safety.watchdog import CommandWatchdog
+from src.simulation.logger import SimLogger
 from src.simulation.renderer import Renderer
 from src.vehicle.simulated import SimulatedVehicle
 
@@ -36,6 +37,14 @@ def parse_args():
         "--port",
         default="/dev/ttyUSB0",
         help="Serial port for Arduino mode. Default: /dev/ttyUSB0",
+    )
+    parser.add_argument(
+        "--log",
+        nargs="?",
+        const="sim_log.csv",
+        default=None,
+        metavar="FILE",
+        help="Enable CSV logging. Optionally specify filename (default: sim_log.csv).",
     )
     return parser.parse_args()
 
@@ -78,6 +87,7 @@ def main():
     watchdog = CommandWatchdog()
     controller = Controller(estop=estop)
     renderer = Renderer(screen)
+    sim_logger = SimLogger(args.log) if args.log else None
 
     running = True
     try:
@@ -116,11 +126,17 @@ def main():
             # 7. Get state
             state = vehicle.get_state()
 
-            # 8. Render
+            # 8. Log (optional)
+            if sim_logger is not None:
+                sim_logger.log(state, motor_cmd)
+
+            # 9. Render
             renderer.render(state, motor_cmd, estop.is_active())
 
             clock.tick(TICK_RATE)
     finally:
+        if sim_logger is not None:
+            sim_logger.close()
         vehicle.close()
         pygame.quit()
 

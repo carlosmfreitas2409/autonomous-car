@@ -1,6 +1,7 @@
 """Pygame renderer for the vehicle simulation."""
 
 import math
+from collections import deque
 
 import pygame
 
@@ -10,7 +11,7 @@ from src.models.state import VehicleState
 
 
 class Renderer:
-    """Renders the simulation: vehicle, grid, and HUD overlay."""
+    """Renders the simulation: vehicle, grid, trail, and HUD overlay."""
 
     # Vehicle triangle size in meters
     _VEHICLE_LENGTH = 0.2
@@ -18,6 +19,11 @@ class Renderer:
 
     # Grid spacing in meters
     _GRID_SPACING = 0.5
+
+    # Trail settings
+    _TRAIL_MAX_POINTS = 500
+    _TRAIL_DOT_RADIUS = 2
+    _TRAIL_COLOR = (100, 180, 255)  # light blue
 
     # Colors
     _COLOR_GREEN = (0, 200, 0)
@@ -31,6 +37,7 @@ class Renderer:
         self._font = pygame.font.SysFont(None, 20)
         self._clock = pygame.time.Clock()
         self._fps = 0.0
+        self._trail: deque[tuple[float, float]] = deque(maxlen=self._TRAIL_MAX_POINTS)
 
     def render(
         self,
@@ -48,11 +55,15 @@ class Renderer:
         self._fps = self._clock.get_fps()
         self._screen.fill((30, 30, 30))
 
+        # Record trail position
+        self._trail.append((state.x, state.y))
+
         # Camera offset: vehicle is centered on screen
         cam_x = state.x
         cam_y = state.y
 
         self._draw_grid(cam_x, cam_y)
+        self._draw_trail(cam_x, cam_y)
         self._draw_vehicle(state, cam_x, cam_y, estop_active)
         self._draw_hud(state, cmd, estop_active)
 
@@ -70,6 +81,22 @@ class Renderer:
         sx = int((wx - cam_x) * PIXELS_PER_METER + SCREEN_WIDTH / 2)
         sy = int(-(wy - cam_y) * PIXELS_PER_METER + SCREEN_HEIGHT / 2)
         return sx, sy
+
+    def _draw_trail(self, cam_x: float, cam_y: float) -> None:
+        """Draw breadcrumb trail showing the vehicle's past path."""
+        n = len(self._trail)
+        if n == 0:
+            return
+        trail_surface = pygame.Surface(
+            (SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA
+        )
+        for i, (wx, wy) in enumerate(self._trail):
+            # Fade alpha from dim (older) to bright (newer)
+            alpha = int(40 + 180 * (i / max(n - 1, 1)))
+            sx, sy = self._world_to_screen(wx, wy, cam_x, cam_y)
+            color = (*self._TRAIL_COLOR, alpha)
+            pygame.draw.circle(trail_surface, color, (sx, sy), self._TRAIL_DOT_RADIUS)
+        self._screen.blit(trail_surface, (0, 0))
 
     def _draw_grid(self, cam_x: float, cam_y: float) -> None:
         spacing = self._GRID_SPACING
