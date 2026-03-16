@@ -32,6 +32,11 @@ def parse_args():
         default="keyboard",
         help="Input method: ps5 (DualSense controller) or keyboard. Default: keyboard",
     )
+    parser.add_argument(
+        "--port",
+        default="/dev/ttyUSB0",
+        help="Serial port for Arduino mode. Default: /dev/ttyUSB0",
+    )
     return parser.parse_args()
 
 
@@ -58,7 +63,17 @@ def main():
     clock = pygame.time.Clock()
 
     input_controller = create_input_controller(args.input)
-    vehicle = SimulatedVehicle()
+
+    if args.mode == "arduino":
+        try:
+            from src.vehicle.arduino import ArduinoVehicle
+            vehicle = ArduinoVehicle(port=args.port)
+        except ImportError as e:
+            raise SystemExit(
+                "Arduino mode requires pyserial. Install with: pip install pyserial"
+            ) from e
+    else:
+        vehicle = SimulatedVehicle()
     estop = EStopManager()
     watchdog = CommandWatchdog()
     controller = Controller(estop=estop)
