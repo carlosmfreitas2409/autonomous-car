@@ -34,7 +34,10 @@ class Renderer:
 
     def __init__(self, screen: pygame.Surface):
         self._screen = screen
-        self._font = pygame.font.SysFont(None, 20)
+        try:
+            self._font = pygame.font.SysFont(None, 20)
+        except (NotImplementedError, Exception):
+            self._font = None
         self._clock = pygame.time.Clock()
         self._fps = 0.0
         self._trail: deque[tuple[float, float]] = deque(maxlen=self._TRAIL_MAX_POINTS)
@@ -179,6 +182,8 @@ class Renderer:
         hud_surface.fill(self._COLOR_HUD_BG)
         self._screen.blit(hud_surface, (8, 8))
 
+        if self._font is None:
+            return
         for i, (text, color) in enumerate(lines):
             rendered = self._font.render(text, True, color)
             self._screen.blit(rendered, (8 + padding, 8 + padding + i * line_height))
