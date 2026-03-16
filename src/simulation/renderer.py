@@ -34,10 +34,7 @@ class Renderer:
 
     def __init__(self, screen: pygame.Surface):
         self._screen = screen
-        try:
-            self._font = pygame.font.SysFont(None, 20)
-        except (NotImplementedError, Exception):
-            self._font = None
+        self._font = self._init_font(18)
         self._clock = pygame.time.Clock()
         self._fps = 0.0
         self._trail: deque[tuple[float, float]] = deque(maxlen=self._TRAIL_MAX_POINTS)
@@ -76,6 +73,23 @@ class Renderer:
     # ------------------------------------------------------------------
     # Internal drawing helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _init_font(size: int):
+        """Initialize a font, falling back to pygame._freetype on Python 3.14+."""
+        # pygame.font.SysFont has a circular import bug on Python 3.14.
+        # Use the lower-level _freetype module as a workaround.
+        try:
+            from pygame._freetype import Font as FTFont
+            from pygame._freetype import init as ft_init
+            ft_init()
+            return FTFont(None, size)
+        except Exception:
+            pass
+        try:
+            return pygame.font.SysFont(None, size)
+        except Exception:
+            return None
 
     def _world_to_screen(
         self, wx: float, wy: float, cam_x: float, cam_y: float
@@ -185,5 +199,7 @@ class Renderer:
         if self._font is None:
             return
         for i, (text, color) in enumerate(lines):
-            rendered = self._font.render(text, True, color)
-            self._screen.blit(rendered, (8 + padding, 8 + padding + i * line_height))
+            result = self._font.render(text, color)
+            # _freetype.Font.render returns (surface, rect)
+            surface = result[0] if isinstance(result, tuple) else result
+            self._screen.blit(surface, (8 + padding, 8 + padding + i * line_height))
