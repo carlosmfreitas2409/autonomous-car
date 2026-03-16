@@ -6,12 +6,13 @@ import warnings
 import pygame
 
 from src.config import SCREEN_WIDTH, SCREEN_HEIGHT, TICK_RATE
+from src.control.controller import Controller
 from src.input.base import InputController
 from src.input.keyboard_controller import KeyboardController
 from src.input.ps5_controller import PS5Controller
-
-
-DARK_GRAY = (30, 30, 30)
+from src.models.commands import MotorCommand
+from src.simulation.renderer import Renderer
+from src.vehicle.simulated import SimulatedVehicle
 
 
 def parse_args():
@@ -55,6 +56,9 @@ def main():
     clock = pygame.time.Clock()
 
     input_controller = create_input_controller(args.input)
+    vehicle = SimulatedVehicle()
+    controller = Controller()
+    renderer = Renderer(screen)
 
     running = True
     try:
@@ -63,17 +67,33 @@ def main():
                 if event.type == pygame.QUIT:
                     running = False
 
-            command = input_controller.read()
-            print(
-                f"throttle={command.throttle:+.2f}  "
-                f"steering={command.steering:+.2f}  "
-                f"e_stop={command.emergency_stop}"
-            )
+            dt = clock.get_time() / 1000.0  # milliseconds to seconds
+            if dt <= 0:
+                dt = 1.0 / TICK_RATE  # sensible default on first frame
 
-            screen.fill(DARK_GRAY)
-            pygame.display.flip()
+            # 1. Read input
+            command = input_controller.read()
+
+            # 2. Process through controller
+            motor_cmd = controller.process(command, dt)
+
+            # 3. Handle e-stop
+            if command.emergency_stop:
+                motor_cmd = MotorCommand(left=0, right=0)
+                vehicle.stop()
+            else:
+                # 4. Send to vehicle
+                vehicle.send_command(motor_cmd)
+
+            # 5. Get state
+            state = vehicle.get_state()
+
+            # 6. Render
+            renderer.render(state, motor_cmd, command.emergency_stop)
+
             clock.tick(TICK_RATE)
     finally:
+        vehicle.close()
         pygame.quit()
 
 
