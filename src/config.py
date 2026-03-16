@@ -4,9 +4,10 @@
 MODE = "sim"                   # "sim" or "arduino"
 
 # --- Physics ---
-WHEEL_BASE = 0.15              # meters, distance between wheels
+WHEEL_BASE = 0.25              # meters, distance between front and rear axles
 WHEEL_RADIUS = 0.033           # meters
 MAX_RPM = 200                  # maximum motor RPM
+MAX_STEERING_ANGLE = 0.45      # radians (~25°), max front wheel turning angle
 FRICTION = 0.5                 # friction coefficient
 MOTOR_TIME_CONSTANT = 0.1      # seconds, motor response time constant
 

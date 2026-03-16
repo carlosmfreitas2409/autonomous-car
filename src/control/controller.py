@@ -15,10 +15,7 @@ if TYPE_CHECKING:
 
 
 class Controller:
-    """Orchestrates the control pipeline: deadzone -> smoothing -> mixing.
-
-    Converts high-level ControlCommands into low-level MotorCommands.
-    """
+    """Orchestrates the control pipeline: deadzone -> smoothing -> mixing."""
 
     def __init__(self, estop: EStopManager | None = None):
         self._throttle_smoother = Smoother(THROTTLE_RAMP_RATE)
@@ -26,20 +23,14 @@ class Controller:
         self._estop = estop
 
     def process(self, cmd: ControlCommand, dt: float) -> MotorCommand:
-        """Process a control command through the full pipeline.
-
-        Args:
-            cmd: High-level control command.
-            dt: Time step in seconds since last call.
-
-        Returns:
-            Low-level motor command ready for hardware.
-        """
-        # 0. Emergency stop check
+        """Process a control command through the full pipeline."""
+        # Emergency stop: immediate hard stop, reset smoothers
         if self._estop is not None:
             if cmd.emergency_stop:
                 self._estop.activate()
             if self._estop.is_active():
+                self._throttle_smoother.reset()
+                self._steering_smoother.reset()
                 return MotorCommand(left=0, right=0, timestamp=cmd.timestamp)
 
         # 1. Apply deadzone

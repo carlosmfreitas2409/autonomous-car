@@ -9,7 +9,7 @@ class ControlCommand:
     """High-level control command from input devices.
 
     Attributes:
-        throttle: Forward/reverse power, -1.0 (full reverse) to 1.0 (full forward).
+        throttle: Forward power, 0.0 (stopped) to 1.0 (full forward).
         steering: Left/right steering, -1.0 (full left) to 1.0 (full right).
         emergency_stop: If True, immediately stop all motors.
         timestamp: Time the command was created (seconds since epoch).
@@ -20,7 +20,7 @@ class ControlCommand:
     timestamp: float = field(default_factory=time.time)
 
     def __post_init__(self):
-        self.throttle = max(-1.0, min(1.0, self.throttle))
+        self.throttle = max(0.0, min(1.0, self.throttle))
         self.steering = max(-1.0, min(1.0, self.steering))
 
 

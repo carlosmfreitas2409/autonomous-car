@@ -1,36 +1,19 @@
-"""Differential drive motor mixing."""
+"""Motor command mixing for bicycle model vehicle."""
 
 
 def mix(throttle: float, steering: float) -> tuple[int, int]:
-    """Mix throttle and steering into left/right motor values.
+    """Convert throttle and steering to motor command values.
 
-    Uses differential drive: left = throttle + steering, right = throttle - steering.
-    Positive steering turns right (left wheel faster).
-
-    If either raw value exceeds 1.0 in magnitude, both are scaled down
-    proportionally to preserve the steering ratio.
-
-    Final values are clamped to [-1.0, 1.0], scaled to [-255, 255], and
-    cast to int.
+    For the bicycle model, left=throttle (0..255) and right=steering (-255..255).
 
     Args:
-        throttle: Throttle input, -1.0 to 1.0.
+        throttle: Throttle input, 0.0 to 1.0 (forward only).
         steering: Steering input, -1.0 to 1.0.
 
     Returns:
-        Tuple of (left, right) motor PWM values as ints in [-255, 255].
+        Tuple of (throttle_pwm, steering_pwm) as ints.
     """
-    left = throttle + steering
-    right = throttle - steering
+    throttle = max(0.0, min(1.0, throttle))
+    steering = max(-1.0, min(1.0, steering))
 
-    # Scale both proportionally if either exceeds [-1, 1]
-    max_mag = max(abs(left), abs(right))
-    if max_mag > 1.0:
-        left /= max_mag
-        right /= max_mag
-
-    # Clamp and scale
-    left = max(-1.0, min(1.0, left))
-    right = max(-1.0, min(1.0, right))
-
-    return (int(left * 255), int(right * 255))
+    return (int(throttle * 255), int(steering * 255))
