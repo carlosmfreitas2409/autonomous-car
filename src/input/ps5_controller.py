@@ -18,10 +18,11 @@ class PS5Controller(InputController):
     """Reads input from a PS5 DualSense controller.
 
     Mapping:
-        Left stick Y-axis  (axis 1) — throttle (inverted: up = positive)
-        Right stick X-axis  (axis 2) — steering
-        Circle button       (btn 1)  — toggle emergency stop
-        Triangle button     (btn 3)  — reset emergency stop
+        R2 trigger   (axis 5) — accelerate (0..1)
+        L2 trigger   (axis 4) — brake / reverse (0..1)
+        Left stick X (axis 0) — steering
+        Circle       (btn 1)  — toggle emergency stop
+        Triangle     (btn 3)  — reset emergency stop
     """
 
     def __init__(self):
@@ -42,9 +43,16 @@ class PS5Controller(InputController):
             return ControlCommand(throttle=0.0, steering=0.0, emergency_stop=True)
 
         try:
-            # Axes
-            raw_throttle = -self._joystick.get_axis(1)  # invert: up is negative in pygame
-            raw_steering = self._joystick.get_axis(2)
+            # R2 (axis 5) and L2 (axis 4): range -1 (rest) to 1 (fully pressed)
+            # Normalize to 0..1 then compute net throttle
+            r2_raw = self._joystick.get_axis(5)
+            l2_raw = self._joystick.get_axis(4)
+            r2 = (r2_raw + 1.0) / 2.0  # 0 = rest, 1 = fully pressed
+            l2 = (l2_raw + 1.0) / 2.0
+            raw_throttle = r2 - l2  # -1..1
+
+            # Left stick X (axis 0) for steering
+            raw_steering = self._joystick.get_axis(0)
 
             throttle = _apply_deadzone(raw_throttle, DEADZONE_THRESHOLD)
             steering = _apply_deadzone(raw_steering, DEADZONE_THRESHOLD)

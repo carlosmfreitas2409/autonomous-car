@@ -1,5 +1,8 @@
 """Tunable constants for the autonomous vehicle system."""
 
+# --- Mode ---
+MODE = "sim"                   # "sim" or "arduino"
+
 # --- Physics ---
 WHEEL_BASE = 0.15              # meters, distance between wheels
 WHEEL_RADIUS = 0.033           # meters
@@ -26,3 +29,6 @@ SERIAL_PORT = "/dev/ttyUSB0"   # default serial port for Arduino
 SERIAL_BAUD = 115200           # baud rate
 COMMAND_FREQUENCY = 30         # commands per second sent to Arduino
 
+# --- Logging ---
+LOG_ENABLED = False            # set True to write sim_log.csv
+LOG_FILE = "sim_log.csv"       # output CSV filename
