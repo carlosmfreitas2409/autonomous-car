@@ -7,7 +7,6 @@ from src.control.controller import Controller
 from src.input.ps5_controller import PS5Controller
 from src.safety.emergency_stop import EStopManager
 from src.safety.watchdog import CommandWatchdog
-from src.simulation.logger import SimLogger
 from src.simulation.renderer import Renderer
 from src.vehicle.simulated import SimulatedVehicle
 
@@ -31,7 +30,6 @@ def main():
     watchdog = CommandWatchdog()
     controller = Controller(estop=estop)
     renderer = Renderer(screen)
-    logger = SimLogger(config.LOG_FILE) if config.LOG_ENABLED else None
 
     running = True
     try:
@@ -62,14 +60,9 @@ def main():
 
             state = vehicle.get_state()
 
-            if logger is not None:
-                logger.log(state, motor_cmd)
-
             renderer.render(state, motor_cmd, estop.is_active())
             clock.tick(config.TICK_RATE)
     finally:
-        if logger is not None:
-            logger.close()
         vehicle.close()
         pygame.quit()
 

@@ -1,13 +1,9 @@
 """Arduino-based vehicle implementation using serial communication."""
 
-import logging
-
 from src.models.commands import MotorCommand
 from src.models.state import VehicleState
 from src.protocol.serial_protocol import SerialProtocol
 from src.vehicle.base import VehicleInterface
-
-logger = logging.getLogger(__name__)
 
 
 class ArduinoVehicle(VehicleInterface):

@@ -1,31 +1,12 @@
-/*
- * motor_controller.ino
- *
- * Serial protocol:
- *   Receive: M <left> <right>\n   — set motor speeds (-255..255)
- *            E\n                   — emergency stop
- *            P\n                   — heartbeat (reset watchdog)
- *   Send:    S <dist_front> <dist_left> <dist_right> <imu_heading>\n
- *
- * Watchdog: motors stop if no command received within 500 ms.
- */
-
-// ---- H-bridge pin definitions ----
 const int LEFT_PWM_PIN  = 5;
 const int LEFT_DIR_PIN  = 4;
 const int RIGHT_PWM_PIN = 6;
 const int RIGHT_DIR_PIN = 7;
 
-// ---- Timing ----
 const unsigned long WATCHDOG_TIMEOUT_MS = 500;
-const unsigned long SENSOR_INTERVAL_MS  = 100;
 
-// ---- State ----
 unsigned long lastCommandTime = 0;
-unsigned long lastSensorTime  = 0;
 String inputBuffer = "";
-
-// ---- Motor helpers ----
 
 void setMotor(int pwmPin, int dirPin, int speed) {
   if (speed >= 0) {
@@ -41,8 +22,6 @@ void stopMotors() {
   analogWrite(LEFT_PWM_PIN, 0);
   analogWrite(RIGHT_PWM_PIN, 0);
 }
-
-// ---- Command parsing ----
 
 void processCommand(const String& cmd) {
   if (cmd.length() == 0) return;
@@ -74,8 +53,6 @@ void processCommand(const String& cmd) {
   }
 }
 
-// ---- Arduino lifecycle ----
-
 void setup() {
   Serial.begin(115200);
 
@@ -86,13 +63,11 @@ void setup() {
 
   stopMotors();
   lastCommandTime = millis();
-  lastSensorTime  = millis();
 
   inputBuffer.reserve(64);
 }
 
 void loop() {
-  // Read serial input
   while (Serial.available()) {
     char c = (char)Serial.read();
     if (c == '\n') {
@@ -104,15 +79,7 @@ void loop() {
     }
   }
 
-  // Watchdog — stop motors if no command received recently
   if (millis() - lastCommandTime > WATCHDOG_TIMEOUT_MS) {
     stopMotors();
-  }
-
-  // Send placeholder sensor data at regular intervals
-  unsigned long now = millis();
-  if (now - lastSensorTime >= SENSOR_INTERVAL_MS) {
-    Serial.println("S 0 0 0 0");
-    lastSensorTime = now;
   }
 }
