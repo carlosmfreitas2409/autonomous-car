@@ -1,22 +1,15 @@
-"""Entry point for the autonomous vehicle simulator."""
+"""Entry point for the autonomous vehicle system."""
 
 import pygame
 
 from src import config
-from src.control.controller import Controller
-from src.input.ps5_controller import PS5Controller
-from src.safety.emergency_stop import EStopManager
-from src.safety.watchdog import CommandWatchdog
+from src.control import Controller, EStopManager, CommandWatchdog
+from src.input import PS5Controller
 from src.simulation.renderer import Renderer
 from src.vehicle.simulated import SimulatedVehicle
 
-
 def main():
-    """Main entry point."""
     pygame.init()
-    screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT))
-    pygame.display.set_caption("Autonomous Vehicle Simulator")
-    clock = pygame.time.Clock()
 
     input_controller = PS5Controller()
 
@@ -25,11 +18,15 @@ def main():
         vehicle = ArduinoVehicle(port=config.SERIAL_PORT)
     else:
         vehicle = SimulatedVehicle()
+        
+        screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT))
+        pygame.display.set_caption("Autonomous Vehicle Simulator")
+        renderer = Renderer(screen)
 
     estop = EStopManager()
     watchdog = CommandWatchdog()
     controller = Controller(estop=estop)
-    renderer = Renderer(screen)
+    clock = pygame.time.Clock()
 
     running = True
     try:
@@ -42,25 +39,26 @@ def main():
             if dt <= 0:
                 dt = 1.0 / config.TICK_RATE
 
-            command = input_controller.read()
+            throttle, steering, emergency_stop = input_controller.read()
 
             watchdog.feed()
             if watchdog.is_expired():
                 estop.activate()
 
-            if not command.emergency_stop and estop.is_active():
+            if not emergency_stop and estop.is_active():
                 estop.reset()
 
-            motor_cmd = controller.process(command, dt)
+            throttle, steering = controller.process(throttle, steering, emergency_stop, dt)
 
             if estop.is_active():
                 vehicle.stop()
             else:
-                vehicle.send_command(motor_cmd)
+                vehicle.send_command(throttle, steering)
 
-            state = vehicle.get_state()
+            if config.MODE == "sim":
+                state = vehicle.get_state()
+                renderer.render(state, throttle, steering, estop.is_active())
 
-            renderer.render(state, motor_cmd, estop.is_active())
             clock.tick(config.TICK_RATE)
     finally:
         vehicle.close()

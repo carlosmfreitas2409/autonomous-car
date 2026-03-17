@@ -37,44 +37,28 @@ class SerialProtocol:
             logger.error("Failed to open serial port %s: %s", port, e)
             raise
 
-    # ---- Format helpers (class/static for testability) ----
-
     @staticmethod
     def format_motor(left: int, right: int) -> str:
-        """Return the motor command string (without trailing newline)."""
         return f"M {left} {right}"
 
     @staticmethod
     def format_estop() -> str:
-        """Return the e-stop command string."""
         return "E"
 
     @staticmethod
     def format_heartbeat() -> str:
-        """Return the heartbeat command string."""
         return "P"
 
-    # ---- Send methods ----
-
     def send_motor(self, left: int, right: int) -> None:
-        """Send a motor command to the Arduino."""
         self._write(self.format_motor(left, right))
 
     def send_estop(self) -> None:
-        """Send an emergency stop command."""
         self._write(self.format_estop())
 
     def send_heartbeat(self) -> None:
-        """Send a heartbeat / ping."""
         self._write(self.format_heartbeat())
 
-    # ---- Read methods ----
-
     def read_response(self) -> Optional[str]:
-        """Non-blocking read of one line from the Arduino.
-
-        Returns the stripped line, or None if nothing available.
-        """
         try:
             if self._serial.in_waiting:
                 raw = self._serial.readline()
@@ -86,12 +70,6 @@ class SerialProtocol:
 
     @staticmethod
     def parse_sensor_data(line: str) -> dict[str, float]:
-        """Parse an ``S ...`` sensor line into a dict.
-
-        Expected format: ``S <dist_front> <dist_left> <dist_right> <imu_heading>``
-
-        Returns an empty dict if the line is malformed.
-        """
         try:
             parts = line.strip().split()
             if len(parts) != 5 or parts[0] != "S":
@@ -105,10 +83,7 @@ class SerialProtocol:
         except (ValueError, IndexError):
             return {}
 
-    # ---- Lifecycle ----
-
     def close(self) -> None:
-        """Close the serial port."""
         try:
             if self._serial.is_open:
                 self._serial.close()
@@ -116,10 +91,7 @@ class SerialProtocol:
         except serial.SerialException as e:
             logger.error("Error closing serial port: %s", e)
 
-    # ---- Internal ----
-
     def _write(self, message: str) -> None:
-        """Write a newline-terminated ASCII message to the serial port."""
         try:
             self._serial.write(f"{message}\n".encode("ascii"))
         except serial.SerialException as e:

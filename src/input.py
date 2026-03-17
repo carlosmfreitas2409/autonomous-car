@@ -1,20 +1,21 @@
-"""PS5 DualSense controller input via pygame joystick."""
+"""PS5 DualSense controller input."""
+
+import math
 
 import pygame
 
 from src.config import DEADZONE_THRESHOLD
-from src.input.base import InputController
-from src.models.commands import ControlCommand
 
 
 def _apply_deadzone(value: float, threshold: float) -> float:
-    """Return 0.0 if the absolute value is below the threshold, else the original value."""
+    """Snap values below threshold to 0, rescale the rest to full range."""
     if abs(value) < threshold:
         return 0.0
-    return value
+    sign = math.copysign(1.0, value)
+    return sign * (abs(value) - threshold) / (1.0 - threshold)
 
 
-class PS5Controller(InputController):
+class PS5Controller:
     """Reads input from a PS5 DualSense controller.
 
     Mapping:
@@ -35,34 +36,28 @@ class PS5Controller(InputController):
         except pygame.error:
             self._joystick = None
 
-    def read(self) -> ControlCommand:
+    def read(self) -> tuple[float, float, bool]:
+        """Read controller input. Returns (throttle, steering, emergency_stop)."""
         if not self.is_connected():
-            return ControlCommand(throttle=0.0, steering=0.0, emergency_stop=True)
+            return (0.0, 0.0, True)
 
         try:
-            # R2 (axis 5): range -1 (rest) to 1 (fully pressed) → 0..1
             r2_raw = self._joystick.get_axis(5)
             raw_throttle = (r2_raw + 1.0) / 2.0
 
-            # Left stick X (axis 0) for steering (inverted: stick right = turn right)
             raw_steering = -self._joystick.get_axis(0)
 
             throttle = _apply_deadzone(raw_throttle, DEADZONE_THRESHOLD)
             steering = _apply_deadzone(raw_steering, DEADZONE_THRESHOLD)
 
-            # Circle button (button 1) — toggle emergency stop (edge-triggered)
             circle_pressed = bool(self._joystick.get_button(1))
             if circle_pressed and not self._prev_circle:
                 self._emergency_stop = not self._emergency_stop
             self._prev_circle = circle_pressed
 
-            return ControlCommand(
-                throttle=throttle,
-                steering=steering,
-                emergency_stop=self._emergency_stop,
-            )
+            return (throttle, steering, self._emergency_stop)
         except pygame.error:
-            return ControlCommand(throttle=0.0, steering=0.0, emergency_stop=True)
+            return (0.0, 0.0, True)
 
     def is_connected(self) -> bool:
         if self._joystick is None:

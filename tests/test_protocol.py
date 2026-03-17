@@ -1,6 +1,6 @@
 """Unit tests for the serial protocol — no real hardware required."""
 
-from src.protocol.serial_protocol import SerialProtocol
+from src.vehicle.protocol import SerialProtocol
 
 
 class TestFormatMotorCommand:
