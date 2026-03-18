@@ -1,22 +1,20 @@
-"""Bicycle model physics simulation for a 4-wheeled RC car."""
+"""Bicycle model physics for the simulator. No pygame dependency."""
 
 import math
 import time
 from dataclasses import dataclass, field
 
-from src.config import (
-    FRICTION,
-    MAX_RPM,
-    MAX_STEERING_ANGLE,
-    MOTOR_TIME_CONSTANT,
-    WHEEL_BASE,
-    WHEEL_RADIUS,
-)
+# Sim-only physics constants
+WHEEL_BASE = 0.25
+WHEEL_RADIUS = 0.033
+MAX_RPM = 200
+MAX_STEERING_ANGLE = 0.45
+FRICTION = 0.5
+MOTOR_TIME_CONSTANT = 0.1
 
 
 @dataclass
 class VehicleState:
-    """State of the vehicle at a point in time."""
     x: float = 0.0
     y: float = 0.0
     heading: float = 0.0
@@ -26,11 +24,7 @@ class VehicleState:
 
 
 class BicyclePhysics:
-    """Kinematic bicycle model.
-
-    Treats the car as one front wheel (steered) and one rear wheel (driven).
-    Turning radius = wheelbase / tan(steering_angle).
-    """
+    """Kinematic bicycle model."""
 
     def __init__(self):
         self.x: float = 0.0
@@ -69,16 +63,10 @@ class BicyclePhysics:
 
     def get_state(self) -> VehicleState:
         return VehicleState(
-            x=self.x,
-            y=self.y,
-            heading=self.heading,
-            speed=abs(self.speed),
-            timestamp=time.time(),
+            x=self.x, y=self.y, heading=self.heading,
+            speed=abs(self.speed), timestamp=time.time(),
         )
 
     def reset(self) -> None:
-        self.x = 0.0
-        self.y = 0.0
-        self.heading = 0.0
-        self.speed = 0.0
+        self.x = self.y = self.heading = self.speed = 0.0
         self._steering_angle = 0.0

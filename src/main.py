@@ -1,28 +1,18 @@
-"""Entry point for the autonomous vehicle system."""
+"""Main loop — drives the car with a PS5 controller over serial."""
 
 import pygame
 
 from src import config
 from src.control import Controller, EStopManager, CommandWatchdog
 from src.input import PS5Controller
-from src.simulation.renderer import Renderer
-from src.vehicle.simulated import SimulatedVehicle
+from src.vehicle.arduino import ArduinoVehicle
+
 
 def main():
     pygame.init()
 
     input_controller = PS5Controller()
-
-    if config.MODE == "arduino":
-        from src.vehicle.arduino import ArduinoVehicle
-        vehicle = ArduinoVehicle(port=config.SERIAL_PORT)
-    else:
-        vehicle = SimulatedVehicle()
-        
-        screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT))
-        pygame.display.set_caption("Autonomous Vehicle Simulator")
-        renderer = Renderer(screen)
-
+    vehicle = ArduinoVehicle(port=config.SERIAL_PORT)
     estop = EStopManager()
     watchdog = CommandWatchdog()
     controller = Controller(estop=estop)
@@ -54,10 +44,6 @@ def main():
                 vehicle.stop()
             else:
                 vehicle.send_command(throttle, steering)
-
-            if config.MODE == "sim":
-                state = vehicle.get_state()
-                renderer.render(state, throttle, steering, estop.is_active())
 
             clock.tick(config.TICK_RATE)
     finally:

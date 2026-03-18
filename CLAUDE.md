@@ -2,12 +2,9 @@
 
 ## What this is
 
-A Python + Arduino software stack for an RC-scale autonomous vehicle. There are two modes:
+A Python + Arduino software stack for an RC-scale autonomous vehicle. The car is driven with a PS5 DualSense controller over serial. Autonomous driving (camera + computer vision) will be added in the future.
 
-- **`sim`** — runs a 2D pygame simulator with bicycle-model physics, a live HUD, and a trail renderer. Used for development and testing without hardware.
-- **`arduino`** — sends throttle/steering commands over serial to an Arduino that drives an H-bridge motor controller. No renderer runs in this mode.
-
-The physical car is a 4-wheeled RC vehicle with front steering (not differential drive). The driver is a PS5 DualSense controller connected via USB.
+The physical car is a 4-wheeled RC vehicle with front steering (not differential drive).
 
 ## Stack
 
@@ -18,32 +15,43 @@ The physical car is a 4-wheeled RC vehicle with front steering (not differential
 ## Project structure
 
 ```
-src/
-  main.py          — main loop
-  config.py        — all tunable constants (set MODE here)
-  input.py         — PS5Controller, deadzone
-  control.py       — Smoother, EStopManager, CommandWatchdog, Controller
-  simulation/
-    physics.py     — BicyclePhysics, VehicleState
-    renderer.py    — pygame rendering (sim mode only)
+src/                         — real car code
+  main.py                    — main loop (PS5 → serial → Arduino)
+  config.py                  — tunable constants
+  input.py                   — PS5Controller, deadzone
+  control.py                 — Smoother, EStopManager, CommandWatchdog, Controller
   vehicle/
-    simulated.py   — SimulatedVehicle (wraps physics)
-    arduino.py     — ArduinoVehicle (serial, PWM encoding)
-    protocol.py    — SerialProtocol (message format/parse)
+    arduino.py               — ArduinoVehicle (serial, PWM encoding)
+    protocol.py              — SerialProtocol (message format/parse)
+  autonomous/                — routing logic (CV integration TODO)
+    route_table.py           — pre-computed route table for all 12 pickup/delivery combos
+    mission.py               — MissionPlanner (tracks pickup/delivery progress)
+    state_machine.py         — behavior states (waiting, navigating, stopped, complete)
+
+tools/                       — dev/testing tools (not deployed on the car)
+  simulator.py               — pygame sim for PS5 controller testing
+  physics.py                 — bicycle model physics (used by simulator + tests)
+  route_demo.py              — animated route visualization
+
 arduino/
   motor_controller/motor_controller.ino
+
 tests/
   test_control.py, test_physics.py, test_protocol.py
+  test_route_table.py, test_state_machine.py, test_mission.py
 ```
 
 ## Running
 
 ```bash
-# Simulator
+# Drive the car (PS5 controller over serial)
 python3 -m src
 
-# Arduino mode (set MODE = "arduino" in config.py first)
-python3 -m src
+# PS5 controller testing simulator (no hardware needed)
+python3 tools/simulator.py
+
+# Route visualization demo
+python3 tools/route_demo.py
 
 # Tests
 python3 -m pytest tests/ -v
@@ -51,12 +59,22 @@ python3 -m pytest tests/ -v
 
 ## Key design decisions
 
+- **`src/` is real car code only** — simulator, physics, and renderer live in `tools/`. No coordinate-based sign detection in `src/`; the real car will use camera + CV.
 - **Throttle/steering are floats throughout** (`0..1` and `-1..1`). PWM encoding (`* 255`) only happens at the Arduino serial boundary in `arduino.py`.
 - **Deadzone applied once**, in `input.py`, with rescaling: `sign(v) * (|v| - threshold) / (1 - threshold)`.
-- **Bicycle model physics** — kinematic, treats the 4-wheeled car as 2 virtual centerline wheels with front steering. Steering alone doesn't move the car (no spin-in-place).
 - **E-stop is a toggle** — Circle button on PS5 controller. Activating resets the smoothers so throttle ramps from zero on resume (no lurch).
-- **Renderer and SimulatedVehicle are only instantiated in sim mode** — arduino mode has no pygame window.
 - **Watchdog** — if no controller input arrives for 0.5s, e-stop activates. Arduino also has its own 500ms serial watchdog.
+- **Pre-computed route table** — all 12 pickup/delivery combos are pre-computed. The track is an oval with two inner curve shortcuts; the route table picks the shortest path.
+
+## Autonomous mode (future)
+
+The car will do pickup/delivery missions on an oval track with 4 numbered signs. Before each run, two signs are assigned (pickup + delivery). The car must:
+1. Drive to the pickup sign, stop for ~4 seconds
+2. Continue to the delivery sign, stop for ~4 seconds
+
+Sign detection will use **camera + computer vision** (OpenCV), not coordinate-based detection. Lane following will also use camera-based lane detection.
+
+The routing logic (`src/autonomous/`) is already implemented and tested. What remains is the CV perception layer and wiring it into the main loop.
 
 ## Serial protocol (Python → Arduino)
 

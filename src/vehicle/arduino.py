@@ -1,6 +1,5 @@
 """Arduino-based vehicle implementation using serial communication."""
 
-from src.simulation.physics import VehicleState
 from src.vehicle.protocol import SerialProtocol
 
 
@@ -17,7 +16,8 @@ class ArduinoVehicle:
         right_pwm = int(max(-1.0, min(1.0, steering)) * 255)
         self._protocol.send_motor(left_pwm, right_pwm)
 
-    def get_state(self) -> VehicleState:
+    def get_sensors(self) -> dict[str, float]:
+        """Read latest sensor data from Arduino."""
         while True:
             line = self._protocol.read_response()
             if line is None:
@@ -25,8 +25,7 @@ class ArduinoVehicle:
             sensors = self._protocol.parse_sensor_data(line)
             if sensors:
                 self._last_sensors = sensors
-
-        return VehicleState(sensors=dict(self._last_sensors))
+        return dict(self._last_sensors)
 
     def stop(self) -> None:
         self._protocol.send_estop()
