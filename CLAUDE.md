@@ -4,12 +4,12 @@
 
 A Python + Arduino software stack for an RC-scale autonomous vehicle. The car is driven with a PS5 DualSense controller over serial. Autonomous driving (camera + computer vision) will be added in the future.
 
-The physical car is a 4-wheeled RC vehicle with front steering (not differential drive).
+The physical car is a 4-wheeled vehicle with independent motors on each wheel (4x BTS7960 H-bridges). Steering mechanism is TBD (trapezoidal spindle or Ackermann differential).
 
 ## Stack
 
 - **Python 3.14** + **pygame 2.6** on macOS
-- **Arduino** (H-bridge motor driver, pins 4–7)
+- **Arduino Mega** (4x BTS7960 H-bridges, one per wheel, PWM pins 2–3, 5–10)
 - **pyserial** for serial communication
 
 ## Project structure
@@ -79,10 +79,12 @@ The routing logic (`src/autonomous/`) is already implemented and tested. What re
 ## Serial protocol (Python → Arduino)
 
 ```
-M <left_pwm> <right_pwm>\n   — motor command (-255..255)
-E\n                           — emergency stop
-P\n                           — heartbeat
+M <throttle_pwm> <steering_pwm>\n  — motor command (-255..255)
+E\n                                — emergency stop
+P\n                                — heartbeat
 ```
+
+The Arduino Mega applies throttle to all 4 motors equally. Steering mixing is a TODO (see comments in the Arduino sketch for planned approaches).
 
 Arduino → Python: `S <dist_front> <dist_left> <dist_right> <imu_heading>\n`
 

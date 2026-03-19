@@ -1,6 +1,6 @@
 """Tunable constants for the RC car."""
 
-# Serial
+# Serial (Arduino Mega typically appears as /dev/cu.usbmodemXXXX on macOS)
 SERIAL_PORT = "/dev/ttyUSB0"
 SERIAL_BAUD = 115200
 COMMAND_FREQUENCY = 30         # commands per second sent to Arduino

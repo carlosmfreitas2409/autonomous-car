@@ -1,4 +1,4 @@
-"""Arduino-based vehicle implementation using serial communication."""
+"""Arduino Mega vehicle with 4x BTS7960 H-bridges (one per wheel)."""
 
 from src.vehicle.protocol import SerialProtocol
 
@@ -12,9 +12,9 @@ class ArduinoVehicle:
 
     def send_command(self, throttle: float, steering: float) -> None:
         """Convert throttle/steering to PWM and send to Arduino."""
-        left_pwm = int(max(0.0, min(1.0, throttle)) * 255)
-        right_pwm = int(max(-1.0, min(1.0, steering)) * 255)
-        self._protocol.send_motor(left_pwm, right_pwm)
+        throttle_pwm = int(max(0.0, min(1.0, throttle)) * 255)
+        steering_pwm = int(max(-1.0, min(1.0, steering)) * 255)
+        self._protocol.send_motor(throttle_pwm, steering_pwm)
 
     def get_sensors(self) -> dict[str, float]:
         """Read latest sensor data from Arduino."""

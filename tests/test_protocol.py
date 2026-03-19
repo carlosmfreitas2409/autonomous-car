@@ -4,7 +4,7 @@ from src.vehicle.protocol import SerialProtocol
 
 
 class TestFormatMotorCommand:
-    """Verify M <left> <right> format."""
+    """Verify M <throttle> <steering> format."""
 
     def test_positive_values(self):
         assert SerialProtocol.format_motor(128, 64) == "M 128 64"
