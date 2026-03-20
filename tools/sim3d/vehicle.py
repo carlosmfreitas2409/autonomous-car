@@ -33,6 +33,7 @@ from tools.sim3d.config import (
     DASHCAM_RESOLUTION,
     svg_to_world,
 )
+from tools.sim3d.props import PropsBuilder
 from tools.sim3d.track import TrackBuilder
 
 # Start position from SVG START marker (~647, 2505)
@@ -120,6 +121,11 @@ class SimulatedVehicle3D:
         track_root = self._base.render.attachNewNode("track")
         TrackBuilder(track_root).build()
 
+        # Props (signs + traffic light)
+        self._props = PropsBuilder(self._base.render)
+        self._props.build()
+        self._traffic_light = self._props.traffic_light
+
         # Car model
         self._car_np: NodePath = self._base.render.attachNewNode(_make_car_box())
         self._update_car_transform()
@@ -156,6 +162,7 @@ class SimulatedVehicle3D:
         self._last_time = now
 
         self._physics.update(throttle, steering, dt)
+        self._traffic_light.update(dt)
         self._update_car_transform()
         self._update_cameras()
         self._step_panda()
@@ -168,6 +175,7 @@ class SimulatedVehicle3D:
         dt = now - self._last_time
         self._last_time = now
         self._physics.update(0.0, 0.0, dt)
+        self._traffic_light.update(dt)
         self._update_car_transform()
         self._update_cameras()
         self._step_panda()
