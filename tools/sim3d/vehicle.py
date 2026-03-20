@@ -8,6 +8,8 @@ Panda3D for one frame.
 import math
 import time
 
+import numpy as np
+
 from panda3d.core import (
     Geom,
     GeomNode,
@@ -22,9 +24,13 @@ from panda3d.core import (
 from direct.showbase.ShowBase import ShowBase
 
 from tools.physics import BicyclePhysics, VehicleState
+from tools.sim3d.camera import DashCam, DebugCameraManager
 from tools.sim3d.config import (
-    CHASE_CAM_DISTANCE,
-    CHASE_CAM_HEIGHT,
+    DASHCAM_FORWARD_OFFSET,
+    DASHCAM_FOV,
+    DASHCAM_HEIGHT,
+    DASHCAM_PITCH,
+    DASHCAM_RESOLUTION,
     svg_to_world,
 )
 from tools.sim3d.track import TrackBuilder
@@ -118,8 +124,26 @@ class SimulatedVehicle3D:
         self._car_np: NodePath = self._base.render.attachNewNode(_make_car_box())
         self._update_car_transform()
 
-        # Chase camera initial setup
-        self._update_chase_cam()
+        # Dashcam (offscreen render for CV pipeline)
+        self._dashcam = DashCam(
+            self._base,
+            self._base.render,
+            width=DASHCAM_RESOLUTION[0],
+            height=DASHCAM_RESOLUTION[1],
+            fov=DASHCAM_FOV,
+        )
+
+        # Debug camera manager (chase / top-down / dashcam-mirror)
+        self._debug_cam = DebugCameraManager(self._base)
+        self._debug_cam.set_dashcam(self._dashcam)
+
+        # Keyboard shortcuts for camera modes
+        self._base.accept("c", self._debug_cam.switch_mode, ["chase"])
+        self._base.accept("t", self._debug_cam.switch_mode, ["topdown"])
+        self._base.accept("v", self._debug_cam.switch_mode, ["dashcam"])
+
+        # Initial camera update
+        self._update_cameras()
 
     # ------------------------------------------------------------------
     # Public interface (matches SimulatedVehicle / ArduinoVehicle)
@@ -133,7 +157,7 @@ class SimulatedVehicle3D:
 
         self._physics.update(throttle, steering, dt)
         self._update_car_transform()
-        self._update_chase_cam()
+        self._update_cameras()
         self._step_panda()
 
     def get_state(self) -> VehicleState:
@@ -145,7 +169,7 @@ class SimulatedVehicle3D:
         self._last_time = now
         self._physics.update(0.0, 0.0, dt)
         self._update_car_transform()
-        self._update_chase_cam()
+        self._update_cameras()
         self._step_panda()
 
     def close(self) -> None:
@@ -154,9 +178,9 @@ class SimulatedVehicle3D:
         except Exception:
             pass
 
-    def get_frame(self):
-        """Placeholder for Phase 3 dashcam capture — returns None."""
-        return None
+    def get_frame(self) -> np.ndarray:
+        """Capture a BGR frame from the front-facing dashcam (H, W, 3)."""
+        return self._dashcam.get_frame()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -167,13 +191,20 @@ class SimulatedVehicle3D:
         panda_h = math.degrees(self._physics.heading) - 90.0
         self._car_np.setH(panda_h)
 
-    def _update_chase_cam(self) -> None:
+    def _update_cameras(self) -> None:
+        """Position the dashcam relative to the car and update the debug camera."""
         h = self._physics.heading
-        cam_x = self._physics.x - CHASE_CAM_DISTANCE * math.cos(h)
-        cam_y = self._physics.y - CHASE_CAM_DISTANCE * math.sin(h)
 
-        self._base.camera.setPos(cam_x, cam_y, CHASE_CAM_HEIGHT)
-        self._base.camera.lookAt(self._physics.x, self._physics.y, 0.0)
+        # Dashcam: mounted at front of car, looking forward and slightly down
+        cam_x = self._physics.x + DASHCAM_FORWARD_OFFSET * math.cos(h)
+        cam_y = self._physics.y + DASHCAM_FORWARD_OFFSET * math.sin(h)
+        cam_z = DASHCAM_HEIGHT
+        panda_h = math.degrees(h) - 90.0
+        panda_p = DASHCAM_PITCH  # negative = look down
+        self._dashcam.set_transform(cam_x, cam_y, cam_z, panda_h, panda_p, 0.0)
+
+        # Debug window camera
+        self._debug_cam.update(self._physics.x, self._physics.y, h)
 
     def _step_panda(self) -> None:
         self._base.taskMgr.step()
