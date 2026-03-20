@@ -1,7 +1,10 @@
 """Track geometry builder — generates 3D road meshes from SVG track data.
 
-Phase 1 builds the outer road only (outer boundary capsule + inner boundary
-capsule, with road surface and white lane-line strips).
+Phase 1: outer road (outer boundary capsule + inner boundary capsule,
+road surface, and white lane-line strips).
+
+Phase 2: inner curve shortcut roads, inner curve lane lines, and yellow
+START line.
 """
 
 import math
@@ -22,6 +25,7 @@ from tools.sim3d.config import (
     LANE_LINE_COLOR,
     LANE_LINE_WIDTH,
     ROAD_COLOR,
+    SCALE,
     svg_to_world,
 )
 
@@ -43,6 +47,46 @@ _INNER_RIGHT_CX = 6378.5
 _INNER_RADIUS = (_INNER_Y_BOT - _INNER_Y_TOP) / 2.0  # ~1045.25
 
 _SEMICIRCLE_SEGMENTS = 64
+
+# ---------------------------------------------------------------------------
+# Inner curve bezier data (from SVG — 4 cubic bezier paths)
+# ---------------------------------------------------------------------------
+# DP1 shortcut (left pair)
+_DP1_LEFT = ((2345, 3057.5), (2695.09, 2247.6), (2708.21, 1788.7), (2345, 960))
+_DP1_RIGHT = ((3056, 3057.5), (3406.09, 2247.6), (3419.21, 1788.7), (3056, 960))
+
+# DP2 shortcut (right pair)
+_DP2_LEFT = ((4873, 3050.5), (5223.09, 2240.6), (5236.21, 1781.7), (4873, 953))
+_DP2_RIGHT = ((5584, 3050.5), (5934.09, 2240.6), (5947.21, 1781.7), (5584, 953))
+
+# Yellow START line endpoints (SVG coords)
+_START_LINE_P1 = (331.849, 2690.04)
+_START_LINE_P2 = (962.849, 2319.04)
+_START_LINE_COLOR = (1.0, 0.84, 0.0, 1.0)
+_START_LINE_WIDTH_SVG = 44.0  # SVG stroke-width
+
+_BEZIER_SAMPLES = 50
+
+
+def _cubic_bezier(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    p3: tuple[float, float],
+    n: int = _BEZIER_SAMPLES,
+) -> list[tuple[float, float]]:
+    """Sample a cubic bezier curve at *n*+1 evenly-spaced t values.
+
+    Control points are in SVG coordinates; returned points are in world coords.
+    """
+    points: list[tuple[float, float]] = []
+    for i in range(n + 1):
+        t = i / n
+        u = 1 - t
+        x = u**3 * p0[0] + 3 * u**2 * t * p1[0] + 3 * u * t**2 * p2[0] + t**3 * p3[0]
+        y = u**3 * p0[1] + 3 * u**2 * t * p1[1] + 3 * u * t**2 * p2[1] + t**3 * p3[1]
+        points.append(svg_to_world(x, y))
+    return points
 
 
 def _capsule_points(
@@ -200,8 +244,65 @@ class TrackBuilder:
         il_node = _make_strip_mesh(inner_left, inner_right, LANE_LINE_COLOR, 0.002, "lane_inner")
         self._parent.attachNewNode(il_node)
 
+        # --- Phase 2: inner curve shortcut roads, lane lines, START line ---
+        self._build_inner_curves()
+        self._build_start_line()
+
         # Ground plane
         self._build_ground()
+
+    def _build_inner_curves(self) -> None:
+        """Build inner curve shortcut roads and their lane lines."""
+        curves = {
+            "dp1": (_DP1_LEFT, _DP1_RIGHT),
+            "dp2": (_DP2_LEFT, _DP2_RIGHT),
+        }
+
+        for label, (left_ctrl, right_ctrl) in curves.items():
+            left_pts = _cubic_bezier(*left_ctrl)
+            right_pts = _cubic_bezier(*right_ctrl)
+
+            # Road surface between left and right edge curves
+            road = _make_strip_mesh(
+                left_pts, right_pts, ROAD_COLOR, 0.001, f"road_{label}"
+            )
+            self._parent.attachNewNode(road)
+
+            # Lane line along each edge curve
+            for side, pts in [("left", left_pts), ("right", right_pts)]:
+                ll, lr = _offset_polyline(pts, LANE_LINE_WIDTH)
+                node = _make_strip_mesh(
+                    ll, lr, LANE_LINE_COLOR, 0.002, f"lane_{label}_{side}"
+                )
+                self._parent.attachNewNode(node)
+
+    def _build_start_line(self) -> None:
+        """Build the yellow START line across the road."""
+        p1 = svg_to_world(*_START_LINE_P1)
+        p2 = svg_to_world(*_START_LINE_P2)
+
+        # Direction from p1 to p2
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        length = math.hypot(dx, dy)
+        if length < 1e-9:
+            return
+        nx, ny = -dy / length, dx / length  # perpendicular
+
+        half_w = (_START_LINE_WIDTH_SVG * SCALE) / 2.0
+
+        # Build a quad (two triangles) for the line
+        outer = [
+            (p1[0] + nx * half_w, p1[1] + ny * half_w),
+            (p2[0] + nx * half_w, p2[1] + ny * half_w),
+        ]
+        inner = [
+            (p1[0] - nx * half_w, p1[1] - ny * half_w),
+            (p2[0] - nx * half_w, p2[1] - ny * half_w),
+        ]
+
+        node = _make_strip_mesh(outer, inner, _START_LINE_COLOR, 0.003, "start_line")
+        self._parent.attachNewNode(node)
 
     def _build_ground(self) -> None:
         """Large quad at z=0 as the ground."""
