@@ -32,6 +32,13 @@ tools/                       — dev/testing tools (not deployed on the car)
   simulator.py               — pygame sim for PS5 controller testing
   physics.py                 — bicycle model physics (used by simulator + tests)
   route_demo.py              — animated route visualization
+  run_sim3d.py               — 3D simulator entry point (PS5 controller)
+  sim3d/                     — Panda3D 3D simulator package
+    vehicle.py               — SimulatedVehicle3D (drop-in ArduinoVehicle replacement)
+    track.py                 — procedural track geometry from SVG
+    camera.py                — DashCam (offscreen → numpy BGR) + debug cameras
+    props.py                 — signs, traffic light
+    config.py                — simulator constants
 
 arduino/
   motor_controller/motor_controller.ino
@@ -49,6 +56,9 @@ python3 -m src
 
 # PS5 controller testing simulator (no hardware needed)
 python3 tools/simulator.py
+
+# 3D simulator for CV testing (Panda3D, requires: pip install panda3d)
+python3 tools/run_sim3d.py
 
 # Route visualization demo
 python3 tools/route_demo.py

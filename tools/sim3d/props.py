@@ -69,7 +69,7 @@ def _make_flat_polygon(
     return node
 
 
-def _make_pole(parent: NodePath) -> None:
+def _make_pole(parent: NodePath) -> NodePath:
     """Add a thin gray pole from ground to POLE_HEIGHT."""
     hw = POLE_WIDTH / 2.0
     # A thin box (4 faces visible)
@@ -367,12 +367,12 @@ class TrafficLight:
             "green": (0.1, 0.9, 0.1, 1.0),
         }
         dim = 0.2
-        for name, np in self._lights.items():
+        for name, light_np in self._lights.items():
             if name == self._state:
-                np.setColor(*colors[name])
+                light_np.setColor(*colors[name])
             else:
                 r, g, b, a = colors[name]
-                np.setColor(r * dim, g * dim, b * dim, a)
+                light_np.setColor(r * dim, g * dim, b * dim, a)
 
 
 # ---------------------------------------------------------------------------

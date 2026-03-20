@@ -15,9 +15,11 @@ from tools.sim3d.vehicle import SimulatedVehicle3D
 
 
 def main() -> None:
-    # pygame is needed for PS5Controller (joystick subsystem).
-    # Only init the subsystems we need — no display window.
-    pygame.init()
+    # Only init the pygame subsystems needed for PS5Controller (joystick).
+    # Avoid pygame.init() which would also init the display subsystem and
+    # potentially conflict with Panda3D's window.
+    pygame.joystick.init()
+    pygame.event.init()
 
     vehicle: SimulatedVehicle3D | None = None
     try:
@@ -67,7 +69,8 @@ def main() -> None:
     finally:
         if vehicle is not None:
             vehicle.close()
-        pygame.quit()
+        pygame.joystick.quit()
+        pygame.event.quit()
 
 
 if __name__ == "__main__":
