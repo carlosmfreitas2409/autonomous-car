@@ -23,11 +23,7 @@ from panda3d.core import (
     WindowProperties,
 )
 
-from tools.sim3d.config import (
-    CHASE_CAM_DISTANCE,
-    CHASE_CAM_HEIGHT,
-    TOPDOWN_HEIGHT,
-)
+from tools.sim3d.config import TOPDOWN_HEIGHT
 
 
 class DashCam:
@@ -116,41 +112,40 @@ class DashCam:
 
 
 class DebugCameraManager:
-    """Manages the debug-window camera with three switchable modes.
+    """Manages the debug-window camera with two switchable modes.
 
     Modes:
-        chase    — follows behind the car (default)
-        topdown  — overhead view of the whole track
+        topdown  — overhead view of the whole track (default)
         dashcam  — mirrors the offscreen dashcam's viewpoint
     """
 
     def __init__(self, base) -> None:
         self._base = base
-        self._mode: str = "chase"  # 'chase' | 'topdown' | 'dashcam'
+        self._mode: str = "topdown"  # 'topdown' | 'dashcam'
         self._dashcam: DashCam | None = None
+        # Save the default lens for top-down view
+        self._default_lens = base.cam.node().getLens()
+        self._dashcam_lens = None
 
     def set_dashcam(self, dashcam: DashCam) -> None:
-        """Register the DashCam so the dashcam-mirror mode can copy its pose."""
+        """Register the DashCam so the dashcam-mirror mode can copy its pose and FOV."""
         self._dashcam = dashcam
+        self._dashcam_lens = dashcam.camera_np.node().getLens()
 
     def switch_mode(self, mode: str) -> None:
-        """Switch the debug camera to *mode* ('chase', 'topdown', 'dashcam')."""
+        """Switch the debug camera to *mode* ('topdown', 'dashcam')."""
         self._mode = mode
 
     def update(self, car_x: float, car_y: float, heading: float) -> None:
         """Reposition the debug camera for the current frame."""
-        if self._mode == "chase":
-            cam_x = car_x - CHASE_CAM_DISTANCE * math.cos(heading)
-            cam_y = car_y - CHASE_CAM_DISTANCE * math.sin(heading)
-            self._base.camera.setPos(cam_x, cam_y, CHASE_CAM_HEIGHT)
-            self._base.camera.lookAt(car_x, car_y, 0.0)
-
-        elif self._mode == "topdown":
+        if self._mode == "topdown":
+            self._base.cam.node().setLens(self._default_lens)
             self._base.camera.setPos(0, 0, TOPDOWN_HEIGHT)
             self._base.camera.lookAt(0, 0, 0)
 
         elif self._mode == "dashcam" and self._dashcam is not None:
-            # Mirror the offscreen dashcam's position and orientation
+            if self._dashcam_lens is not None:
+                self._base.cam.node().setLens(self._dashcam_lens)
             pos = self._dashcam.camera_np.getPos()
             hpr = self._dashcam.camera_np.getHpr()
             self._base.camera.setPosHpr(pos, hpr)

@@ -5,10 +5,9 @@
 # ---------------------------------------------------------------------------
 SVG_VIEWBOX = (8457, 4119)
 
-# The outer road lane is 1.5 m wide in the real world.
+# Lane width scaled to match car proportions.
 # Outer boundary top edge y=312, inner boundary top edge y=960 → gap = 648 SVG units.
-# SCALE = 1.5 m / 648 SVG-units ≈ 0.00231 m/SVG-unit.
-SCALE: float = 1.5 / 648.0
+SCALE: float = 0.75 / 648.0
 
 
 def svg_to_world(sx: float, sy: float) -> tuple[float, float]:
@@ -30,18 +29,34 @@ LANE_LINE_COLOR = (1.0, 1.0, 1.0, 1.0)
 LANE_LINE_WIDTH: float = 0.03  # meters
 
 # ---------------------------------------------------------------------------
-# Camera
+# 3D simulator physics overrides (scaled to fit the track)
+# The real car physics (tools/physics.py) are for a small RC car.
+# The 3D track has 1.5 m lanes, so scale everything up to feel like a
+# real car on a real road.
 # ---------------------------------------------------------------------------
-DASHCAM_RESOLUTION = (320, 240)
-DASHCAM_FOV: float = 70.0
-DASHCAM_HEIGHT: float = 0.12
-DASHCAM_FORWARD_OFFSET: float = 0.10
-DASHCAM_PITCH: float = -12.0
+SIM3D_WHEEL_BASE: float = 0.5         # meters (was 0.25)
+SIM3D_WHEEL_RADIUS: float = 0.10      # meters (was 0.033)
+SIM3D_MAX_RPM: float = 100.0           # max speed ~0.8 m/s
+SIM3D_MAX_STEERING_ANGLE: float = 0.4
+SIM3D_FRICTION: float = 0.4
+SIM3D_MOTOR_TIME_CONSTANT: float = 0.15
 
-CHASE_CAM_DISTANCE: float = 1.5
-CHASE_CAM_HEIGHT: float = 0.8
+# Car model dimensions (~1/2 of 1.5 m lane width)
+CAR_LENGTH: float = 0.85  # meters
+CAR_WIDTH: float = 0.45   # meters
+CAR_HEIGHT: float = 0.18  # meters
 
-TOPDOWN_HEIGHT: float = 12.0
+# ---------------------------------------------------------------------------
+# Camera — tripod style: mounted above/behind the car, looking forward
+# with a slight downward angle to see road + signs ahead.
+# ---------------------------------------------------------------------------
+DASHCAM_RESOLUTION = (1080, 600)
+DASHCAM_FOV: float = 110.0
+DASHCAM_HEIGHT: float = 0.60         # tripod well above car roof
+DASHCAM_FORWARD_OFFSET: float = 0.6  # in front of car center (tripod style)
+DASHCAM_PITCH: float = -50.0          # angled down to see lane markings and signs
+
+TOPDOWN_HEIGHT: float = 10.0
 
 # ---------------------------------------------------------------------------
 # Traffic light (future phases)

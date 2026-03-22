@@ -175,27 +175,99 @@ class SignBuilder:
         svg_y: float,
         facing_angle: float,
     ) -> NodePath:
-        """Red circle direction sign on a pole."""
+        """Direction sign: white circle with red border ring, on a pole."""
         wx, wy = svg_to_world(svg_x, svg_y)
         root = parent.attachNewNode("circle_sign")
         root.setPos(wx, wy, 0.0)
 
         _make_pole(root)
 
-        # 16-sided polygon approximating a circle
-        n = 16
+        n = 24
         radius = SIGN_HEIGHT / 2.0
+        inner_radius = radius * 0.75  # white inner area
         center_z = POLE_HEIGHT + radius
-        verts = [
+        panda_h = math.degrees(facing_angle) - 90
+
+        # Outer red circle (full disc)
+        outer_verts = [
             (radius * math.cos(2 * math.pi * i / n),
              center_z + radius * math.sin(2 * math.pi * i / n))
             for i in range(n)
         ]
-        face_node = _make_flat_polygon(
-            "circle_face", verts, (0.9, 0.15, 0.15, 1.0),
+        outer_node = _make_flat_polygon(
+            "circle_outer", outer_verts, (0.9, 0.15, 0.15, 1.0),
         )
-        face_np = root.attachNewNode(face_node)
-        face_np.setH(math.degrees(facing_angle) - 90)
+        outer_np = root.attachNewNode(outer_node)
+        outer_np.setH(panda_h)
+        outer_np.setDepthOffset(1)
+
+        # Inner white circle
+        inner_verts = [
+            (inner_radius * math.cos(2 * math.pi * i / n),
+             center_z + inner_radius * math.sin(2 * math.pi * i / n))
+            for i in range(n)
+        ]
+        inner_node = _make_flat_polygon(
+            "circle_inner", inner_verts, (1.0, 1.0, 1.0, 1.0),
+        )
+        inner_np = root.attachNewNode(inner_node)
+        inner_np.setH(panda_h)
+        inner_np.setDepthOffset(2)
+
+        # Black arrows: straight up + right branch
+        s = inner_radius  # scale reference
+        arrow_color = (0.05, 0.05, 0.05, 1.0)
+        sw = s * 0.22  # stem half-width
+        arrow_depth = 3
+
+        # Vertical stem (rectangle)
+        stem_verts = [
+            (-sw, center_z - s * 0.55),
+            (sw, center_z - s * 0.55),
+            (sw, center_z + s * 0.35),
+            (-sw, center_z + s * 0.35),
+        ]
+        stem_node = _make_flat_polygon("arrow_stem", stem_verts, arrow_color)
+        stem_np = root.attachNewNode(stem_node)
+        stem_np.setH(panda_h)
+        stem_np.setDepthOffset(arrow_depth)
+
+        # Up arrowhead (triangle)
+        ah = s * 0.35  # arrowhead height
+        aw = s * 0.45  # arrowhead half-width
+        head_verts = [
+            (0.0, center_z + s * 0.35 + ah),   # tip
+            (-aw, center_z + s * 0.35),          # bottom-left
+            (aw, center_z + s * 0.35),           # bottom-right
+        ]
+        head_node = _make_flat_polygon("arrow_head", head_verts, arrow_color)
+        head_np = root.attachNewNode(head_node)
+        head_np.setH(panda_h)
+        head_np.setDepthOffset(arrow_depth)
+
+        # Horizontal branch (rectangle, from stem to the right)
+        branch_z = center_z - s * 0.05
+        branch_verts = [
+            (sw, branch_z - sw),
+            (s * 0.45, branch_z - sw),
+            (s * 0.45, branch_z + sw),
+            (sw, branch_z + sw),
+        ]
+        branch_node = _make_flat_polygon("arrow_branch", branch_verts, arrow_color)
+        branch_np = root.attachNewNode(branch_node)
+        branch_np.setH(panda_h)
+        branch_np.setDepthOffset(arrow_depth)
+
+        # Right arrowhead (triangle)
+        rhead_verts = [
+            (s * 0.45 + ah, branch_z),           # tip (right)
+            (s * 0.45, branch_z + aw),            # top
+            (s * 0.45, branch_z - aw),            # bottom
+        ]
+        rhead_node = _make_flat_polygon("arrow_rhead", rhead_verts, arrow_color)
+        rhead_np = root.attachNewNode(rhead_node)
+        rhead_np.setH(panda_h)
+        rhead_np.setDepthOffset(arrow_depth)
 
         return root
 
@@ -246,7 +318,7 @@ class SignBuilder:
         svg_y: float,
         facing_angle: float,
     ) -> NodePath:
-        """Yellow diamond warning sign on a pole."""
+        """Yellow diamond speed bump sign with black border and bump icon."""
         wx, wy = svg_to_world(svg_x, svg_y)
         root = parent.attachNewNode("diamond_sign")
         root.setPos(wx, wy, 0.0)
@@ -255,17 +327,71 @@ class SignBuilder:
 
         half = SIGN_HEIGHT / 2.0
         center_z = POLE_HEIGHT + half
-        verts = [
-            (0.0, center_z + half),   # top
-            (half, center_z),          # right
-            (0.0, center_z - half),    # bottom
-            (-half, center_z),         # left
+        panda_h = math.degrees(facing_angle) - 90
+
+        # Black border diamond (outer)
+        border = half * 1.0
+        border_verts = [
+            (0.0, center_z + border),
+            (border, center_z),
+            (0.0, center_z - border),
+            (-border, center_z),
         ]
-        face_node = _make_flat_polygon(
-            "diamond_face", verts, (1.0, 0.84, 0.0, 1.0),
+        border_node = _make_flat_polygon(
+            "diamond_border", border_verts, (0.1, 0.1, 0.1, 1.0),
         )
-        face_np = root.attachNewNode(face_node)
-        face_np.setH(math.degrees(facing_angle) - 90)
+        border_np = root.attachNewNode(border_node)
+        border_np.setH(panda_h)
+        border_np.setDepthOffset(1)
+
+        # Yellow inner diamond
+        inner = half * 0.85
+        inner_verts = [
+            (0.0, center_z + inner),
+            (inner, center_z),
+            (0.0, center_z - inner),
+            (-inner, center_z),
+        ]
+        inner_node = _make_flat_polygon(
+            "diamond_face", inner_verts, (1.0, 0.84, 0.0, 1.0),
+        )
+        inner_np = root.attachNewNode(inner_node)
+        inner_np.setH(panda_h)
+        inner_np.setDepthOffset(2)
+
+        # Black speed bump icon
+        bump_color = (0.05, 0.05, 0.05, 1.0)
+        s = half * 0.55  # icon scale
+
+        # Horizontal bar (road surface)
+        bar_h = s * 0.15
+        bar_z = center_z - s * 0.25
+        bar_verts = [
+            (-s * 0.7, bar_z - bar_h),
+            (s * 0.7, bar_z - bar_h),
+            (s * 0.7, bar_z + bar_h),
+            (-s * 0.7, bar_z + bar_h),
+        ]
+        bar_node = _make_flat_polygon("bump_bar", bar_verts, bump_color)
+        bar_np = root.attachNewNode(bar_node)
+        bar_np.setH(panda_h)
+        bar_np.setDepthOffset(3)
+
+        # Bump arc (semicircle approximation on top of bar)
+        n_arc = 12
+        arc_r = s * 0.4
+        arc_center_z = bar_z + bar_h
+        arc_verts = [(-s * 0.4, arc_center_z)]  # bottom-left
+        for i in range(n_arc + 1):
+            angle = math.pi * i / n_arc
+            ax = -s * 0.4 + (s * 0.8) * i / n_arc
+            az = arc_center_z + arc_r * math.sin(angle)
+            arc_verts.append((ax, az))
+        arc_verts.append((s * 0.4, arc_center_z))  # bottom-right
+        arc_node = _make_flat_polygon("bump_arc", arc_verts, bump_color)
+        arc_np = root.attachNewNode(arc_node)
+        arc_np.setH(panda_h)
+        arc_np.setDepthOffset(3)
 
         return root
 
@@ -337,6 +463,7 @@ class TrafficLight:
         )
         housing_np = self._root.attachNewNode(housing_node)
         housing_np.setH(panda_h)
+        housing_np.setDepthOffset(1)
 
         # Three light discs (12-sided circles) arranged horizontally
         disc_r = SIGN_HEIGHT * 0.18
@@ -349,14 +476,12 @@ class TrafficLight:
                  center_z + disc_r * math.sin(2 * math.pi * i / n_sides))
                 for i in range(n_sides)
             ]
-            # Placeholder colour — _update_visuals will set the real one
             disc_node = _make_flat_polygon(
                 f"tl_{colour_name}", verts, (1, 1, 1, 1),
             )
             disc_np = self._root.attachNewNode(disc_node)
             disc_np.setH(panda_h)
-            # Push disc slightly in front of housing
-            disc_np.setY(disc_np.getY() + 0.002)
+            disc_np.setDepthOffset(2)
             self._lights[colour_name] = disc_np
 
     def _update_visuals(self) -> None:
@@ -387,26 +512,36 @@ class PropsBuilder:
         self.traffic_light: TrafficLight | None = None
 
     def build(self) -> None:
-        """Place all signs and the traffic light."""
-        # Numbered signs (blue triangles)
-        # Signs 1 & 2: top straight, face pi (car approaches from left)
-        # Signs 3 & 4: bottom straight, face 0 (car approaches from right)
-        SignBuilder.triangle_sign(1, self._parent, 2700, 800, math.pi)
-        SignBuilder.triangle_sign(2, self._parent, 5300, 800, math.pi)
-        SignBuilder.triangle_sign(3, self._parent, 3900, 3200, 0)
-        SignBuilder.triangle_sign(4, self._parent, 2300, 3200, 0)
+        """Place all signs and the traffic light.
 
-        # Direction signs at DP1 and DP2 entrances
-        SignBuilder.circle_sign(self._parent, 2350, 1100, math.pi)
-        SignBuilder.circle_sign(self._parent, 4900, 1100, math.pi)
+        All signs are placed outside the outer boundary of the track,
+        on the roadside, like real road signs.
 
-        # PARE stop sign on right side
-        SignBuilder.octagon_sign("PARE", self._parent, 7500, 2000, math.pi / 2)
+        Outer boundary: top y≈312, bottom y≈3698.
+        Signs on top straight: y≈150 (above outer edge).
+        Signs on bottom straight: y≈3850 (below outer edge).
+        """
+        # Numbered signs (blue triangles) — outside the track, on the roadside
+        # Signs 1 & 2: above the top straight, facing down toward the road
+        SignBuilder.triangle_sign(1, self._parent, 3400, 150, 0)
+        SignBuilder.triangle_sign(2, self._parent, 6000, 150, 0)
+        # Signs 3 & 4: below the bottom straight, facing up toward the road
+        SignBuilder.triangle_sign(3, self._parent, 4600, 2950, math.pi)
+        SignBuilder.triangle_sign(4, self._parent, 1970, 2950, math.pi)
 
-        # Curve warning sign
-        SignBuilder.diamond_sign(self._parent, 3200, 3900, 0)
+        # Direction signs at DP1 and DP2 — above the top straight, facing down
+        SignBuilder.circle_sign(self._parent, 2150, 1080, 0)
+        SignBuilder.circle_sign(self._parent, 4650, 1080, 0)
 
-        # Traffic light
+        # PARE stop sign — outside track, right edge
+        SignBuilder.octagon_sign(
+            "PARE", self._parent, 8400, 2010, -math.pi / 2,
+        )
+
+        # Curve warning sign — outside track, below bottom edge
+        SignBuilder.diamond_sign(self._parent, 3100, 3850, math.pi)
+
+        # Traffic light — outside track, below bottom edge
         self.traffic_light = TrafficLight(
-            self._parent, 4500, 3900, 0,
+            self._parent, 5800, 3850, 0,
         )

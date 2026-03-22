@@ -59,9 +59,18 @@ _DP1_RIGHT = ((3056, 3057.5), (3406.09, 2247.6), (3419.21, 1788.7), (3056, 960))
 _DP2_LEFT = ((4873, 3050.5), (5223.09, 2240.6), (5236.21, 1781.7), (4873, 953))
 _DP2_RIGHT = ((5584, 3050.5), (5934.09, 2240.6), (5947.21, 1781.7), (5584, 953))
 
-# Yellow START line endpoints (SVG coords)
-_START_LINE_P1 = (331.849, 2690.04)
-_START_LINE_P2 = (962.849, 2319.04)
+# Yellow START line — computed from boundary semicircles at ~230° from center
+# Outer semicircle center (1704.5, 2005), radius 1693
+# Inner semicircle center (1810, 2005.25), radius 1045.25
+_START_ANGLE = math.radians(175)  # angle on left semicircle (bottom-left)
+_START_LINE_P1 = (
+    _OUTER_LEFT_CX + _OUTER_RADIUS * math.cos(_START_ANGLE),
+    (_OUTER_Y_TOP + _OUTER_Y_BOT) / 2.0 + _OUTER_RADIUS * math.sin(_START_ANGLE),
+)
+_START_LINE_P2 = (
+    _INNER_LEFT_CX + _INNER_RADIUS * math.cos(_START_ANGLE),
+    (_INNER_Y_TOP + _INNER_Y_BOT) / 2.0 + _INNER_RADIUS * math.sin(_START_ANGLE),
+)
 _START_LINE_COLOR = (1.0, 0.84, 0.0, 1.0)
 _START_LINE_WIDTH_SVG = 44.0  # SVG stroke-width
 
@@ -223,6 +232,10 @@ class TrackBuilder:
 
     def build(self) -> None:
         """Generate outer road, lane lines, and ground plane."""
+        # Disable backface culling so flat road surfaces are visible
+        # from any camera angle (chase cam, top-down, dashcam).
+        self._parent.setTwoSided(True)
+
         outer_pts = _capsule_points(
             _OUTER_LEFT_CX, _OUTER_RIGHT_CX, _OUTER_Y_TOP, _OUTER_Y_BOT, _OUTER_RADIUS
         )
@@ -239,10 +252,18 @@ class TrackBuilder:
         ol_node = _make_strip_mesh(outer_left, outer_right, LANE_LINE_COLOR, 0.002, "lane_outer")
         self._parent.attachNewNode(ol_node)
 
-        # Inner lane line
-        inner_left, inner_right = _offset_polyline(inner_pts, LANE_LINE_WIDTH)
-        il_node = _make_strip_mesh(inner_left, inner_right, LANE_LINE_COLOR, 0.002, "lane_inner")
-        self._parent.attachNewNode(il_node)
+        # Inner lane lines — drawn as separate segments with gaps at the
+        # shortcut junctions (DP1 and DP2).  The SVG inner boundary is:
+        #   Left portion:     (2360.5, 960)  → left semicircle → (2364.5, 3050.5)
+        #   Bottom connector: (3041.5, 3050.5) → (4891.5, 3050.5)
+        #   Top connector:    (3045.5, 960)    → (4894.5, 960)
+        #   Right portion:    (5573, 960)      → right semicircle → (5569, 3050.5)
+        for idx, seg in enumerate(self._inner_lane_segments()):
+            ll, lr = _offset_polyline(seg, LANE_LINE_WIDTH)
+            node = _make_strip_mesh(
+                ll, lr, LANE_LINE_COLOR, 0.002, f"lane_inner_{idx}"
+            )
+            self._parent.attachNewNode(node)
 
         # --- Phase 2: inner curve shortcut roads, lane lines, START line ---
         self._build_inner_curves()
@@ -250,6 +271,62 @@ class TrackBuilder:
 
         # Ground plane
         self._build_ground()
+
+    def _inner_lane_segments(self) -> list[list[tuple[float, float]]]:
+        """Return the 4 inner-boundary lane-line segments (with gaps).
+
+        The inner boundary is NOT a closed capsule — it has openings where
+        the shortcut curves connect.  From the SVG path data:
+
+          Left portion:     x=2360.5 (top) → left semicircle → x=2364.5 (bottom)
+          Bottom connector: x=3041.5 → x=4891.5  at y=3050.5
+          Top connector:    x=3045.5 → x=4894.5  at y=960
+          Right portion:    x=5573   (top) → right semicircle → x=5569   (bottom)
+        """
+        cy = (_INNER_Y_TOP + _INNER_Y_BOT) / 2.0
+        n = _SEMICIRCLE_SEGMENTS
+
+        # --- Left portion: top-straight stub → left semicircle → bottom stub ---
+        left_seg: list[tuple[float, float]] = []
+        # Top stub: from x=2360.5 to left_cx at y_top
+        left_seg.append(svg_to_world(2360.5, _INNER_Y_TOP))
+        left_seg.append(svg_to_world(_INNER_LEFT_CX, _INNER_Y_TOP))
+        # Left semicircle (top → bottom)
+        for i in range(1, n):
+            angle = -math.pi / 2.0 + math.pi * i / n
+            sx = _INNER_LEFT_CX + _INNER_RADIUS * math.cos(angle + math.pi)
+            sy = cy + _INNER_RADIUS * math.sin(angle)
+            left_seg.append(svg_to_world(sx, sy))
+        # Bottom stub: from left_cx to x=2364.5 at y_bot
+        left_seg.append(svg_to_world(_INNER_LEFT_CX, _INNER_Y_BOT))
+        left_seg.append(svg_to_world(2364.5, _INNER_Y_BOT))
+
+        # --- Bottom connector ---
+        bottom_seg = [
+            svg_to_world(3041.5, _INNER_Y_BOT),
+            svg_to_world(4891.5, _INNER_Y_BOT),
+        ]
+
+        # --- Top connector ---
+        top_seg = [
+            svg_to_world(3045.5, _INNER_Y_TOP),
+            svg_to_world(4894.5, _INNER_Y_TOP),
+        ]
+
+        # --- Right portion: top stub → right semicircle → bottom stub ---
+        right_seg: list[tuple[float, float]] = []
+        right_seg.append(svg_to_world(5573.0, _INNER_Y_TOP))
+        right_seg.append(svg_to_world(_INNER_RIGHT_CX, _INNER_Y_TOP))
+        # Right semicircle (top → bottom, going right)
+        for i in range(1, n):
+            angle = -math.pi / 2.0 + math.pi * i / n
+            sx = _INNER_RIGHT_CX + _INNER_RADIUS * math.cos(angle)
+            sy = cy + _INNER_RADIUS * math.sin(angle)
+            right_seg.append(svg_to_world(sx, sy))
+        right_seg.append(svg_to_world(_INNER_RIGHT_CX, _INNER_Y_BOT))
+        right_seg.append(svg_to_world(5569.0, _INNER_Y_BOT))
+
+        return [left_seg, bottom_seg, top_seg, right_seg]
 
     def _build_inner_curves(self) -> None:
         """Build inner curve shortcut roads and their lane lines."""

@@ -10,16 +10,14 @@ import pygame
 
 from src.input import PS5Controller
 from src.control import Controller, EStopManager, CommandWatchdog
-from tools.sim3d.config import TICK_RATE
-from tools.sim3d.vehicle import SimulatedVehicle3D
+from simulator.config import TICK_RATE
+from simulator.vehicle import SimulatedVehicle3D
 
 
 def main() -> None:
-    # Only init the pygame subsystems needed for PS5Controller (joystick).
-    # Avoid pygame.init() which would also init the display subsystem and
-    # potentially conflict with Panda3D's window.
-    pygame.joystick.init()
-    pygame.event.init()
+    # pygame.init() is needed — PS5Controller relies on the joystick and
+    # event subsystems, and pygame.event has no standalone init().
+    pygame.init()
 
     vehicle: SimulatedVehicle3D | None = None
     try:
@@ -69,8 +67,7 @@ def main() -> None:
     finally:
         if vehicle is not None:
             vehicle.close()
-        pygame.joystick.quit()
-        pygame.event.quit()
+        pygame.quit()
 
 
 if __name__ == "__main__":
