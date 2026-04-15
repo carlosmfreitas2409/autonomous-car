@@ -2,7 +2,17 @@ import cv2 as cv
 import numpy as np
 import time
 
+from pid import PIDController
+
 ratio = 1.5
+
+# PID tuning parameters
+# Output range: -1.0 (full left) to +1.0 (full right)
+Kp = 0.01
+Ki = 0.0
+Kd = 0.005
+
+pid = PIDController(kp=Kp, ki=Ki, kd=Kd, output_limits=(-1.0, 1.0))
 
 cap = cv.VideoCapture('road.mov')
 
@@ -24,6 +34,7 @@ while True:
     cap.set(cv.CAP_PROP_POS_FRAMES, 0)
     prev_track_center = None
     smoothed_center = None
+    pid.reset()
     continue
 
   # FPS
@@ -91,10 +102,24 @@ while True:
     smoothed_x = int(smoothed_center)
     error = smoothed_x - roi_center_x
 
+    steering = pid.update(error, dt)
+
     cv.line(blur_display, (smoothed_x, roi_y0), (smoothed_x, roi_y1), (0, 0, 255), 2)
     cv.putText(frame, f"Error: {error:+d}px", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    cv.putText(frame, f"Steer: {steering:+.2f}", (10, 60), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-  cv.putText(frame, f"FPS: {fps:.1f}", (10, 60), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    # Steering bar visualization
+    bar_y = height - 30
+    bar_w = width - 40
+    bar_cx = center_x
+    cv.line(frame, (20, bar_y), (20 + bar_w, bar_y), (100, 100, 100), 2)
+    cv.line(frame, (bar_cx, bar_y - 8), (bar_cx, bar_y + 8), (255, 255, 255), 1)
+    indicator_x = int(bar_cx + steering * (bar_w // 2))
+    indicator_x = max(20, min(20 + bar_w, indicator_x))
+    color = (0, 0, 255) if abs(steering) > 0.5 else (0, 255, 255) if abs(steering) > 0.2 else (0, 255, 0)
+    cv.circle(frame, (indicator_x, bar_y), 6, color, -1)
+
+  cv.putText(frame, f"FPS: {fps:.1f}", (10, 90), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
   img_concat = cv.hconcat([
     frame,
