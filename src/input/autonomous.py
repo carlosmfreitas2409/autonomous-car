@@ -1,4 +1,9 @@
-class PIDController:
+from typing import Optional
+
+from config import Config
+
+
+class _PIDController:
     def __init__(self, kp: float, ki: float, kd: float, output_limits: tuple[float, float] = (-1.0, 1.0)):
         self.kp = kp
         self.ki = ki
@@ -30,3 +35,20 @@ class PIDController:
     def reset(self):
         self._integral = 0.0
         self._prev_error = 0.0
+
+
+class Autonomous:
+    def __init__(self):
+        self._pid = _PIDController(kp=0.0, ki=0.0, kd=0.0, output_limits=(-1.0, 1.0))
+
+    def reset(self) -> None:
+        self._pid.reset()
+
+    def step(self, lane_offset: Optional[int], params: Config, dt: float) -> float:
+        if lane_offset is None:
+            self._pid.reset()
+            return 0.0
+        self._pid.kp = params.kp
+        self._pid.ki = params.ki
+        self._pid.kd = params.kd
+        return self._pid.update(lane_offset, dt)
