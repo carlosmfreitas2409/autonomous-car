@@ -4,6 +4,7 @@ import time
 from config import Config
 from perception.line_tracking import LineTracker
 from input.autonomous import Autonomous
+from input.ps5 import PS5Controller
 from gui import TunerGUI
 
 
@@ -38,6 +39,8 @@ cap.set(cv.CAP_PROP_POS_FRAMES, 0)
 gui = TunerGUI(frame_w, frame_h)
 tracker = LineTracker()
 autonomous = Autonomous()
+ps5 = PS5Controller()
+
 gui.set_pid_reset_callback(autonomous.reset)
 
 fps = 0.0
@@ -70,9 +73,8 @@ while gui.is_running():
     if gui.is_autonomous():
         steering = autonomous.step(perc.lane_offset, params, dt)
     else:
-        # Manual mode — future: steering = ps5.read_steering()
         autonomous.reset()
-        steering = 0.0
+        steering = ps5.poll()
 
     draw_steering_bar(perc.display_frame, steering)
 
@@ -81,4 +83,5 @@ while gui.is_running():
     gui.render_frame()
 
 cap.release()
+ps5.shutdown()
 gui.shutdown()
