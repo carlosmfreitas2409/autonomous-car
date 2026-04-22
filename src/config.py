@@ -20,3 +20,7 @@ class Config:
     kp: float = 0.01
     ki: float = 0.0
     kd: float = 0.005
+
+    # Speed
+    base_speed: float = 0.4
+    min_speed: float = 0.2
