@@ -44,11 +44,13 @@ class Autonomous:
     def reset(self) -> None:
         self._pid.reset()
 
-    def step(self, lane_offset: Optional[int], params: Config, dt: float) -> float:
+    def step(self, lane_offset: Optional[int], params: Config, dt: float) -> tuple[float, float]:
         if lane_offset is None:
             self._pid.reset()
-            return 0.0
+            return 0.0, 0.0
         self._pid.kp = params.kp
         self._pid.ki = params.ki
         self._pid.kd = params.kd
-        return self._pid.update(lane_offset, dt)
+        steering = self._pid.update(lane_offset, dt)
+        throttle = params.base_speed - abs(steering) * (params.base_speed - params.min_speed)
+        return steering, throttle

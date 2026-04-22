@@ -1,3 +1,4 @@
 opencv-python
 dearpygui
 pygame
+pyserial
