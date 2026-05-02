@@ -1,0 +1,5 @@
+{
+  "clangd.arguments": [
+    "--query-driver=${env:HOME}/.platformio/packages/toolchain-*/bin/*,${env:HOME}/.platformio/packages/tool-*/bin/*"
+  ]
+}
