@@ -11,23 +11,32 @@ class TurnSignal(Enum):
 
 @dataclass
 class LightsOutput:
-    # Combined front units: turn signal + DRL share one housing but are separate lamps.
+    # Front combined housings: turn signal + DRL share a housing but are separate lamps.
     front_left_signal: bool = False
     front_right_signal: bool = False
     front_left_drl: bool = False
     front_right_drl: bool = False
 
-    # Rear turn signals (dedicated lamps).
+    # Rear 4-in-1: signal wire.
     back_left_signal: bool = False
     back_right_signal: bool = False
 
-    # Low beam projector.
-    low_beam: bool = False
+    # Rear 4-in-1: dim "running" wire (the lamp's always-on position when running
+    # lights are engaged). Driven by the same relay as the front DRLs.
+    back_left_position: bool = False
+    back_right_position: bool = False
 
-    # Parking + tail + brake (combined rear lamps with 3 brightness levels).
-    # 0 = off, 1 = dim (parking/tail), 2 = bright (brake).
-    tail_left: int = 0
-    tail_right: int = 0
+    # Rear 4-in-1: brake wire. Independent of position — adds brightness on top
+    # of the position level, or lights the lamp directly from off to bright.
+    back_left_brake: bool = False
+    back_right_brake: bool = False
+
+    # Rear 4-in-1: reverse wire.
+    reverse_left: bool = False
+    reverse_right: bool = False
+
+    # Front low beam.
+    low_beam: bool = False
 
     # Logo projectors.
     logo_left: bool = False
@@ -41,21 +50,13 @@ class LightsController:
         self.low_beam = False
         self.logo = False
         self.brake = False
+        self.reverse = False
         self.stopped = False
 
     def compute(self) -> LightsOutput:
         left_active = self.turn_signal in (TurnSignal.LEFT, TurnSignal.HAZARD)
         right_active = self.turn_signal in (TurnSignal.RIGHT, TurnSignal.HAZARD)
-
-        running = self.drl or self.low_beam
         braking = self.brake or self.stopped
-
-        if braking:
-            tail = 2
-        elif running:
-            tail = 1
-        else:
-            tail = 0
 
         return LightsOutput(
             front_left_signal=left_active,
@@ -64,9 +65,13 @@ class LightsController:
             front_right_drl=self.drl,
             back_left_signal=left_active,
             back_right_signal=right_active,
+            back_left_position=self.drl,
+            back_right_position=self.drl,
+            back_left_brake=braking,
+            back_right_brake=braking,
+            reverse_left=self.reverse,
+            reverse_right=self.reverse,
             low_beam=self.low_beam,
-            tail_left=tail,
-            tail_right=tail,
             logo_left=self.logo,
             logo_right=self.logo,
         )

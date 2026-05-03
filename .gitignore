@@ -1,6 +1,8 @@
 .conductor
 road.mov
 
+.venv
+
 __pycache__/
 
 .vscode/.browse.c_cpp.db*

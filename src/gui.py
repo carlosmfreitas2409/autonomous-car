@@ -175,6 +175,8 @@ class TunerGUI:
                             dpg.add_spacer(width=4)
                             self._tags["brake"] = dpg.add_checkbox(label="Brake", callback=self._on_brake)
                             dpg.add_spacer(width=4)
+                            self._tags["reverse"] = dpg.add_checkbox(label="Reverse", callback=self._on_reverse)
+                            dpg.add_spacer(width=4)
                             self._tags["logo"] = dpg.add_checkbox(label="Logo Projector", callback=self._on_logo)
                         # with dpg.group(horizontal=True):
 
@@ -299,6 +301,10 @@ class TunerGUI:
     def _on_brake(self, _sender, value):
         if self._lights is not None:
             self._lights.brake = value
+
+    def _on_reverse(self, _sender, value):
+        if self._lights is not None:
+            self._lights.reverse = value
 
     def update_textures(self, result: LineTrackingResult):
         dpg.set_value(self._tags["tex_main"], _frame_to_texture(result.display_frame))
