@@ -44,19 +44,27 @@ class LightsOutput:
 
 
 class LightsController:
+    _BRAKE_THROTTLE_THRESHOLD = 0.05
+    _BRAKE_DECEL_THRESHOLD = 0.15
+
     def __init__(self):
         self.turn_signal = TurnSignal.OFF
         self.drl = False
         self.low_beam = False
         self.logo = False
-        self.brake = False
         self.reverse = False
-        self.stopped = False
+        self._braking = False
+        self._prev_throttle = 0.0
+
+    def update(self, throttle: float, *, estopped: bool) -> None:
+        decelerating = (self._prev_throttle - throttle) > self._BRAKE_DECEL_THRESHOLD
+        coasting = throttle < self._BRAKE_THROTTLE_THRESHOLD
+        self._braking = estopped or coasting or decelerating
+        self._prev_throttle = throttle
 
     def compute(self) -> LightsOutput:
         left_active = self.turn_signal in (TurnSignal.LEFT, TurnSignal.HAZARD)
         right_active = self.turn_signal in (TurnSignal.RIGHT, TurnSignal.HAZARD)
-        braking = self.brake or self.stopped
 
         return LightsOutput(
             front_left_signal=left_active,
@@ -67,8 +75,8 @@ class LightsController:
             back_right_signal=right_active,
             back_left_position=self.drl,
             back_right_position=self.drl,
-            back_left_brake=braking,
-            back_right_brake=braking,
+            back_left_brake=self._braking,
+            back_right_brake=self._braking,
             reverse_left=self.reverse,
             reverse_right=self.reverse,
             low_beam=self.low_beam,

@@ -56,9 +56,6 @@ class Arduino:
     self._master = _SerialPort(baudrate)
     self._lights = _SerialPort(baudrate)
 
-  def list_ports(self) -> list[str]:
-    return [port.device for port in serial.tools.list_ports.comports()]
-
   def set_master_port(self, port: str):
     self._master.open(port)
 
