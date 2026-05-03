@@ -1,6 +1,7 @@
 import dearpygui.dearpygui as dpg
 import numpy as np
 import cv2 as cv
+import serial
 
 from config import Config
 from lights import LightsController, TurnSignal
@@ -30,9 +31,10 @@ class TunerGUI:
         self._autonomous = True
         self._stopped = False
         self._tags = {}
-        self._list_ports_cb = None
         self._lights: LightsController | None = None
         self._build(frame_w, frame_h)
+
+        self._refresh_ports()
 
     def _snap_odd(self, sender, value):
         dpg.set_value(sender, max(3, value | 1))
@@ -173,8 +175,6 @@ class TunerGUI:
                             dpg.add_spacer(width=4)
                             self._tags["low_beam"] = dpg.add_checkbox(label="Low Beam", callback=self._on_low_beam)
                             dpg.add_spacer(width=4)
-                            self._tags["brake"] = dpg.add_checkbox(label="Brake", callback=self._on_brake)
-                            dpg.add_spacer(width=4)
                             self._tags["reverse"] = dpg.add_checkbox(label="Reverse", callback=self._on_reverse)
                             dpg.add_spacer(width=4)
                             self._tags["logo"] = dpg.add_checkbox(label="Logo Projector", callback=self._on_logo)
@@ -248,10 +248,6 @@ class TunerGUI:
     def set_pid_reset_callback(self, callback):
         dpg.set_item_callback(self._tags["pid_reset"], callback)
 
-    def set_list_ports_callback(self, callback):
-        self._list_ports_cb = callback
-        self._refresh_ports()
-
     def set_master_port_callback(self, callback):
         dpg.set_item_callback(self._tags["master_com"], lambda _s, port, _u: callback(port))
 
@@ -265,9 +261,7 @@ class TunerGUI:
         self._lights = controller
 
     def _refresh_ports(self):
-        if self._list_ports_cb is None:
-            return
-        ports = list(self._list_ports_cb())
+        ports = [port.device for port in serial.tools.list_ports.comports()]
         for tag_key in ("master_com", "lights_com", "sensors_com"):
             tag = self._tags[tag_key]
             current = dpg.get_value(tag)
@@ -297,10 +291,6 @@ class TunerGUI:
     def _on_logo(self, _sender, value):
         if self._lights is not None:
             self._lights.logo = value
-
-    def _on_brake(self, _sender, value):
-        if self._lights is not None:
-            self._lights.brake = value
 
     def _on_reverse(self, _sender, value):
         if self._lights is not None:

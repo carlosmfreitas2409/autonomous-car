@@ -61,13 +61,13 @@ ps5 = PS5Controller()
 lights = LightsController()
 
 gui.set_pid_reset_callback(autonomous.reset)
-gui.set_list_ports_callback(arduino.list_ports)
 gui.set_master_port_callback(arduino.set_master_port)
 gui.set_lights_port_callback(arduino.set_lights_port)
 gui.set_lights_controller(lights)
 
 fps = 0.0
 prev_time = time.time()
+prev_stopped = False
 
 while gui.is_running():
     now = time.time()
@@ -78,13 +78,16 @@ while gui.is_running():
         fps = 0.9 * fps + 0.1 / dt
 
     if gui.is_stopped():
+        if not prev_stopped:
+            arduino.send_estop()
+        prev_stopped = True
         autonomous.reset()
-        lights.stopped = True
+        lights.update(0.0, estopped=True)
         lights_output = lights.compute()
         arduino.send_lights(lights_output)
-        # gui.update_lights(lights_output)
         gui.render_frame()
         continue
+    prev_stopped = False
 
     ret, frame = cap.read()
     if not ret:
@@ -106,15 +109,16 @@ while gui.is_running():
     draw_steering_bar(perc.display_frame, steering)
     draw_throttle_bar(perc.display_frame, throttle)
 
-    lights.stopped = throttle < 0.05
+    lights.update(throttle, estopped=False)
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
+    arduino.send_motor(throttle, steering)
 
     gui.update_textures(perc)
     gui.update_telemetry(fps, perc.lane_offset or 0, steering, throttle)
-    # gui.update_lights(lights_output)
     gui.render_frame()
 
 cap.release()
 ps5.shutdown()
+arduino.close()
 gui.shutdown()
