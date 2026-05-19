@@ -1,7 +1,7 @@
 import dearpygui.dearpygui as dpg
 import numpy as np
 import cv2 as cv
-import serial
+import serial.tools.list_ports
 
 from config import Config
 from lights import LightsController, TurnSignal

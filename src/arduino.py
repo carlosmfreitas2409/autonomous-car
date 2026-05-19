@@ -1,6 +1,5 @@
 import serial
 import logging
-import serial.tools.list_ports
 
 from typing import Optional
 

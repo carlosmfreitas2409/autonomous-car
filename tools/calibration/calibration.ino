@@ -15,9 +15,9 @@ constexpr uint8_t PIN_STEER_RPWM = 11;
 constexpr uint8_t PIN_STEER_LPWM = 12;
 
 constexpr uint16_t MAX_PULSE_MS = 500;
-constexpr uint8_t MAX_PWM = 120;
-constexpr uint8_t DEFAULT_PWM = 80;
-constexpr uint16_t ANGLE_PRINT_PERIOD_MS = 100;
+constexpr uint8_t MAX_PWM = 140;
+constexpr uint8_t DEFAULT_PWM = 90;
+constexpr uint16_t ANGLE_PRINT_PERIOD_MS = 500;
 
 AS5600 sensor;
 
