@@ -70,7 +70,7 @@ class TunerGUI:
             self._tags["logo_tex"] = dpg.add_static_texture(logo_width, logo_height, logo_data)
             self._tags["tex_main"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
             self._tags["tex_blur"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
-            self._tags["tex_canny"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
+            self._tags["tex_threshold"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
 
         grid_w = frame_w // 2
         grid_h = frame_h // 2
@@ -119,8 +119,8 @@ class TunerGUI:
                         dpg.add_text("Blur + ROI")
                         dpg.add_image(self._tags["tex_blur"], width=grid_w, height=grid_h)
                     with dpg.group():
-                        dpg.add_text("Canny")
-                        dpg.add_image(self._tags["tex_canny"], width=grid_w, height=grid_h)
+                        dpg.add_text("Threshold")
+                        dpg.add_image(self._tags["tex_threshold"], width=grid_w, height=grid_h)
 
                 with dpg.table_row():
                     with dpg.group():
@@ -146,7 +146,7 @@ class TunerGUI:
                         self._tags["roi_y1"] = dpg.add_slider_float(label="ROI Y End", default_value=0.92, min_value=0.5, max_value=0.99, format="%.2f", width=form_w)
 
                         dpg.add_spacer(height=8)
-                        dpg.add_text("Canny", color=(130, 200, 255))
+                        dpg.add_text("Threshold", color=(130, 200, 255))
                         self._tags["blur_k"] = dpg.add_slider_int(label="Blur Kernel", default_value=3, min_value=3, max_value=15, callback=self._snap_odd, width=form_w)
                         self._tags["block_size"] = dpg.add_slider_int(label="Block Size", default_value=51, min_value=3, max_value=151, callback=self._snap_odd, width=form_w)
                         self._tags["threshold_c"] = dpg.add_slider_int(label="Constant", default_value=-25, min_value=-50, max_value=50, width=form_w)
@@ -299,7 +299,7 @@ class TunerGUI:
     def update_textures(self, result: LineTrackingResult):
         dpg.set_value(self._tags["tex_main"], _frame_to_texture(result.display_frame))
         dpg.set_value(self._tags["tex_blur"], _frame_to_texture(result.blur_frame))
-        dpg.set_value(self._tags["tex_canny"], _frame_to_texture(result.binary_frame))
+        dpg.set_value(self._tags["tex_threshold"], _frame_to_texture(result.binary_frame))
 
     # def update_lights(self, output: LightsOutput):
     #     def sig(on: bool):

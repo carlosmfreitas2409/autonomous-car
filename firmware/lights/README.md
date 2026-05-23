@@ -18,9 +18,9 @@ pio run -d firmware/lights -t compiledb
 
 ## Hardware
 
-- **Board**: Arduino Uno.
+- **Board**: Arduino Nano (ATmega328P, new bootloader). Same firmware pin map as Uno — no source changes required. If upload fails, switch `platformio.ini` to `board = nanoatmega328` and `upload_speed = 57600` (old bootloader).
 - **Relays**: 7-channel active-LOW relay board (the common blue Arduino module).
-- **Power**: relay coils on a separate 5V rail; common ground with the Uno. Do not back-feed the Uno from the relay supply.
+- **Power**: relay coils on a separate 5V rail; common ground with the Nano. Do not back-feed the Nano from the relay supply.
 
 ### Pinout & relay map
 

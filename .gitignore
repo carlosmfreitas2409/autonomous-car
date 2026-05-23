@@ -1,5 +1,5 @@
 .conductor
-road.mov
+assets/*.mov
 
 .venv
 
