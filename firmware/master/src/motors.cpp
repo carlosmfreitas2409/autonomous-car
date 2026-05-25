@@ -9,6 +9,8 @@ namespace motors {
 namespace {
 
 struct DriveBridge {
+  uint8_t r_en;
+  uint8_t l_en;
   uint8_t rpwm;
   uint8_t lpwm;
 };
@@ -16,10 +18,10 @@ struct DriveBridge {
 constexpr uint8_t BRIDGE_COUNT = 4;
 
 const DriveBridge bridges[BRIDGE_COUNT] = {
-    {config::PIN_FL_RPWM, config::PIN_FL_LPWM},
-    {config::PIN_FR_RPWM, config::PIN_FR_LPWM},
-    {config::PIN_RL_RPWM, config::PIN_RL_LPWM},
-    {config::PIN_RR_RPWM, config::PIN_RR_LPWM},
+    {config::PIN_FL_R_EN, config::PIN_FL_L_EN, config::PIN_FL_RPWM, config::PIN_FL_LPWM},
+    {config::PIN_FR_R_EN, config::PIN_FR_L_EN, config::PIN_FR_RPWM, config::PIN_FR_LPWM},
+    {config::PIN_RL_R_EN, config::PIN_RL_L_EN, config::PIN_RL_RPWM, config::PIN_RL_LPWM},
+    {config::PIN_RR_R_EN, config::PIN_RR_L_EN, config::PIN_RR_RPWM, config::PIN_RR_LPWM},
 };
 
 uint8_t target_pwm = 0;
@@ -33,13 +35,23 @@ void write_all_pwm(uint8_t value) {
   }
 }
 
+void write_all_enable(bool on) {
+  for (uint8_t i = 0; i < BRIDGE_COUNT; ++i) {
+    digitalWrite(bridges[i].r_en, on ? HIGH : LOW);
+    digitalWrite(bridges[i].l_en, on ? HIGH : LOW);
+  }
+}
+
 }  // namespace
 
 void init() {
   for (uint8_t i = 0; i < BRIDGE_COUNT; ++i) {
+    pinMode(bridges[i].r_en, OUTPUT);
+    pinMode(bridges[i].l_en, OUTPUT);
     pinMode(bridges[i].rpwm, OUTPUT);
     pinMode(bridges[i].lpwm, OUTPUT);
   }
+  write_all_enable(false);
   write_all_pwm(0);
   target_pwm = 0;
   current_pwm = 0;
@@ -56,6 +68,7 @@ uint8_t current_throttle() {
 
 void enable() {
   enabled = true;
+  write_all_enable(true);
 }
 
 void disable() {
@@ -63,6 +76,7 @@ void disable() {
   target_pwm = 0;
   current_pwm = 0;
   write_all_pwm(0);
+  write_all_enable(false);
 }
 
 void update() {
