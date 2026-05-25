@@ -11,6 +11,8 @@
 #include <Arduino.h>
 #include <Wire.h>
 
+constexpr uint8_t PIN_STEER_R_EN = 30;
+constexpr uint8_t PIN_STEER_L_EN = 31;
 constexpr uint8_t PIN_STEER_RPWM = 11;
 constexpr uint8_t PIN_STEER_LPWM = 12;
 
@@ -192,8 +194,12 @@ void poll_serial() {
 }
 
 void setup() {
+  pinMode(PIN_STEER_R_EN, OUTPUT);
+  pinMode(PIN_STEER_L_EN, OUTPUT);
   pinMode(PIN_STEER_RPWM, OUTPUT);
   pinMode(PIN_STEER_LPWM, OUTPUT);
+  digitalWrite(PIN_STEER_R_EN, HIGH);
+  digitalWrite(PIN_STEER_L_EN, HIGH);
   analogWrite(PIN_STEER_RPWM, 0);
   analogWrite(PIN_STEER_LPWM, 0);
 

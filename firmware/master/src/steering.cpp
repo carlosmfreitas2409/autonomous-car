@@ -77,8 +77,13 @@ bool init() {
   if (!sensor.isConnected()) return false;
   if (!sensor.magnetDetected()) return false;
 
+  pinMode(config::PIN_STEER_R_EN, OUTPUT);
+  pinMode(config::PIN_STEER_L_EN, OUTPUT);
   pinMode(config::PIN_STEER_RPWM, OUTPUT);
   pinMode(config::PIN_STEER_LPWM, OUTPUT);
+  
+  digitalWrite(config::PIN_STEER_R_EN, LOW);
+  digitalWrite(config::PIN_STEER_L_EN, LOW);
   analogWrite(config::PIN_STEER_RPWM, 0);
   analogWrite(config::PIN_STEER_LPWM, 0);
 
@@ -113,12 +118,16 @@ void freeze_target_at_current() {
 
 void enable() {
   enabled = true;
+  digitalWrite(config::PIN_STEER_R_EN, HIGH);
+  digitalWrite(config::PIN_STEER_L_EN, HIGH);
 }
 
 void disable() {
   enabled = false;
   analogWrite(config::PIN_STEER_RPWM, 0);
   analogWrite(config::PIN_STEER_LPWM, 0);
+  digitalWrite(config::PIN_STEER_R_EN, LOW);
+  digitalWrite(config::PIN_STEER_L_EN, LOW);
   last_output_pwm = 0;
 }
 
