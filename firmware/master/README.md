@@ -2,7 +2,7 @@
 
 Firmware for the master microcontroller on the Kigali autonomous car. Owns the four drive motors (one BTS7960 per wheel) and the Ackermann-linkage steering motor (a fifth BTS7960 driving an electric-window motor whose position is read by an AS5600 magnetic angle sensor over I2C). The Python host in `../../src/arduino.py` already speaks the wire protocol.
 
-A future slave Arduino will own the lights and talk to the master over `Serial1` (pins 18/19 reserved).
+Also acts as the **CAN gateway** to the lights Nano: the host sends `L` over USB serial, the master packs it into a CAN frame and transmits it on the MCP2515 bus (`firmware/lights/` is the receiver). One USB cable to the computer; the lights board is reachable only via CAN.
 
 ## Build & flash
 
@@ -40,8 +40,8 @@ Telemetry output is gated by a compile flag — uncomment `-DTELEMETRY_ENABLED=1
 | RR drive RPWM / LPWM | 46 / 3 | T5 / T3 |
 | Steering RPWM / LPWM | 11 / 12 | T1 |
 | AS5600 SDA / SCL | 20 / 21 | I2C @ 400 kHz |
+| MCP2515 SPI (CS / MISO / MOSI / SCK) | 53 / 50 / 51 / 52 | — |
 | Status LED | 13 | — |
-| Reserved Serial1 (future slave) | 18 / 19 | — |
 
 All BTS7960 `R_EN` and `L_EN` pins are tied directly to the Arduino's 5V rail — bridges are always armed. "Estop" means PWM = 0 on every drive and steering output (software-only). The BTS7960's internal pull-downs on RPWM/LPWM keep the bridges quiet during boot, before the firmware initializes its pins.
 
@@ -56,12 +56,13 @@ USB Serial @ 115200 baud, newline-terminated ASCII.
 | `M` | `<throttle 0..255> <steering -255..+255>` | Set drive throttle and steering target. Resets watchdog. First non-zero `M` clears latched estop. |
 | `E` | — | Emergency stop. Latched. All PWMs forced to 0. Cleared only by a subsequent non-zero `M`. |
 | `H` | — | Heartbeat — resets watchdog without changing setpoints. |
+| `L` | `<left> <right> <drl> <low> <brake> <reverse> <logo>` | Pack the 7 booleans into a bitmask and transmit as CAN ID `0x100` to the lights Nano. Does **not** affect the drive watchdog. |
 
-Malformed lines produce `ERR <verb>` on the same serial.
+Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure (no MCP2515 / bus off) produces `ERR CAN`.
 
 ### Outbound (master → host, optional)
 
-- `RDY kigali-master v1` — boot banner.
+- `RDY car-master v1` — boot banner.
 - `ERR ...` — parse errors and fault notifications.
 - `T <angle_raw> <target_raw> <throttle> <steer_pwm> <state> <wd_ms>` — telemetry at 10 Hz, behind `TELEMETRY_ENABLED` compile flag. `state` ∈ `R W E F`.
 
@@ -98,7 +99,7 @@ The values stay correct until the magnet, sensor, or linkage are physically move
 
 ## Bench verification (in order)
 
-1. Open the monitor → `RDY kigali-master v1`.
+1. Open the monitor → `RDY car-master v1`.
 2. Sensor only: rotate the steering shaft by hand (motor power off), enable telemetry, watch `angle_raw` wrap cleanly 0..4095.
 3. Wheels off the ground: `M 60 0` → all four wheels spin equally; `E` → all wheels stop (PWM = 0 on every bridge); `M 60 0` again → still stopped (latched).
 4. `M 255 0` from rest → wheels reach full PWM in ~300 ms.

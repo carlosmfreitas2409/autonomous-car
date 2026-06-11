@@ -1,7 +1,11 @@
 import cv2 as cv
+import logging
 import time
 
 from arduino import Arduino
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
 from config import Config
 from lights import LightsController
 from perception.line_tracking import LineTracker
@@ -62,7 +66,6 @@ lights = LightsController()
 
 gui.set_pid_reset_callback(autonomous.reset)
 gui.set_master_port_callback(arduino.set_master_port)
-gui.set_lights_port_callback(arduino.set_lights_port)
 gui.set_lights_controller(lights)
 
 fps = 0.0
@@ -105,6 +108,7 @@ while gui.is_running():
     else:
         autonomous.reset()
         steering, throttle = ps5.poll()
+        throttle *= params.base_speed
 
     draw_steering_bar(perc.display_frame, steering)
     draw_throttle_bar(perc.display_frame, throttle)

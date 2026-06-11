@@ -1,5 +1,6 @@
 import serial
 import logging
+import time
 
 from typing import Optional
 
@@ -16,8 +17,12 @@ class _SerialPort:
   def open(self, port: str):
     try:
       self.close()
-      self._serial = serial.Serial(port, self._baudrate, timeout=0.01)
-      logger.info(f"Opened serial port {port} at {self._baudrate} baud")
+      new_serial = serial.Serial(port, self._baudrate, timeout=0.01)
+      logger.info(f"Opened serial port {port} at {self._baudrate} baud, waiting for Arduino to boot")
+      time.sleep(2.5)
+      new_serial.reset_input_buffer()
+      self._serial = new_serial
+      logger.info("Arduino ready")
     except serial.SerialException as e:
       logger.error(f"Failed to open serial port {port}: {e}")
       raise
@@ -53,13 +58,9 @@ class _SerialPort:
 class Arduino:
   def __init__(self, baudrate: int = 115200):
     self._master = _SerialPort(baudrate)
-    self._lights = _SerialPort(baudrate)
 
   def set_master_port(self, port: str):
     self._master.open(port)
-
-  def set_lights_port(self, port: str):
-    self._lights.open(port)
 
   def send_motor(self, throttle: float, steering: float):
     throttle_pwm = int(max(0.0, min(1.0, throttle)) * 255)
@@ -83,10 +84,9 @@ class Arduino:
     brake = int(output.back_left_brake or output.back_right_brake)
     reverse = int(output.reverse_left or output.reverse_right)
     logo = int(output.logo_left or output.logo_right)
-    self._lights.write(f"L {left} {right} {drl} {low} {brake} {reverse} {logo}")
+    self._master.write(f"L {left} {right} {drl} {low} {brake} {reverse} {logo}")
 
   def close(self):
+    self._master.write("L 0 0 0 0 0 0 0")
     self._master.write("E")
-    self._lights.write("L 0 0 0 0 0 0 0")
     self._master.close()
-    self._lights.close()

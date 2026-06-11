@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "can_bus.h"
 #include "motors.h"
 #include "safety.h"
 #include "steering.h"
@@ -53,6 +54,38 @@ void handle_heartbeat() {
   safety::note_command();
 }
 
+bool parse_bit_token(char*& save, uint8_t bit, uint8_t& mask) {
+  char* tok = strtok_r(nullptr, " \t", &save);
+  if (!tok) return false;
+  if (atol(tok) != 0) mask |= (uint8_t)(1u << bit);
+  return true;
+}
+
+void handle_lights(char* args) {
+  char* save = nullptr;
+  char* first = strtok_r(args, " \t", &save);
+  if (!first) {
+    Serial.println(F("ERR L"));
+    return;
+  }
+
+  uint8_t mask = 0;
+  if (atol(first) != 0) mask |= (uint8_t)(1u << 0);  // left
+  if (!parse_bit_token(save, 1, mask) ||             // right
+      !parse_bit_token(save, 2, mask) ||             // drl
+      !parse_bit_token(save, 3, mask) ||             // low beam
+      !parse_bit_token(save, 4, mask) ||             // brake
+      !parse_bit_token(save, 5, mask) ||             // reverse
+      !parse_bit_token(save, 6, mask)) {             // logo
+    Serial.println(F("ERR L"));
+    return;
+  }
+
+  if (!can_bus::send_lights(mask)) {
+    Serial.println(F("ERR CAN"));
+  }
+}
+
 void dispatch(char* line) {
   while (*line == ' ' || *line == '\t') ++line;
   if (*line == 0) return;
@@ -64,6 +97,7 @@ void dispatch(char* line) {
     case 'M': handle_motor(args); break;
     case 'E': handle_estop(); break;
     case 'H': handle_heartbeat(); break;
+    case 'L': handle_lights(args); break;
     default:
       Serial.print(F("ERR "));
       Serial.println(verb);

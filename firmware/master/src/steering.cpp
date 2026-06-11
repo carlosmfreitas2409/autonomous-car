@@ -40,6 +40,10 @@ uint16_t wrap_4096(int32_t v) {
 }
 
 void drive_pwm(int16_t signed_pwm) {
+  // Map the loop's logical direction (positive = raise raw angle) onto the
+  // physical H-bridge wiring for this build.
+  if (config::STEER_INVERT_PWM) signed_pwm = -signed_pwm;
+
   if (signed_pwm > config::STEER_MAX_PWM) signed_pwm = config::STEER_MAX_PWM;
   if (signed_pwm < -(int16_t)config::STEER_MAX_PWM) signed_pwm = -(int16_t)config::STEER_MAX_PWM;
   last_output_pwm = signed_pwm;
@@ -173,10 +177,15 @@ void update() {
   }
 
   // Soft limits: refuse to drive past the configured mechanical stop, but
-  // always allow recovery in the opposite direction.
+  // always allow recovery in the opposite direction. The raw spans may be
+  // either sign depending on sensor mounting orientation (here turning left
+  // raises the raw angle), so derive numeric upper/lower bounds instead of
+  // assuming right is the positive direction.
   int16_t cur_offset = wrap_diff_4096(current_angle, config::STEER_CENTER_RAW);
-  if (output > 0 && cur_offset >= right_span) output = 0;
-  if (output < 0 && cur_offset <= left_span) output = 0;
+  int16_t upper_offset = max(left_span, right_span);
+  int16_t lower_offset = min(left_span, right_span);
+  if (output > 0 && cur_offset >= upper_offset) output = 0;
+  if (output < 0 && cur_offset <= lower_offset) output = 0;
 
   drive_pwm(output);
 }

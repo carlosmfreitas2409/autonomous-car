@@ -29,7 +29,7 @@ _TURN_SIGNAL_LABELS = {
 class TunerGUI:
     def __init__(self, frame_w: int, frame_h: int):
         self._autonomous = True
-        self._stopped = False
+        self._stopped = True
         self._tags = {}
         self._lights: LightsController | None = None
         self._build(frame_w, frame_h)
@@ -155,8 +155,6 @@ class TunerGUI:
                         dpg.add_spacer(height=8)
                         dpg.add_text("COM", color=(130, 200, 255))
                         self._tags["master_com"] = dpg.add_combo(items=[], label="Master COM", width=form_w)
-                        self._tags["sensors_com"] = dpg.add_combo(items=[], label="Sensors COM", width=form_w)
-                        self._tags["lights_com"] = dpg.add_combo(items=[], label="Lights COM", width=form_w)
                         self._tags["refresh_ports"] = dpg.add_button(label="Refresh", callback=self._refresh_ports)
 
                         dpg.add_spacer(height=8)
@@ -251,18 +249,12 @@ class TunerGUI:
     def set_master_port_callback(self, callback):
         dpg.set_item_callback(self._tags["master_com"], lambda _s, port, _u: callback(port))
 
-    def set_lights_port_callback(self, callback):
-        dpg.set_item_callback(self._tags["lights_com"], lambda _s, port, _u: callback(port))
-
-    def set_sensors_port_callback(self, callback):
-        dpg.set_item_callback(self._tags["sensors_com"], lambda _s, port, _u: callback(port))
-
     def set_lights_controller(self, controller: LightsController):
         self._lights = controller
 
     def _refresh_ports(self):
         ports = [port.device for port in serial.tools.list_ports.comports()]
-        for tag_key in ("master_com", "lights_com", "sensors_com"):
+        for tag_key in ("master_com",):
             tag = self._tags[tag_key]
             current = dpg.get_value(tag)
             dpg.configure_item(tag, items=ports)

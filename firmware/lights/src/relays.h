@@ -18,6 +18,8 @@ void init();
 
 void set_intent(const Intent& intent);
 
+void all_off();
+
 void update(uint32_t now_ms);
 
 }

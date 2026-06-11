@@ -18,9 +18,13 @@ constexpr uint8_t PIN_RELAY_LED        = 5;
 
 constexpr uint8_t PIN_STATUS_LED = 13;
 
-// Turn-signal cadence. ON must be long enough for the front sequential module
-// to finish a full sweep — bench-time it with a stopwatch and bump if a sweep
-// gets cut off mid-animation. OFF is the visible blink gap between cycles.
+constexpr uint8_t PIN_CAN_CS  = 10;
+constexpr uint8_t PIN_CAN_INT = 2;
+
+constexpr uint16_t CAN_LIGHTS_ID = 0x100;
+
+constexpr uint32_t CAN_WATCHDOG_MS = 1000;
+
 constexpr uint16_t BLINK_ON_MS  = 400;
 constexpr uint16_t BLINK_OFF_MS = 250;
 
