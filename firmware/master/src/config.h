@@ -33,6 +33,10 @@ constexpr uint8_t PIN_STEER_LPWM = 12;
 
 constexpr uint8_t PIN_STATUS_LED = 13;
 
+constexpr uint8_t PIN_CAN_CS = 53;
+
+constexpr uint16_t CAN_LIGHTS_ID = 0x100;
+
 constexpr uint16_t CONTROL_LOOP_HZ = 200;
 constexpr uint16_t CONTROL_LOOP_PERIOD_MS = 1000 / CONTROL_LOOP_HZ;
 
@@ -41,15 +45,23 @@ constexpr uint16_t WATCHDOG_TIMEOUT_MS = 500;
 constexpr uint8_t DRIVE_SLEW_UP_PER_TICK = 4;
 constexpr uint8_t DRIVE_SLEW_DOWN_PER_TICK = 32;
 
-constexpr float STEER_KP = 0.6f;
-constexpr float STEER_KD = 0.02f;
-constexpr int16_t STEER_DEADBAND_UNITS = 6;
-constexpr uint8_t STEER_MIN_MOVE_PWM = 60;
+constexpr float STEER_KP = 0.3f;
+constexpr float STEER_KD = 0.03f;
+constexpr int16_t STEER_DEADBAND_UNITS = 10;
+constexpr uint8_t STEER_MIN_MOVE_PWM = 120;
 constexpr uint8_t STEER_MAX_PWM = 200;
 
-constexpr uint16_t STEER_CENTER_RAW = 2048;
-constexpr uint16_t STEER_MAX_LEFT_RAW = 1536;
-constexpr uint16_t STEER_MAX_RIGHT_RAW = 2560;
+constexpr uint16_t STEER_CENTER_RAW = 2785;
+constexpr uint16_t STEER_MAX_LEFT_RAW = 3021;
+constexpr uint16_t STEER_MAX_RIGHT_RAW = 2704;
+
+// On this build, positive PWM on PIN_STEER_RPWM drives the wheels toward the
+// MAX_RIGHT_RAW reading (3021), which is *below* center — i.e. positive PWM
+// lowers the raw angle. The control loop assumes positive output should raise
+// the angle, so invert the H-bridge direction to match the sensor's mounting.
+// Flip this to false if the steering motor leads or sensor magnet orientation
+// change.
+constexpr bool STEER_INVERT_PWM = true;
 
 constexpr uint16_t TELEMETRY_PERIOD_MS = 100;
 

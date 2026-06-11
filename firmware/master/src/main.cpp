@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include "can_bus.h"
 #include "command_parser.h"
 #include "config.h"
 #include "motors.h"
@@ -45,11 +46,16 @@ void setup() {
 
   safety::init();
 
-  Serial.println(F("RDY car-control v1"));
+  const bool can_ok = can_bus::init();
+
+  Serial.println(F("RDY car-master v1"));
 
   if (!sensor_ok) {
     Serial.println(F("ERR AS5600"));
     safety::enter_fault();
+  }
+  if (!can_ok) {
+    Serial.println(F("ERR CAN"));
   }
 
   last_control_ms = millis();

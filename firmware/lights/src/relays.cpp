@@ -39,6 +39,10 @@ void set_intent(const Intent& next) {
   intent = next;
 }
 
+void all_off() {
+  intent = Intent{};
+}
+
 void update(uint32_t now_ms) {
   write_relay(config::PIN_RELAY_DRL, intent.drl);
   write_relay(config::PIN_RELAY_LOW_BEAM, intent.low_beam);
