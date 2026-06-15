@@ -19,7 +19,7 @@ void update();
 
 void trigger_estop();
 
-void clear_estop_via_motor_command(uint8_t throttle, int16_t steering);
+void clear_estop_via_motor_command(int16_t throttle, int16_t steering);
 
 void enter_fault();
 

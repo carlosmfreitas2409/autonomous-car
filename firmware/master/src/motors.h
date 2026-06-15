@@ -6,9 +6,9 @@ namespace motors {
 
 void init();
 
-void set_throttle(uint8_t throttle);
+void set_throttle(int16_t throttle);
 
-uint8_t current_throttle();
+int16_t current_throttle();
 
 void enable();
 void disable();

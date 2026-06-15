@@ -2,9 +2,9 @@ import pygame
 
 
 _STICK_AXIS = 0  # Left stick X
-_TRIGGER_AXIS = 5  # R2 (DualSense via SDL2 on macOS)
+_RTRIGGER_AXIS = 5  # R2 (DualSense via SDL2 on macOS)
+_LTRIGGER_AXIS = 2
 _TRIGGER_DEADZONE = 0.05
-
 
 class PS5Controller:
     def __init__(self, deadzone: float = 0.08):
@@ -24,7 +24,8 @@ class PS5Controller:
             self._joystick = None
 
     def poll(self) -> tuple[float, float]:
-        """Return (steering, throttle). Steering in [-1, 1] from left stick X; throttle in [0, 1] from R2."""
+        """Return (steering, throttle). Steering in [-1, 1] from left stick X;
+        throttle in [-1, 1] where R2 drives forward and L2 drives reverse."""
         pygame.event.pump()
 
         for event in pygame.event.get(
@@ -48,11 +49,17 @@ class PS5Controller:
             scaled = (abs(raw_stick) - self._deadzone) / (1.0 - self._deadzone)
             steering = sign * min(scaled, 1.0)
 
-        raw_trigger = self._joystick.get_axis(_TRIGGER_AXIS)
-        throttle = (raw_trigger + 1.0) / 2.0
-        if throttle < _TRIGGER_DEADZONE:
-            throttle = 0.0
+        raw_rtrigger = self._joystick.get_axis(_RTRIGGER_AXIS)
+        rtrigger = (raw_rtrigger + 1.0) / 2.0
+        if rtrigger < _TRIGGER_DEADZONE:
+            rtrigger = 0.0
 
+        raw_ltrigger = self._joystick.get_axis(_LTRIGGER_AXIS)
+        ltrigger = (raw_ltrigger + 1.0) / 2.0
+        if ltrigger < _TRIGGER_DEADZONE:
+            ltrigger = 0.0
+
+        throttle = rtrigger - ltrigger
         return steering, throttle
 
     def is_connected(self) -> bool:

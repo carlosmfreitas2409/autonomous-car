@@ -57,9 +57,12 @@ class LightsController:
         self._prev_throttle = 0.0
 
     def update(self, throttle: float, *, estopped: bool) -> None:
-        decelerating = (self._prev_throttle - throttle) > self._BRAKE_DECEL_THRESHOLD
-        coasting = throttle < self._BRAKE_THROTTLE_THRESHOLD
+        speed = abs(throttle)
+        prev_speed = abs(self._prev_throttle)
+        decelerating = (prev_speed - speed) > self._BRAKE_DECEL_THRESHOLD
+        coasting = speed < self._BRAKE_THROTTLE_THRESHOLD
         self._braking = estopped or coasting or decelerating
+        self.reverse = (not estopped) and throttle < -self._BRAKE_THROTTLE_THRESHOLD
         self._prev_throttle = throttle
 
     def compute(self) -> LightsOutput:

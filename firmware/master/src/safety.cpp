@@ -50,7 +50,7 @@ void trigger_estop() {
   steering::emergency_stop();
 }
 
-void clear_estop_via_motor_command(uint8_t throttle, int16_t steering) {
+void clear_estop_via_motor_command(int16_t throttle, int16_t steering) {
   if (current_state != State::ESTOP) return;
   if (throttle == 0 && steering == 0) return;
   current_state = State::RUN;
