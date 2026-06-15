@@ -42,7 +42,7 @@ void setup() {
 
   motors::init();
 
-  bool sensor_ok = steering::init();
+  bool steer_ok = steering::init();
 
   safety::init();
 
@@ -50,8 +50,8 @@ void setup() {
 
   Serial.println(F("RDY car-master v1"));
 
-  if (!sensor_ok) {
-    Serial.println(F("ERR AS5600"));
+  if (!steer_ok) {
+    Serial.println(F("ERR STEER"));
     safety::enter_fault();
   }
   if (!can_ok) {
