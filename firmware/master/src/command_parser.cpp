@@ -29,18 +29,18 @@ void handle_motor(char* args) {
   
   long t = atol(tok_t);
   long s = atol(tok_s);
-  if (t < 0) t = 0;
+  if (t < -255) t = -255;
   if (t > 255) t = 255;
   if (s < -255) s = -255;
   if (s > 255) s = 255;
 
   if (safety::state() == safety::State::FAULT) return;
 
-  safety::clear_estop_via_motor_command((uint8_t)t, (int16_t)s);
+  safety::clear_estop_via_motor_command((int16_t)t, (int16_t)s);
 
   if (safety::state() == safety::State::ESTOP) return;
 
-  motors::set_throttle((uint8_t)t);
+  motors::set_throttle((int16_t)t);
   steering::set_target_from_command((int16_t)s);
   safety::note_command();
 }

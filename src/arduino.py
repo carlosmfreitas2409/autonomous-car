@@ -63,7 +63,7 @@ class Arduino:
     self._master.open(port)
 
   def send_motor(self, throttle: float, steering: float):
-    throttle_pwm = int(max(0.0, min(1.0, throttle)) * 255)
+    throttle_pwm = int(max(-1.0, min(1.0, throttle)) * 255)
     steering_pwm = int(max(-1.0, min(1.0, steering)) * 255)
     self._master.write(f"M {throttle_pwm} {steering_pwm}")
 

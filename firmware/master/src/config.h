@@ -38,6 +38,11 @@ constexpr uint8_t PIN_STATUS_LED = 13;
 
 constexpr uint8_t PIN_CAN_CS = 53;
 
+constexpr uint8_t PIN_BUZZER = 46;
+constexpr uint16_t BUZZER_TONE_HZ = 1000;
+constexpr uint16_t BUZZER_BEEP_ON_MS = 350;
+constexpr uint16_t BUZZER_BEEP_OFF_MS = 350;
+
 constexpr uint16_t CAN_LIGHTS_ID = 0x100;
 
 constexpr uint16_t CONTROL_LOOP_HZ = 200;

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include "buzzer.h"
 #include "can_bus.h"
 #include "command_parser.h"
 #include "config.h"
@@ -41,6 +42,7 @@ void setup() {
   configure_high_freq_pwm();
 
   motors::init();
+  buzzer::init();
 
   bool steer_ok = steering::init();
 
@@ -73,6 +75,10 @@ void loop() {
       steering::update();
     }
   }
+
+  const bool reversing =
+      safety::state() == safety::State::RUN && motors::current_throttle() < 0;
+  buzzer::update(reversing);
 
   telemetry::update();
 

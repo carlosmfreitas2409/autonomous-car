@@ -26,7 +26,7 @@ constexpr uint8_t PIN_STEER_RPWM = 11;
 constexpr uint8_t PIN_STEER_LPWM = 12;
 
 // Wiper of the 10k pot. A0 on the Mega; change if you wire it elsewhere.
-constexpr uint8_t PIN_STEER_POT = A0;
+constexpr uint8_t PIN_STEER_POT = A11;
 
 constexpr uint16_t MAX_PULSE_MS = 500;
 constexpr uint8_t MAX_PWM = 140;

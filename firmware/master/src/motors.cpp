@@ -24,14 +24,16 @@ const DriveBridge bridges[BRIDGE_COUNT] = {
     {config::PIN_RR_R_EN, config::PIN_RR_L_EN, config::PIN_RR_RPWM, config::PIN_RR_LPWM},
 };
 
-uint8_t target_pwm = 0;
-uint8_t current_pwm = 0;
+int16_t target_pwm = 0;
+int16_t current_pwm = 0;
 bool enabled = false;
 
-void write_all_pwm(uint8_t value) {
+void write_all_pwm(int16_t value) {
+  const uint8_t magnitude = (uint8_t)(value < 0 ? -value : value);
+  const bool reverse = value < 0;
   for (uint8_t i = 0; i < BRIDGE_COUNT; ++i) {
-    analogWrite(bridges[i].rpwm, value);
-    analogWrite(bridges[i].lpwm, 0);
+    analogWrite(bridges[i].rpwm, reverse ? 0 : magnitude);
+    analogWrite(bridges[i].lpwm, reverse ? magnitude : 0);
   }
 }
 
@@ -58,11 +60,13 @@ void init() {
   enabled = false;
 }
 
-void set_throttle(uint8_t throttle) {
+void set_throttle(int16_t throttle) {
+  if (throttle > 255) throttle = 255;
+  if (throttle < -255) throttle = -255;
   target_pwm = throttle;
 }
 
-uint8_t current_throttle() {
+int16_t current_throttle() {
   return current_pwm;
 }
 
@@ -81,16 +85,20 @@ void disable() {
 
 void update() {
   // Asymmetric slew: ramp up slowly (gentle on the gearbox + avoids brownouts),
-  // ramp down fast so estop and watchdog stops feel crisp.
-  int16_t delta = (int16_t)target_pwm - (int16_t)current_pwm;
-  if (delta > 0) {
-    if (delta > config::DRIVE_SLEW_UP_PER_TICK) delta = config::DRIVE_SLEW_UP_PER_TICK;
-  } else if (delta < 0) {
-    if (delta < -(int16_t)config::DRIVE_SLEW_DOWN_PER_TICK) {
-      delta = -(int16_t)config::DRIVE_SLEW_DOWN_PER_TICK;
-    }
-  }
-  current_pwm = (uint8_t)((int16_t)current_pwm + delta);
+  // ramp down fast so estop and watchdog stops feel crisp. Rate is chosen by the
+  // change in *speed magnitude* so a direction change ramps down fast toward zero
+  // before ramping the opposite direction up slowly.
+  const int16_t target_mag = target_pwm < 0 ? -target_pwm : target_pwm;
+  const int16_t current_mag = current_pwm < 0 ? -current_pwm : current_pwm;
+  const bool same_direction = (target_pwm >= 0) == (current_pwm >= 0);
+  const bool ramping_up = same_direction && target_mag > current_mag;
+  const int16_t step = ramping_up ? config::DRIVE_SLEW_UP_PER_TICK
+                                  : config::DRIVE_SLEW_DOWN_PER_TICK;
+
+  int16_t delta = target_pwm - current_pwm;
+  if (delta > step) delta = step;
+  else if (delta < -step) delta = -step;
+  current_pwm += delta;
 
   if (!enabled) {
     write_all_pwm(0);

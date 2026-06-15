@@ -32,14 +32,20 @@ def draw_throttle_bar(frame, throttle):
     bar_h = h - 80
     bar_y0 = 40
     bar_y1 = bar_y0 + bar_h
+    bar_cy = (bar_y0 + bar_y1) // 2
     bar_x = w - 30
-    t = max(0.0, min(1.0, throttle))
+    t = max(-1.0, min(1.0, throttle))
     cv.rectangle(frame, (bar_x - 6, bar_y0), (bar_x + 6, bar_y1), (100, 100, 100), 1)
-    fill_h = int(bar_h * t)
-    fill_y0 = bar_y1 - fill_h
-    color = (0, int(255 * (1.0 - t)), int(255 * t))
+    cv.line(frame, (bar_x - 6, bar_cy), (bar_x + 6, bar_cy), (180, 180, 180), 1)
+    mag = abs(t)
+    fill_h = int((bar_h // 2) * mag)
     if fill_h > 0:
-        cv.rectangle(frame, (bar_x - 5, fill_y0), (bar_x + 5, bar_y1), color, -1)
+        if t >= 0:
+            color = (0, int(255 * (1.0 - mag)), int(255 * mag))
+            cv.rectangle(frame, (bar_x - 5, bar_cy - fill_h), (bar_x + 5, bar_cy), color, -1)
+        else:
+            color = (int(255 * mag), int(160 * mag), 0)
+            cv.rectangle(frame, (bar_x - 5, bar_cy), (bar_x + 5, bar_cy + fill_h), color, -1)
 
 
 cap = cv.VideoCapture('assets/road.mov')
