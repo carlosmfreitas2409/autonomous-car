@@ -3,7 +3,7 @@ import pygame
 
 _STICK_AXIS = 0  # Left stick X
 _RTRIGGER_AXIS = 5  # R2 (DualSense via SDL2 on macOS)
-_LTRIGGER_AXIS = 2
+_LTRIGGER_AXIS = 4
 _TRIGGER_DEADZONE = 0.05
 
 class PS5Controller:

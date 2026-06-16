@@ -48,7 +48,7 @@ def draw_throttle_bar(frame, throttle):
             cv.rectangle(frame, (bar_x - 5, bar_cy), (bar_x + 5, bar_cy + fill_h), color, -1)
 
 
-cap = cv.VideoCapture('assets/road.mov')
+cap = cv.VideoCapture(1)
 if not cap.isOpened():
     print("Error: Could not open video.")
     exit()

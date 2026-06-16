@@ -1,6 +1,6 @@
 # Master Arduino — Drive (4WD) + Steering
 
-Firmware for the master microcontroller on the Kigali autonomous car. Owns the four drive motors (one BTS7960 per wheel) and the Ackermann-linkage steering motor (a fifth BTS7960 driving an electric-window motor whose position is read by an AS5600 magnetic angle sensor over I2C). The Python host in `../../src/arduino.py` already speaks the wire protocol.
+Firmware for the master microcontroller on the Kigali autonomous car. Owns the four drive motors (one BTS7960 per wheel) and the Ackermann-linkage steering motor (a fifth BTS7960 driving an electric-window motor whose position is read by a 10k linear potentiometer on an analog pin). The Python host in `../../src/arduino.py` already speaks the wire protocol.
 
 Also acts as the **CAN gateway** to the lights Nano: the host sends `L` over USB serial, the master packs it into a CAN frame and transmits it on the MCP2515 bus (`firmware/lights/` is the receiver). One USB cable to the computer; the lights board is reachable only via CAN.
 
@@ -26,7 +26,7 @@ Telemetry output is gated by a compile flag — uncomment `-DTELEMETRY_ENABLED=1
 
 - **Board**: Arduino Mega 2560.
 - **Drive**: 4× BTS7960 H-bridges (one per wheel: FL, FR, RL, RR), forward-only in firmware today (LPWMs are wired to PWM-capable pins so reverse is a software-only addition).
-- **Steering**: 1× BTS7960 driving an electric-window motor. Bidirectional. Closed-loop position control via AS5600 (I2C, 0x36).
+- **Steering**: 1× BTS7960 driving an electric-window motor. Bidirectional. Closed-loop position control via a 10k linear potentiometer on the ADC (wiper → A0, outer legs → 5V / GND).
 - **PWM**: Timer 1, 3, 4, 5 set to phase-correct 8-bit PWM, prescaler 1 → ~31 kHz (above audible). Timer 0 untouched (`millis()`). Timer 2 untouched (`tone()` available).
 - **Power**: Use a separate 5V BEC for the Mega; do not run logic from USB once motors are connected. Bulk cap (≥10 mF) across H-bridge V_in. Common-star ground.
 
@@ -39,7 +39,7 @@ Telemetry output is gated by a compile flag — uncomment `-DTELEMETRY_ENABLED=1
 | RL drive RPWM / LPWM | 44 / 45 | T5 |
 | RR drive RPWM / LPWM | 46 / 3 | T5 / T3 |
 | Steering RPWM / LPWM | 11 / 12 | T1 |
-| AS5600 SDA / SCL | 20 / 21 | I2C @ 400 kHz |
+| Steering pot wiper | A0 | ADC |
 | MCP2515 SPI (CS / MISO / MOSI / SCK) | 53 / 50 / 51 / 52 | — |
 | Status LED | 13 | — |
 
@@ -71,36 +71,36 @@ Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure 
 - **Boot state**: ESTOP, all PWMs at 0. The car cannot move between power-on and the first deliberate non-zero `M` from the host.
 - **Watchdog**: 500 ms. With no command, throttle ramps to 0 and steering target freezes at the current measured angle (wheels stop where they are).
 - **Drive slew**: up at 4 PWM/tick (200 Hz → 0→255 in ~320 ms); down at 32 PWM/tick (~40 ms).
-- **Steering**: 200 Hz P+D loop. `Kp = 0.6`, `Kd = 0.02` (derivative on measurement). `±6` raw-unit deadband. Min-move PWM = 60 to break static friction. Soft limits at the configured max angles (refuse to drive into a stop, allow recovery in the opposite direction).
-- **AS5600 fault** (no I2C ack or no magnet detected at boot, or the angle jumps wildly mid-run) → permanent FAULT state, status LED blinks fast, all PWMs forced to 0.
+- **Steering**: 200 Hz P+D loop on the pot's 0–1023 ADC reading (derivative on measurement). Starting gains `Kp = 1.2`, `Kd = 0.12`, `±3` raw-unit deadband. Min-move PWM = 120 to break static friction. The reading is median-of-9 filtered to reject ADC spikes. Soft limits at the configured max angles (refuse to drive into a stop, allow recovery in the opposite direction).
+- **Steering-pot fault** (the pot reads a rail — 0 or ≥1023 — at boot, meaning a disconnected wiper or outer leg) → permanent FAULT state (`ERR STEER`), status LED blinks fast, all PWMs forced to 0.
 
 ## Steering calibration
 
-Calibration is **edit-and-flash**, not runtime. Three constants in `src/config.h`:
+Calibration is **edit-and-flash**, not runtime. Three constants in `src/config.h`, all in the pot's 0–1023 ADC range:
 
 ```cpp
-constexpr uint16_t STEER_CENTER_RAW    = 2048;   // wheels straight
-constexpr uint16_t STEER_MAX_LEFT_RAW  = 1536;   // safe max-left (NOT the hard stop)
-constexpr uint16_t STEER_MAX_RIGHT_RAW = 2560;   // safe max-right
+constexpr uint16_t STEER_CENTER_RAW    = 512;   // wheels straight
+constexpr uint16_t STEER_MAX_LEFT_RAW  = 620;   // safe max-left (NOT the hard stop)
+constexpr uint16_t STEER_MAX_RIGHT_RAW = 404;   // safe max-right
 ```
 
-Defaults are conservative (`center = 2048, ±512` ≈ ±45°). To get the real values for your linkage:
+The shipped values are conservative placeholders — you **must** capture real ones for your linkage. The dedicated tool `tools/calibration_pot/calibration_pot.ino` makes this easy (it pulses the motor by serial command and prints a ready-to-paste snippet):
 
-1. **Disconnect motor power** (the steering BTS7960's V_in). The Mega + AS5600 still run on USB.
-2. Build with telemetry on: uncomment `-DTELEMETRY_ENABLED=1` in `platformio.ini`, flash, open `pio device monitor`.
-3. **Rotate the steering by hand**:
-   - To wheels-straight → note the `angle_raw` value → that's `STEER_CENTER_RAW`.
-   - To a *safe* max-left (well short of the hard stop, since the linkage locks up before it) → that's `STEER_MAX_LEFT_RAW`.
-   - To a safe max-right → that's `STEER_MAX_RIGHT_RAW`.
-4. Edit the three constants in `config.h`.
-5. Re-comment the telemetry flag, reflash. Done.
+1. **Disconnect motor power** (the steering BTS7960's V_in) if you want to move the linkage purely by hand; the calibration tool can also nudge it with short `r`/`l` pulses.
+2. Flash `tools/calibration_pot/calibration_pot.ino`, open `pio device monitor -b 115200`.
+3. Move the steering and capture:
+   - Wheels straight → `c` → `STEER_CENTER_RAW`.
+   - A *safe* max-left (well short of the hard stop, since the linkage locks up before it) → `ml` → `STEER_MAX_LEFT_RAW`.
+   - A safe max-right → `mr` → `STEER_MAX_RIGHT_RAW`.
+4. Type `p` to print the `config.h` snippet, paste the three values into `config.h`.
+5. Flash the master firmware. During the bench step-response test, confirm a left command moves the wheels left; if not, swap `STEER_MAX_LEFT_RAW`/`STEER_MAX_RIGHT_RAW` or flip `STEER_INVERT_PWM`.
 
-The values stay correct until the magnet, sensor, or linkage are physically moved. Recalibration means repeating steps 1–5.
+The values stay correct until the pot or linkage are physically moved. Recalibration means repeating steps 1–5.
 
 ## Bench verification (in order)
 
 1. Open the monitor → `RDY car-master v1`.
-2. Sensor only: rotate the steering shaft by hand (motor power off), enable telemetry, watch `angle_raw` wrap cleanly 0..4095.
+2. Sensor only: rotate the steering shaft by hand (motor power off), enable telemetry, watch `angle_raw` move smoothly across the calibrated range within 0..1023 (no spikes — the read is median-filtered).
 3. Wheels off the ground: `M 60 0` → all four wheels spin equally; `E` → all wheels stop (PWM = 0 on every bridge); `M 60 0` again → still stopped (latched).
 4. `M 255 0` from rest → wheels reach full PWM in ~300 ms.
 5. Stop sending → wheels stop within 500 ms; `H` alone does not re-spin them.

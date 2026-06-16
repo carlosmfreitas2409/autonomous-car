@@ -3,12 +3,12 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    downscale_ratio: float = 1.5
+    downscale_ratio: float = 2.3
 
     # Canny
-    block_size: int = 51
-    blur_ksize: int = 3
-    threshold_constant: float = -25
+    block_size: int = 81
+    blur_ksize: int = 7
+    threshold_constant: float = -26
 
     # ROI
     roi_y0: float = 0.8

@@ -19,22 +19,22 @@ If unsure: **disconnect the camera** and command angles directly via `M 0 +127`,
 
 | Constant | When | How |
 |---|---|---|
-| `STEER_CENTER_RAW`, `STEER_MAX_LEFT_RAW`, `STEER_MAX_RIGHT_RAW` | Once, after you mount the AS5600. Again only if you re-mount the magnet or change the linkage. | Use the procedure in the README: motor power off, telemetry on, rotate by hand, read `angle_raw`. |
+| `STEER_CENTER_RAW`, `STEER_MAX_LEFT_RAW`, `STEER_MAX_RIGHT_RAW` | Once, after you mount the steering pot. Again only if you re-mount the pot or change the linkage. | Use `tools/calibration_pot/calibration_pot.ino`: move the steering, capture `c`/`ml`/`mr`, type `p` to print the snippet. Values are in the pot's 0–1023 ADC range. |
 
 ### Probably tune (bench, by feel during step-response tests)
 
 | Constant | What you observe | What to do |
 |---|---|---|
-| `STEER_KP` (0.6) | Wheels move sluggishly toward target, undershoot | Raise. Common range 0.4–1.5. |
+| `STEER_KP` (1.2) | Wheels move sluggishly toward target, undershoot | Raise. Common range 0.8–3.0. |
 | | Wheels overshoot and oscillate around target | Lower. |
-| `STEER_KD` (0.02) | Overshoots and rings before settling | Raise. Common range 0.01–0.1. |
+| `STEER_KD` (0.12) | Overshoots and rings before settling | Raise. Common range 0.05–0.4. |
 | | Movement feels jerky/hesitant | Lower. |
-| `STEER_MIN_MOVE_PWM` (60) | Wheel hums near target but doesn't actually move | Raise (75, 90...). |
+| `STEER_MIN_MOVE_PWM` (120) | Wheel hums near target but doesn't actually move | Raise (130, 145...). |
 | | Wheel "kicks" when reaching target | Lower. |
-| `STEER_DEADBAND_UNITS` (6) | Wheel twitches when holding still | Raise (10, 15). |
+| `STEER_DEADBAND_UNITS` (3) | Wheel twitches when holding still | Raise (5, 8). |
 | | Final position is sloppy/imprecise | Lower. |
 
-Tuning workflow: send `M 0 -200`, wait, send `M 0 +200`, wait, send `M 0 0`. Watch the AS5600 angle in telemetry. Adjust one constant at a time.
+Tuning workflow: send `M 0 -200`, wait, send `M 0 +200`, wait, send `M 0 0`. Watch the pot angle (`angle_raw`, 0–1023) in telemetry. Adjust one constant at a time.
 
 ### Maybe tune
 
@@ -136,11 +136,11 @@ The two numbers that matter for tuning are `angle_raw` (where the wheel actually
 Decision tree based on what you see:
 
 - **Angle reaches target smoothly, no overshoot, settles fast** → Done. Don't touch.
-- **Angle never quite reaches target** → Raise `STEER_KP` slightly (e.g. 0.6 → 0.8).
-- **Angle overshoots target, comes back, overshoots again, oscillates** → Lower `STEER_KP` (0.6 → 0.4) **or** raise `STEER_KD` (0.02 → 0.04).
-- **Angle approaches but stops a bit short, then jumps the last few units in a "kick"** → Lower `STEER_MIN_MOVE_PWM` (60 → 50) or raise `STEER_DEADBAND_UNITS` (6 → 8).
-- **Motor hums, angle doesn't move at all on small commands** → Raise `STEER_MIN_MOVE_PWM` (60 → 75).
-- **Angle wiggles when wheel is supposed to be still** → Raise `STEER_DEADBAND_UNITS` (6 → 12).
+- **Angle never quite reaches target** → Raise `STEER_KP` slightly (e.g. 1.2 → 1.6).
+- **Angle overshoots target, comes back, overshoots again, oscillates** → Lower `STEER_KP` (1.2 → 0.8) **or** raise `STEER_KD` (0.12 → 0.2).
+- **Angle approaches but stops a bit short, then jumps the last few units in a "kick"** → Lower `STEER_MIN_MOVE_PWM` (120 → 105) or raise `STEER_DEADBAND_UNITS` (3 → 5).
+- **Motor hums, angle doesn't move at all on small commands** → Raise `STEER_MIN_MOVE_PWM` (120 → 140).
+- **Angle wiggles when wheel is supposed to be still** → Raise `STEER_DEADBAND_UNITS` (3 → 8).
 
 ### The iteration loop
 
@@ -167,4 +167,4 @@ A clean tune usually takes 10–20 iterations.
 
 ### A useful sanity check
 
-Before you touch any gain, do **one** step (`M 0 -200`) and just confirm the wheel **moves the right way and roughly the right amount**. If it goes the wrong direction, your `STEER_MAX_LEFT_RAW` and `STEER_MAX_RIGHT_RAW` are swapped (which is easy to do — left and right depend on how you mounted the AS5600). Fix that before tuning anything else.
+Before you touch any gain, do **one** step (`M 0 -200`) and just confirm the wheel **moves the right way and roughly the right amount**. If it goes the wrong direction, either your `STEER_MAX_LEFT_RAW` and `STEER_MAX_RIGHT_RAW` are swapped or `STEER_INVERT_PWM` is wrong (both depend on how you mounted the pot and wired the motor). Fix that before tuning anything else.
