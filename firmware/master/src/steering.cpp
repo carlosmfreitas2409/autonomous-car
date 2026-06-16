@@ -16,13 +16,6 @@ constexpr int16_t POT_RAW_MAX = 1023;
 // Median-of-N sampling to knock down ADC jitter on the analog read.
 constexpr uint8_t POT_SAMPLES = 9;
 
-// Exponential low-pass on the pot reading. A cheap 10-bit pot is electrically
-// noisy and quantises position into coarse 1-count steps; feeding that straight
-// into the derivative term turns sensor noise into rapid PWM reversals — an
-// audible motor "creak" while steering. Smoothing the measurement first gives
-// the D term a clean signal. Lower alpha = smoother but more lag.
-constexpr float POT_FILTER_ALPHA = 0.25f;
-
 int16_t left_span = 0;
 int16_t right_span = 0;
 
@@ -32,8 +25,7 @@ uint16_t current_angle = config::STEER_CENTER_RAW;
 bool enabled = false;
 int16_t last_output_pwm = 0;
 
-float filtered_angle = config::STEER_CENTER_RAW;
-float prev_filtered = config::STEER_CENTER_RAW;
+uint16_t prev_measurement = config::STEER_CENTER_RAW;
 uint32_t prev_micros = 0;
 
 // Folds any int back into the 0..1023 pot ADC range.
@@ -113,10 +105,9 @@ bool init() {
   left_span = (int16_t)config::STEER_MAX_LEFT_RAW - (int16_t)config::STEER_CENTER_RAW;
   right_span = (int16_t)config::STEER_MAX_RIGHT_RAW - (int16_t)config::STEER_CENTER_RAW;
 
-  filtered_angle = (float)a;
-  prev_filtered = filtered_angle;
   current_angle = a;
-  target_angle = a;
+  prev_measurement = current_angle;
+  target_angle = current_angle;
   prev_micros = micros();
   enabled = false;
   last_output_pwm = 0;
@@ -160,12 +151,9 @@ void emergency_stop() {
 }
 
 void update() {
-  // Low-pass the (already median-filtered) pot read before it reaches the
-  // control math — the derivative below is very sensitive to per-count jitter.
-  filtered_angle += POT_FILTER_ALPHA * ((float)read_angle() - filtered_angle);
-  current_angle = (uint16_t)lroundf(filtered_angle);
+  current_angle = read_angle();
 
-  float err = (float)target_angle - filtered_angle;
+  int16_t err = (int16_t)target_angle - (int16_t)current_angle;
 
   uint32_t now = micros();
   float dt_s = (now - prev_micros) * 1e-6f;
@@ -174,13 +162,13 @@ void update() {
 
   // Derivative on measurement, not error: avoids a derivative kick when the host
   // jumps the setpoint (e.g. M 0 -255 → M 0 255).
-  float dmeas = filtered_angle - prev_filtered;
-  prev_filtered = filtered_angle;
-  float dmeas_per_sec = dmeas / dt_s;
+  int16_t dmeas = (int16_t)current_angle - (int16_t)prev_measurement;
+  prev_measurement = current_angle;
+  float dmeas_per_sec = (float)dmeas / dt_s;
 
-  float output_f = config::STEER_KP * err - config::STEER_KD * dmeas_per_sec;
+  float output_f = config::STEER_KP * (float)err - config::STEER_KD * dmeas_per_sec;
 
-  if (fabsf(err) < (float)config::STEER_DEADBAND_UNITS) {
+  if (abs(err) < config::STEER_DEADBAND_UNITS) {
     output_f = 0.0f;
   }
 

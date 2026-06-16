@@ -39,7 +39,7 @@ constexpr uint8_t PIN_STATUS_LED = 13;
 constexpr uint8_t PIN_CAN_CS = 53;
 
 constexpr uint8_t PIN_BUZZER = 46;
-constexpr uint16_t BUZZER_TONE_HZ = 1000;
+constexpr uint16_t BUZZER_TONE_HZ = 2700;
 constexpr uint16_t BUZZER_BEEP_ON_MS = 350;
 constexpr uint16_t BUZZER_BEEP_OFF_MS = 350;
 
@@ -55,13 +55,10 @@ constexpr uint8_t DRIVE_SLEW_DOWN_PER_TICK = 32;
 
 // Steering feedback "raw" units are now the 10k pot's 10-bit ADC counts (0..1023,
 // linear), not the old AS5600's 0..4095. A given physical steering angle spans
-// ~4x fewer counts, so Kp is scaled up and the deadband down accordingly. Kd is
-// kept modest on purpose: the pot is electrically noisy and the derivative term
-// amplifies that noise into audible PWM chatter (the read is also low-pass
-// filtered in steering.cpp). These are bench-tuning starting points — see
-// config-params.md.
+// ~4x fewer counts, so Kp/Kd are scaled up and the deadband down accordingly.
+// These are bench-tuning starting points — see config-params.md.
 constexpr float STEER_KP = 2.2f;
-constexpr float STEER_KD = 0.05f;
+constexpr float STEER_KD = 0.12f;
 constexpr int16_t STEER_DEADBAND_UNITS = 3;
 constexpr uint8_t STEER_MIN_MOVE_PWM = 150;
 constexpr uint8_t STEER_MAX_PWM = 210;

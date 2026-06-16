@@ -147,9 +147,9 @@ class TunerGUI:
 
                         dpg.add_spacer(height=8)
                         dpg.add_text("Threshold", color=(130, 200, 255))
-                        self._tags["blur_k"] = dpg.add_slider_int(label="Blur Kernel", default_value=3, min_value=3, max_value=15, callback=self._snap_odd, width=form_w)
-                        self._tags["block_size"] = dpg.add_slider_int(label="Block Size", default_value=51, min_value=3, max_value=151, callback=self._snap_odd, width=form_w)
-                        self._tags["threshold_c"] = dpg.add_slider_int(label="Constant", default_value=-25, min_value=-50, max_value=50, width=form_w)
+                        self._tags["blur_k"] = dpg.add_slider_int(label="Blur Kernel", default_value=7, min_value=3, max_value=15, callback=self._snap_odd, width=form_w)
+                        self._tags["block_size"] = dpg.add_slider_int(label="Block Size", default_value=81, min_value=3, max_value=151, callback=self._snap_odd, width=form_w)
+                        self._tags["threshold_c"] = dpg.add_slider_int(label="Constant", default_value=-26, min_value=-50, max_value=50, width=form_w)
 
                     with dpg.group():
                         dpg.add_spacer(height=8)
