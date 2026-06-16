@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    downscale_ratio: float = 2.3
+    downscale_ratio: float = 2.0
 
     # Canny
     block_size: int = 81
@@ -11,6 +11,8 @@ class Config:
     threshold_constant: float = -26
 
     # ROI
+    roi_x0: float = 0.1
+    roi_x1: float = 0.9
     roi_y0: float = 0.8
     roi_y1: float = 0.92
     ema_alpha: float = 0.4

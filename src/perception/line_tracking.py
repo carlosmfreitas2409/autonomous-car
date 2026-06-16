@@ -38,7 +38,8 @@ class LineTracker:
         bs = max(3, params.block_size | 1)
         binary = cv.adaptiveThreshold(blur, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, bs, int(params.threshold_constant))
 
-        roi_x0, roi_x1 = round(width * 0.1), round(width * 0.9)
+        roi_x0 = round(width * max(0.0, min(params.roi_x0, params.roi_x1 - 0.02)))
+        roi_x1 = round(width * min(1.0, params.roi_x1))
         roi_y0 = round(height * max(0.0, min(params.roi_y0, params.roi_y1 - 0.02)))
         roi_y1 = round(height * min(1.0, params.roi_y1))
         roi_center_x = (roi_x0 + roi_x1) // 2

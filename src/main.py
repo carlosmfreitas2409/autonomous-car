@@ -58,12 +58,13 @@ if not ret:
     print("Error: Could not read first frame.")
     exit()
 
-ratio = Config().downscale_ratio
+config = Config()
+ratio = config.downscale_ratio
 frame_w = round(first_frame.shape[1] / ratio)
 frame_h = round(first_frame.shape[0] / ratio)
 cap.set(cv.CAP_PROP_POS_FRAMES, 0)
 
-gui = TunerGUI(frame_w, frame_h)
+gui = TunerGUI(config, frame_w, frame_h)
 arduino = Arduino()
 tracker = LineTracker()
 autonomous = Autonomous()

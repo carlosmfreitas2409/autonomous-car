@@ -16,23 +16,13 @@ _TURN_SIGNAL_LABELS = {
     "Hazard": TurnSignal.HAZARD,
 }
 
-# Indicator colors. OFF is a near-black gray so unlit lamps read as "off" without blending into the background.
-# _IND_OFF = (50, 50, 50)
-# _IND_SIGNAL = (255, 160, 0)       # amber
-# _IND_DRL = (220, 220, 220)        # daylight white
-# _IND_LOW_BEAM = (255, 240, 180)   # warm white
-# _IND_TAIL_DIM = (140, 20, 20)     # dim red (parking/tail)
-# _IND_TAIL_BRIGHT = (255, 40, 40)  # bright red (brake)
-# _IND_LOGO = (150, 120, 255)       # violet
-
-
 class TunerGUI:
-    def __init__(self, frame_w: int, frame_h: int):
+    def __init__(self, config: Config, frame_w: int, frame_h: int):
         self._autonomous = True
         self._stopped = True
         self._tags = {}
         self._lights: LightsController | None = None
-        self._build(frame_w, frame_h)
+        self._build(config, frame_w, frame_h)
 
         self._refresh_ports()
 
@@ -47,7 +37,7 @@ class TunerGUI:
         self._stopped = not self._stopped
         dpg.set_item_label(sender, "Resume" if self._stopped else "Emergency Stop")
 
-    def _build(self, frame_w: int, frame_h: int):
+    def _build(self, config: Config, frame_w: int, frame_h: int):
         dpg.create_context()
 
         logo_width, logo_height, _, logo_data = dpg.load_image("assets/logo.png")
@@ -78,8 +68,8 @@ class TunerGUI:
         form_w = grid_w - 100
 
         vp_w = grid_w * 3 + 80
-        vp_h = frame_h + 140
-        dpg.create_viewport(title="Autonomous Car Tuner", width=vp_w, height=vp_h, resizable=False)
+        vp_h = frame_h + 160
+        dpg.create_viewport(title="Autonomous Car Tuner", width=vp_w, height=vp_h, resizable=True)
 
         with dpg.window(tag="primary", no_title_bar=True, no_move=True, no_resize=True):
             with dpg.table(header_row=False, borders_innerH=False,
@@ -126,30 +116,32 @@ class TunerGUI:
                     with dpg.group():
                         dpg.add_spacer(height=4)
                         dpg.add_text("PID Tuning", color=(130, 200, 255))
-                        self._tags["kp"] = dpg.add_slider_float(label="Kp", default_value=0.01, min_value=0.0, max_value=0.1, format="%.4f", width=form_w)
-                        self._tags["ki"] = dpg.add_slider_float(label="Ki", default_value=0.0, min_value=0.0, max_value=0.05, format="%.4f", width=form_w)
-                        self._tags["kd"] = dpg.add_slider_float(label="Kd", default_value=0.005, min_value=0.0, max_value=0.1, format="%.4f", width=form_w)
+                        self._tags["kp"] = dpg.add_slider_float(label="Kp", default_value=config.kp, min_value=0.0, max_value=0.1, format="%.4f", width=form_w)
+                        self._tags["ki"] = dpg.add_slider_float(label="Ki", default_value=config.ki, min_value=0.0, max_value=0.05, format="%.4f", width=form_w)
+                        self._tags["kd"] = dpg.add_slider_float(label="Kd", default_value=config.kd, min_value=0.0, max_value=0.1, format="%.4f", width=form_w)
                         dpg.add_spacer(height=4)
                         self._tags["pid_reset"] = dpg.add_button(label="Reset PID")
 
                         dpg.add_spacer(height=8)
                         dpg.add_text("Speed Tuning", color=(130, 200, 255))
-                        self._tags["base_speed"] = dpg.add_slider_float(label="Base Speed", default_value=0.4, min_value=0.0, max_value=1.0, format="%.2f", width=form_w)
-                        self._tags["min_speed"] = dpg.add_slider_float(label="Min Speed", default_value=0.2, min_value=0.0, max_value=1.0, format="%.2f", width=form_w)
+                        self._tags["base_speed"] = dpg.add_slider_float(label="Base Speed", default_value=config.base_speed, min_value=0.0, max_value=1.0, format="%.2f", width=form_w)
+                        self._tags["min_speed"] = dpg.add_slider_float(label="Min Speed", default_value=config.min_speed, min_value=0.0, max_value=1.0, format="%.2f", width=form_w)
 
                     with dpg.group():
                         dpg.add_spacer(height=4)
                         dpg.add_text("ROI", color=(130, 200, 255))
-                        self._tags["alpha"] = dpg.add_slider_float(label="EMA Alpha", default_value=0.4, min_value=0.01, max_value=1.0, format="%.2f", width=form_w)
-                        self._tags["scan_lines"] = dpg.add_slider_int(label="Scan Lines", default_value=5, min_value=1, max_value=15, width=form_w)
-                        self._tags["roi_y0"] = dpg.add_slider_float(label="ROI Y Start", default_value=0.8, min_value=0.5, max_value=0.95, format="%.2f", width=form_w)
-                        self._tags["roi_y1"] = dpg.add_slider_float(label="ROI Y End", default_value=0.92, min_value=0.5, max_value=0.99, format="%.2f", width=form_w)
+                        self._tags["alpha"] = dpg.add_slider_float(label="EMA Alpha", default_value=config.ema_alpha, min_value=0.01, max_value=1.0, format="%.2f", width=form_w)
+                        self._tags["scan_lines"] = dpg.add_slider_int(label="Scan Lines", default_value=config.scan_lines, min_value=1, max_value=15, width=form_w)
+                        self._tags["roi_x0"] = dpg.add_slider_float(label="ROI X Start", default_value=config.roi_x0, min_value=0.0, max_value=0.49, format="%.2f", width=form_w)
+                        self._tags["roi_x1"] = dpg.add_slider_float(label="ROI X End", default_value=config.roi_x1, min_value=0.51, max_value=1.0, format="%.2f", width=form_w)
+                        self._tags["roi_y0"] = dpg.add_slider_float(label="ROI Y Start", default_value=config.roi_y0, min_value=0.5, max_value=0.95, format="%.2f", width=form_w)
+                        self._tags["roi_y1"] = dpg.add_slider_float(label="ROI Y End", default_value=config.roi_y1, min_value=0.5, max_value=0.99, format="%.2f", width=form_w)
 
                         dpg.add_spacer(height=8)
                         dpg.add_text("Threshold", color=(130, 200, 255))
-                        self._tags["blur_k"] = dpg.add_slider_int(label="Blur Kernel", default_value=7, min_value=3, max_value=15, callback=self._snap_odd, width=form_w)
-                        self._tags["block_size"] = dpg.add_slider_int(label="Block Size", default_value=81, min_value=3, max_value=151, callback=self._snap_odd, width=form_w)
-                        self._tags["threshold_c"] = dpg.add_slider_int(label="Constant", default_value=-26, min_value=-50, max_value=50, width=form_w)
+                        self._tags["blur_k"] = dpg.add_slider_int(label="Blur Kernel", default_value=config.blur_ksize, min_value=3, max_value=15, callback=self._snap_odd, width=form_w)
+                        self._tags["block_size"] = dpg.add_slider_int(label="Block Size", default_value=config.block_size, min_value=3, max_value=151, callback=self._snap_odd, width=form_w)
+                        self._tags["threshold_c"] = dpg.add_slider_int(label="Constant", default_value=int(config.threshold_constant), min_value=-50, max_value=50, width=form_w)
 
                     with dpg.group():
                         dpg.add_spacer(height=8)
@@ -176,50 +168,6 @@ class TunerGUI:
                             self._tags["reverse"] = dpg.add_checkbox(label="Reverse", callback=self._on_reverse)
                             dpg.add_spacer(width=4)
                             self._tags["logo"] = dpg.add_checkbox(label="Logo Projector", callback=self._on_logo)
-                        # with dpg.group(horizontal=True):
-
-                        # with dpg.table(header_row=False, borders_innerH=False,
-                        #                borders_innerV=False, borders_outerH=False,
-                        #                borders_outerV=False, pad_outerX=False):
-                        #     dpg.add_table_column()
-                        #     dpg.add_table_column()
-                        #     dpg.add_table_column()
-
-                        #     with dpg.table_row():
-                        #         with dpg.group(horizontal=True):
-                        #             self._add_indicator("fl_sig", "FL Sig")
-                        #             self._add_indicator("fl_drl", "DRL")
-                        #         with dpg.group(horizontal=True):
-                        #             self._add_indicator("low_beam", "Low Beam")
-                        #         with dpg.group(horizontal=True):
-                        #             self._add_indicator("fr_drl", "DRL")
-                        #             self._add_indicator("fr_sig", "FR Sig")
-
-                        #     with dpg.table_row():
-                        #         dpg.add_spacer(height=4)
-                        #         dpg.add_spacer(height=4)
-                        #         dpg.add_spacer(height=4)
-
-                        #     with dpg.table_row():
-                        #         with dpg.group(horizontal=True):
-                        #             self._add_indicator("logo_l", "Logo L")
-                        #         dpg.add_spacer()
-                        #         with dpg.group(horizontal=True):
-                        #             self._add_indicator("logo_r", "Logo R")
-
-                        #     with dpg.table_row():
-                        #         dpg.add_spacer(height=4)
-                        #         dpg.add_spacer(height=4)
-                        #         dpg.add_spacer(height=4)
-
-                        #     with dpg.table_row():
-                        #         with dpg.group(horizontal=True):
-                        #             self._add_indicator("bl_sig", "BL Sig")
-                        #             self._add_indicator("tail_l", "Tail L")
-                        #         dpg.add_spacer()
-                        #         with dpg.group(horizontal=True):
-                        #             self._add_indicator("tail_r", "Tail R")
-                        #             self._add_indicator("br_sig", "BR Sig")
 
         dpg.set_primary_window("primary", True)
         dpg.setup_dearpygui()
@@ -230,6 +178,8 @@ class TunerGUI:
             block_size=dpg.get_value(self._tags["block_size"]),
             threshold_constant=dpg.get_value(self._tags["threshold_c"]),
             blur_ksize=dpg.get_value(self._tags["blur_k"]),
+            roi_x0=dpg.get_value(self._tags["roi_x0"]),
+            roi_x1=dpg.get_value(self._tags["roi_x1"]),
             roi_y0=dpg.get_value(self._tags["roi_y0"]),
             roi_y1=dpg.get_value(self._tags["roi_y1"]),
             ema_alpha=dpg.get_value(self._tags["alpha"]),
@@ -261,13 +211,6 @@ class TunerGUI:
             if current not in ports:
                 dpg.set_value(tag, "")
 
-    # def _add_indicator(self, key: str, label: str):
-    #     """Adds a '● label' pair; the dot's color is driven live by update_lights()."""
-    #     dot_tag = f"ind_{key}_dot"
-    #     dpg.add_text("\u25CF", tag=dot_tag, color=_IND_OFF)
-    #     dpg.add_text(label, color=(180, 180, 180))
-    #     self._tags[dot_tag] = dot_tag
-
     def _on_turn_signal(self, _sender, value):
         if self._lights is not None:
             self._lights.turn_signal = _TURN_SIGNAL_LABELS[value]
@@ -292,25 +235,6 @@ class TunerGUI:
         dpg.set_value(self._tags["tex_main"], _frame_to_texture(result.display_frame))
         dpg.set_value(self._tags["tex_blur"], _frame_to_texture(result.blur_frame))
         dpg.set_value(self._tags["tex_threshold"], _frame_to_texture(result.binary_frame))
-
-    # def update_lights(self, output: LightsOutput):
-    #     def sig(on: bool):
-    #         return _IND_SIGNAL if on else _IND_OFF
-
-    #     def tail(level: int):
-    #         return (_IND_OFF, _IND_TAIL_DIM, _IND_TAIL_BRIGHT)[level]
-
-    #     dpg.configure_item(self._tags["ind_fl_sig_dot"], color=sig(output.front_left_signal))
-    #     dpg.configure_item(self._tags["ind_fr_sig_dot"], color=sig(output.front_right_signal))
-    #     dpg.configure_item(self._tags["ind_bl_sig_dot"], color=sig(output.back_left_signal))
-    #     dpg.configure_item(self._tags["ind_br_sig_dot"], color=sig(output.back_right_signal))
-    #     dpg.configure_item(self._tags["ind_fl_drl_dot"], color=_IND_DRL if output.front_left_drl else _IND_OFF)
-    #     dpg.configure_item(self._tags["ind_fr_drl_dot"], color=_IND_DRL if output.front_right_drl else _IND_OFF)
-    #     dpg.configure_item(self._tags["ind_low_beam_dot"], color=_IND_LOW_BEAM if output.low_beam else _IND_OFF)
-    #     dpg.configure_item(self._tags["ind_tail_l_dot"], color=tail(output.tail_left))
-    #     dpg.configure_item(self._tags["ind_tail_r_dot"], color=tail(output.tail_right))
-    #     dpg.configure_item(self._tags["ind_logo_l_dot"], color=_IND_LOGO if output.logo_left else _IND_OFF)
-    #     dpg.configure_item(self._tags["ind_logo_r_dot"], color=_IND_LOGO if output.logo_right else _IND_OFF)
 
     def update_telemetry(self, fps: float, error: int, steering: float, throttle: float):
         dpg.set_value(self._tags["tel_fps"], f"FPS: {fps:.1f}")
