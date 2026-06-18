@@ -134,7 +134,7 @@ class TunerGUI:
                         self._tags["scan_lines"] = dpg.add_slider_int(label="Scan Lines", default_value=config.scan_lines, min_value=1, max_value=15, width=form_w)
                         self._tags["roi_x0"] = dpg.add_slider_float(label="ROI X Start", default_value=config.roi_x0, min_value=0.0, max_value=0.49, format="%.2f", width=form_w)
                         self._tags["roi_x1"] = dpg.add_slider_float(label="ROI X End", default_value=config.roi_x1, min_value=0.51, max_value=1.0, format="%.2f", width=form_w)
-                        self._tags["roi_y0"] = dpg.add_slider_float(label="ROI Y Start", default_value=config.roi_y0, min_value=0.5, max_value=0.95, format="%.2f", width=form_w)
+                        self._tags["roi_y0"] = dpg.add_slider_float(label="ROI Y Start", default_value=config.roi_y0, min_value=0.1, max_value=0.95, format="%.2f", width=form_w)
                         self._tags["roi_y1"] = dpg.add_slider_float(label="ROI Y End", default_value=config.roi_y1, min_value=0.5, max_value=0.99, format="%.2f", width=form_w)
 
                         dpg.add_spacer(height=8)

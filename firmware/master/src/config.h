@@ -53,6 +53,15 @@ constexpr uint16_t WATCHDOG_TIMEOUT_MS = 500;
 constexpr uint8_t DRIVE_SLEW_UP_PER_TICK = 4;
 constexpr uint8_t DRIVE_SLEW_DOWN_PER_TICK = 32;
 
+// Electronic differential. With four driven wheels locked to one speed, the
+// inner wheels (shorter arc) scrub and fight the turn. Slow the inner-side
+// wheels in proportion to how hard the wheels are steered, leaving the outer
+// side at full speed: inner_factor = 1 - DRIVE_DIFF_GAIN*|steer|, floored at
+// DRIVE_DIFF_MIN_FACTOR. This only ever reduces speed, so it cannot make
+// cornering worse. Steering magnitude comes from the measured pot angle.
+constexpr float DRIVE_DIFF_GAIN = 0.5f;
+constexpr float DRIVE_DIFF_MIN_FACTOR = 0.4f;
+
 // Steering feedback "raw" units are now the 10k pot's 10-bit ADC counts (0..1023,
 // linear), not the old AS5600's 0..4095. A given physical steering angle spans
 // ~4x fewer counts, so Kp/Kd are scaled up and the deadband down accordingly.
