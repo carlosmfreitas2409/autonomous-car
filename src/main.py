@@ -48,7 +48,7 @@ def draw_throttle_bar(frame, throttle):
             cv.rectangle(frame, (bar_x - 5, bar_cy), (bar_x + 5, bar_cy + fill_h), color, -1)
 
 
-cap = cv.VideoCapture(1)
+cap = cv.VideoCapture(0)
 if not cap.isOpened():
     print("Error: Could not open video.")
     exit()
@@ -111,7 +111,7 @@ while gui.is_running():
     perc = tracker.process(frame, params)
 
     if gui.is_autonomous():
-        steering, throttle = autonomous.step(perc.lane_offset, params, dt)
+        steering, throttle = autonomous.step(perc.lane_offset, perc.lane_curvature, params, dt)
     else:
         autonomous.reset()
         steering, throttle = ps5.poll()

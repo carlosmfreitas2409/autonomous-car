@@ -205,4 +205,23 @@ uint16_t current_angle_raw() { return current_angle; }
 uint16_t target_raw() { return target_angle; }
 int16_t last_pwm() { return last_output_pwm; }
 
+float normalized_position() {
+  // left_span / right_span carry the wiring's sign (either may be positive),
+  // so identify the steered side by which span's sign matches the offset, then
+  // divide by that span — same signs give a positive magnitude in [0, 1].
+  const int16_t offset = (int16_t)current_angle - (int16_t)config::STEER_CENTER_RAW;
+  if (offset == 0) return 0.0f;
+  if (left_span != 0 && (offset > 0) == (left_span > 0)) {
+    float v = (float)offset / (float)left_span;
+    if (v > 1.0f) v = 1.0f;
+    return v;  // positive = left
+  }
+  if (right_span != 0) {
+    float v = (float)offset / (float)right_span;
+    if (v > 1.0f) v = 1.0f;
+    return -v;  // negative = right
+  }
+  return 0.0f;
+}
+
 }  // namespace steering
