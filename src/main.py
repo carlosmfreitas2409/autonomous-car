@@ -87,6 +87,12 @@ while gui.is_running():
     if dt > 0:
         fps = 0.9 * fps + 0.1 / dt
 
+    if ps5.poll_estop_toggle():
+        gui.toggle_estop()
+
+    if ps5.poll_mode_toggle():
+        gui.toggle_mode()
+
     if gui.is_stopped():
         if not prev_stopped:
             arduino.send_estop()

@@ -29,14 +29,20 @@ class TunerGUI:
     def _snap_odd(self, sender, value):
         dpg.set_value(sender, max(3, value | 1))
 
-    def _toggle_mode(self, sender):
+    def _toggle_mode(self, _sender):
+        self.toggle_mode()
+
+    def toggle_mode(self):
         self._autonomous = not self._autonomous
-        dpg.set_item_label(sender, "Autonomous Mode" if self._autonomous else "Manual Mode")
+        dpg.set_item_label(self._tags["mode"], "Autonomous Mode" if self._autonomous else "Manual Mode")
 
-    def _toggle_estop(self, sender):
+    def _toggle_estop(self, _sender):
+        self.toggle_estop()
+
+    def toggle_estop(self):
         self._stopped = not self._stopped
-        dpg.set_item_label(sender, "Resume" if self._stopped else "Emergency Stop")
-
+        dpg.set_item_label(self._tags["estop"], "Resume" if self._stopped else "Emergency Stop")
+        
     def _build(self, config: Config, frame_w: int, frame_h: int):
         dpg.create_context()
 

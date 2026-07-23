@@ -4,12 +4,16 @@ import pygame
 _STICK_AXIS = 0  # Left stick X
 _RTRIGGER_AXIS = 5  # R2 (DualSense via SDL2 on macOS)
 _LTRIGGER_AXIS = 4
+_YBUTTON_AXIS = 3
+_BBUTTON = 1  # Circle (DualSense via SDL2 on macOS)
 _TRIGGER_DEADZONE = 0.05
 
 class PS5Controller:
     def __init__(self, deadzone: float = 0.08):
         self._deadzone = deadzone
         self._joystick: pygame.joystick.JoystickType | None = None
+        self._y_was_pressed = False
+        self._b_was_pressed = False
 
         if not pygame.display.get_init():
             pygame.display.init()
@@ -23,9 +27,7 @@ class PS5Controller:
         else:
             self._joystick = None
 
-    def poll(self) -> tuple[float, float]:
-        """Return (steering, throttle). Steering in [-1, 1] from left stick X;
-        throttle in [-1, 1] where R2 drives forward and L2 drives reverse."""
+    def _update(self) -> bool:
         pygame.event.pump()
 
         for event in pygame.event.get(
@@ -38,8 +40,31 @@ class PS5Controller:
 
         if self._joystick is None:
             self._try_connect()
-            if self._joystick is None:
-                return 0.0, 0.0
+        return self._joystick is not None
+
+    def poll_estop_toggle(self) -> bool:
+        if not self._update():
+            self._y_was_pressed = False
+            return False
+
+        pressed = self._joystick.get_button(_YBUTTON_AXIS)
+        toggled = pressed and not self._y_was_pressed
+        self._y_was_pressed = pressed
+        return toggled
+
+    def poll_mode_toggle(self) -> bool:
+        if not self._update():
+            self._b_was_pressed = False
+            return False
+
+        pressed = self._joystick.get_button(_BBUTTON)
+        toggled = pressed and not self._b_was_pressed
+        self._b_was_pressed = pressed
+        return toggled
+
+    def poll(self) -> tuple[float, float]:
+        if not self._update():
+            return 0.0, 0.0
 
         raw_stick = self._joystick.get_axis(_STICK_AXIS)
         if abs(raw_stick) < self._deadzone:
