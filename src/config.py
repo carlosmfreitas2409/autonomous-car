@@ -26,3 +26,10 @@ class Config:
     # Speed
     base_speed: float = 0.63
     min_speed: float = 0.50
+
+    # Signs. Deliberately only two knobs: a switch and the one threshold worth
+    # sweeping during bring-up. Everything else about sign perception is either
+    # a physical constant (a distance in metres, the camera's field of view, a
+    # dwell time) or is derived from the image at runtime.
+    enable_sign_detection: bool = True
+    sign_confidence: float = 0.45

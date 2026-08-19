@@ -1,0 +1,7 @@
+# Development-only. Never installed on the car: training and export happen
+# offline, the car runs the exported ONNX through onnxruntime alone.
+-r requirements.txt
+
+pytest
+ultralytics
+onnx

@@ -58,7 +58,10 @@ class LineTracker:
         cv.line(blur_display, (roi_center_x, roi_y0), (roi_center_x, roi_y1), (255, 255, 255), 1)
 
         scan_ys = np.linspace(roi_y0, roi_y1, max(1, params.scan_lines), dtype=int)
+        # The scan origin indexes into the row directly, so it has to stay inside
+        # the ROI: a single-lane frame can extrapolate a center far off-image.
         scan_origin = self._prev_track_center if self._prev_track_center is not None else center_x
+        scan_origin = int(min(max(scan_origin, roi_x0), max(roi_x0, roi_x1 - 1)))
         centers = []
         center_ys = []
         widths = []
@@ -85,9 +88,9 @@ class LineTracker:
                 widths.append(right_x - left_x)
                 cv.line(blur_display, (left_x, sy), (right_x, sy), (0, 255, 255), 1)
             elif left_x != -1 and self._half_lane_width is not None:
-                center = int(left_x + self._half_lane_width)
+                center = int(min(left_x + self._half_lane_width, roi_x1))
             elif right_x != -1 and self._half_lane_width is not None:
-                center = int(right_x - self._half_lane_width)
+                center = int(max(right_x - self._half_lane_width, roi_x0))
 
             if center is not None:
                 centers.append(center)

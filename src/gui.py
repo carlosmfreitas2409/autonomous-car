@@ -6,7 +6,9 @@ import serial.tools.list_ports
 from config import Config
 from lights import LightsController, TurnSignal
 
+from input.traffic_policy import PolicyState, TrafficConstraint
 from perception.line_tracking import LineTrackingResult
+from perception.sign_worker import DEBUG_HEIGHT, DEBUG_WIDTH, SignSnapshot
 
 
 _TURN_SIGNAL_LABELS = {
@@ -14,6 +16,14 @@ _TURN_SIGNAL_LABELS = {
     "Left": TurnSignal.LEFT,
     "Right": TurnSignal.RIGHT,
     "Hazard": TurnSignal.HAZARD,
+}
+
+_POLICY_COLOURS = {
+    PolicyState.CLEAR: (0, 255, 0),
+    PolicyState.SLOWING: (255, 200, 0),
+    PolicyState.HOLDING: (255, 80, 80),
+    PolicyState.DWELLING: (255, 80, 80),
+    PolicyState.WAITING_GREEN: (255, 80, 80),
 }
 
 class TunerGUI:
@@ -62,18 +72,23 @@ class TunerGUI:
         dpg.bind_theme(global_theme)
 
         blank = np.ones(frame_w * frame_h * 4, dtype=np.float32)
+        # The sign pane is a fixed size the worker letterboxes into, so the GUI
+        # never has to care what resolution the sign camera negotiated.
+        sign_blank = np.ones(DEBUG_WIDTH * DEBUG_HEIGHT * 4, dtype=np.float32) * 0.1
         with dpg.texture_registry():
             self._tags["logo_tex"] = dpg.add_static_texture(logo_width, logo_height, logo_data)
             self._tags["tex_main"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
             self._tags["tex_blur"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
             self._tags["tex_threshold"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
+            self._tags["tex_signs"] = dpg.add_raw_texture(DEBUG_WIDTH, DEBUG_HEIGHT, sign_blank, format=dpg.mvFormat_Float_rgba)
 
         grid_w = frame_w // 2
         grid_h = frame_h // 2
+        sign_h = grid_w * DEBUG_HEIGHT // DEBUG_WIDTH
 
         form_w = grid_w - 100
 
-        vp_w = grid_w * 3 + 80
+        vp_w = grid_w * 4 + 100
         vp_h = frame_h + 160
         dpg.create_viewport(title="Autonomous Car Tuner", width=vp_w, height=vp_h, resizable=True)
 
@@ -94,6 +109,8 @@ class TunerGUI:
                         self._tags["tel_steer"] = dpg.add_text("Steer: --", color=(0, 255, 0))
                         dpg.add_spacer(width=4)
                         self._tags["tel_throttle"] = dpg.add_text("Throttle: --", color=(0, 255, 0))
+                        dpg.add_spacer(width=4)
+                        self._tags["tel_signs"] = dpg.add_text("Signs: --", color=(150, 150, 150))
                     with dpg.group(horizontal=True, height=24):
                         self._tags["mode"] = dpg.add_button(label="Autonomous Mode", callback=self._toggle_mode, width=120)
                         self._tags["estop"] = dpg.add_button(label="Emergency Stop", callback=self._toggle_estop, width=110)
@@ -103,6 +120,7 @@ class TunerGUI:
                            borders_innerV=False, borders_outerH=False,
                            borders_outerV=False, pad_outerX=False):
 
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=grid_w)
                 dpg.add_table_column(width_fixed=True, init_width_or_weight=grid_w)
                 dpg.add_table_column(width_fixed=True, init_width_or_weight=grid_w)
                 dpg.add_table_column(width_fixed=True, init_width_or_weight=grid_w)
@@ -117,6 +135,9 @@ class TunerGUI:
                     with dpg.group():
                         dpg.add_text("Threshold")
                         dpg.add_image(self._tags["tex_threshold"], width=grid_w, height=grid_h)
+                    with dpg.group():
+                        self._tags["signs_title"] = dpg.add_text("Signs")
+                        dpg.add_image(self._tags["tex_signs"], width=grid_w, height=sign_h)
 
                 with dpg.table_row():
                     with dpg.group():
@@ -175,6 +196,20 @@ class TunerGUI:
                             dpg.add_spacer(width=4)
                             self._tags["logo"] = dpg.add_checkbox(label="Logo Projector", callback=self._on_logo)
 
+                    with dpg.group():
+                        dpg.add_spacer(height=4)
+                        dpg.add_text("Signs", color=(130, 200, 255))
+                        self._tags["signs_enabled"] = dpg.add_checkbox(
+                            label="Enable Detection", default_value=config.enable_sign_detection
+                        )
+                        self._tags["sign_confidence"] = dpg.add_slider_float(
+                            label="Confidence", default_value=config.sign_confidence,
+                            min_value=0.05, max_value=0.95, format="%.2f", width=form_w,
+                        )
+                        dpg.add_spacer(height=8)
+                        self._tags["signs_policy"] = dpg.add_text("Policy: clear", color=(0, 255, 0))
+                        self._tags["signs_detail"] = dpg.add_text("", color=(180, 180, 180), wrap=form_w)
+
         dpg.set_primary_window("primary", True)
         dpg.setup_dearpygui()
         dpg.show_viewport()
@@ -197,6 +232,9 @@ class TunerGUI:
 
             base_speed=dpg.get_value(self._tags["base_speed"]),
             min_speed=dpg.get_value(self._tags["min_speed"]),
+
+            enable_sign_detection=dpg.get_value(self._tags["signs_enabled"]),
+            sign_confidence=dpg.get_value(self._tags["sign_confidence"]),
         )
 
     def set_pid_reset_callback(self, callback):
@@ -248,6 +286,27 @@ class TunerGUI:
         dpg.set_value(self._tags["tel_steer"], f"Steer: {steering:+.3f}")
         dpg.set_value(self._tags["tel_throttle"], f"Throttle: {throttle:.2f}")
 
+    def update_sign_view(self, snapshot: SignSnapshot, constraint: TrafficConstraint):
+        if snapshot.debug_frame is not None:
+            dpg.set_value(self._tags["tex_signs"], _frame_to_texture(snapshot.debug_frame))
+
+        title = f"Signs  ({snapshot.fps:.0f} fps)" if snapshot.camera_open else "Signs"
+        dpg.set_value(self._tags["signs_title"], title)
+
+        policy_text = f"Policy: {constraint.state.value}"
+        if constraint.reason:
+            policy_text += f" - {constraint.reason}"
+        if constraint.speed_cap < 1.0:
+            policy_text += f"  (cap {constraint.speed_cap:.2f})"
+        dpg.set_value(self._tags["signs_policy"], policy_text)
+        dpg.configure_item(self._tags["signs_policy"], color=_POLICY_COLOURS.get(constraint.state, (200, 200, 200)))
+
+        dpg.set_value(self._tags["signs_detail"], _describe_tracks(snapshot.tracks))
+
+        summary, colour = _sign_summary(snapshot, constraint)
+        dpg.set_value(self._tags["tel_signs"], summary)
+        dpg.configure_item(self._tags["tel_signs"], color=colour)
+
     def is_running(self) -> bool:
         return dpg.is_dearpygui_running()
 
@@ -267,3 +326,35 @@ class TunerGUI:
 def _frame_to_texture(frame: np.ndarray) -> np.ndarray:
     rgba = cv.cvtColor(frame, cv.COLOR_BGR2RGBA)
     return (rgba.astype(np.float32) * (1.0 / 255.0)).ravel()
+
+
+def _describe(track) -> str:
+    name = f"light:{track.light_state.value}" if track.label == "traffic_light" else track.label
+    if track.distance_m is not None:
+        name += f" {track.distance_m:.1f}m"
+    return name
+
+
+def _describe_tracks(tracks) -> str:
+    if not tracks:
+        return "nothing in view"
+    return "\n".join(
+        f"#{t.id} {_describe(t)}" + ("" if t.confirmed else "  (unconfirmed)")
+        for t in sorted(tracks, key=lambda t: t.distance_m if t.distance_m is not None else 1e9)
+    )
+
+
+def _sign_summary(snapshot: SignSnapshot, constraint: TrafficConstraint):
+    """Header line. Perception being down must be obvious at a glance, since
+    by design it does not slow the car down on its own."""
+    if not snapshot.detector_available:
+        return "Signs: no model", (255, 170, 0)
+    if not snapshot.camera_open:
+        return "Signs: NO CAMERA", (255, 80, 80)
+    if constraint.stale:
+        return "Signs: STALE", (255, 80, 80)
+
+    confirmed = [t for t in snapshot.tracks if t.confirmed]
+    if not confirmed:
+        return "Signs: clear", (0, 255, 0)
+    return "Signs: " + ", ".join(_describe(t) for t in confirmed), (0, 255, 0)

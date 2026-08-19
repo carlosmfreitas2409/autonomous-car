@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+# src/ uses flat imports ("from config import Config"), which normally only work
+# because Python puts a script's own directory on sys.path. Tests are collected
+# from tests/, so they need src/ added explicitly.
+pythonpath = ["src"]
+testpaths = ["tests"]
