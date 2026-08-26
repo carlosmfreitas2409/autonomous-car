@@ -37,7 +37,7 @@ struct Motor {
 constexpr uint8_t MOTOR_COUNT = 4;
 const Motor motors[MOTOR_COUNT] = {
   // name, R_EN, L_EN, R_PWM, L_PWM    bridge
-  {"FL",    24,   25,    5,     6},  // bridge 2 (top-left)
+  {"FL",    24,   25,    6,     5},  // bridge 2 (top-left)
   {"FR",    26,   27,    7,     8},  // bridge 3
   {"RL",    22,   23,    3,     4},  // bridge 1 (bottom-left)
   {"RR",    28,   29,    9,    10},  // bridge 4 (bottom-right)
