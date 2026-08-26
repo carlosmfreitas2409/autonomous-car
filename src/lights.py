@@ -9,6 +9,17 @@ class TurnSignal(Enum):
     HAZARD = "hazard"
 
 
+class StripEffect(Enum):
+    OFF = 0
+    RED = 1
+    GREEN = 2
+    BLUE = 3
+    STROBE = 4
+    RAINBOW = 5
+    CYAN = 6
+    RED_PULSE = 7
+
+
 @dataclass
 class LightsOutput:
     # Front combined housings: turn signal + DRL share a housing but are separate lamps.
@@ -42,6 +53,8 @@ class LightsOutput:
     logo_left: bool = False
     logo_right: bool = False
 
+    strip_effect: StripEffect = StripEffect.OFF
+
 
 class LightsController:
     _BRAKE_THROTTLE_THRESHOLD = 0.05
@@ -53,10 +66,13 @@ class LightsController:
         self.low_beam = False
         self.logo = False
         self.reverse = False
+        self.strip_effect: StripEffect | None = None
+        self._estopped = False
+        self._autonomous = True
         self._braking = False
         self._prev_throttle = 0.0
 
-    def update(self, throttle: float, *, estopped: bool) -> None:
+    def update(self, throttle: float, *, estopped: bool, autonomous: bool) -> None:
         speed = abs(throttle)
         prev_speed = abs(self._prev_throttle)
         decelerating = (prev_speed - speed) > self._BRAKE_DECEL_THRESHOLD
@@ -64,6 +80,15 @@ class LightsController:
         self._braking = estopped or coasting or decelerating
         self.reverse = (not estopped) and throttle < -self._BRAKE_THROTTLE_THRESHOLD
         self._prev_throttle = throttle
+        self._estopped = estopped
+        self._autonomous = autonomous
+
+    def _resolve_strip(self) -> StripEffect:
+        if self.strip_effect is not None:
+            return self.strip_effect
+        if self._estopped:
+            return StripEffect.RED_PULSE
+        return StripEffect.CYAN if self._autonomous else StripEffect.GREEN
 
     def compute(self) -> LightsOutput:
         left_active = self.turn_signal in (TurnSignal.LEFT, TurnSignal.HAZARD)
@@ -85,4 +110,5 @@ class LightsController:
             low_beam=self.low_beam,
             logo_left=self.logo,
             logo_right=self.logo,
+            strip_effect=self._resolve_strip(),
         )

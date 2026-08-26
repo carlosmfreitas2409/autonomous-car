@@ -81,7 +81,11 @@ void handle_lights(char* args) {
     return;
   }
 
-  if (!can_bus::send_lights(mask)) {
+  uint8_t effect = 0;
+  char* tok_effect = strtok_r(nullptr, " \t", &save);
+  if (tok_effect) effect = (uint8_t)atol(tok_effect);
+
+  if (!can_bus::send_lights(mask, effect)) {
     Serial.println(F("ERR CAN"));
   }
 }

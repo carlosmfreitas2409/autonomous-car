@@ -3,6 +3,7 @@
 #include "can_bus.h"
 #include "config.h"
 #include "relays.h"
+#include "strip.h"
 
 namespace {
 
@@ -30,6 +31,7 @@ void setup() {
   digitalWrite(config::PIN_STATUS_LED, HIGH);
 
   relays::init();
+  strip::init();
 
   const bool can_ok = can_bus::init();
 
@@ -41,14 +43,18 @@ void loop() {
   const uint32_t now = millis();
 
   uint8_t mask = 0;
-  if (can_bus::poll(mask)) {
+  uint8_t effect = 0;
+  if (can_bus::poll(mask, effect)) {
     last_frame_ms = now;
     watchdog_tripped = false;
     apply_bitmask(mask);
+    strip::set_effect(effect);
   } else if (!watchdog_tripped && (now - last_frame_ms) >= config::CAN_WATCHDOG_MS) {
     watchdog_tripped = true;
     relays::all_off();
+    strip::off();
   }
 
   relays::update(now);
+  strip::update(now);
 }

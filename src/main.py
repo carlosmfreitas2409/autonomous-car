@@ -98,7 +98,7 @@ while gui.is_running():
             arduino.send_estop()
         prev_stopped = True
         autonomous.reset()
-        lights.update(0.0, estopped=True)
+        lights.update(0.0, estopped=True, autonomous=gui.is_autonomous())
         lights_output = lights.compute()
         arduino.send_lights(lights_output)
         gui.render_frame()
@@ -126,7 +126,7 @@ while gui.is_running():
     draw_steering_bar(perc.display_frame, steering)
     draw_throttle_bar(perc.display_frame, throttle)
 
-    lights.update(throttle, estopped=False)
+    lights.update(throttle, estopped=False, autonomous=gui.is_autonomous())
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
     arduino.send_motor(throttle, steering)
