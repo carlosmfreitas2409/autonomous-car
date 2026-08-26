@@ -27,7 +27,7 @@ bool init() {
   return true;
 }
 
-bool poll(uint8_t& bitmask) {
+bool poll(uint8_t& bitmask, uint8_t& effect) {
   if (!ready) return false;
 
   if (digitalRead(config::PIN_CAN_INT) != LOW) return false;
@@ -38,6 +38,7 @@ bool poll(uint8_t& bitmask) {
   if (frame.can_id != config::CAN_LIGHTS_ID || frame.can_dlc < 1) return false;
 
   bitmask = frame.data[0];
+  effect = (frame.can_dlc >= 2) ? frame.data[1] : 0;
 
   return true;
 }
