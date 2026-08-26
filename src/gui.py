@@ -4,7 +4,7 @@ import cv2 as cv
 import serial.tools.list_ports
 
 from config import Config
-from lights import LightsController, TurnSignal
+from lights import LightsController, StripEffect, TurnSignal
 
 from input.traffic_policy import PolicyState, TrafficConstraint
 from perception.line_tracking import LineTrackingResult
@@ -24,6 +24,18 @@ _POLICY_COLOURS = {
     PolicyState.HOLDING: (255, 80, 80),
     PolicyState.DWELLING: (255, 80, 80),
     PolicyState.WAITING_GREEN: (255, 80, 80),
+}
+
+_STRIP_EFFECT_LABELS = {
+    "Auto": None,
+    "Off": StripEffect.OFF,
+    "Red": StripEffect.RED,
+    "Green": StripEffect.GREEN,
+    "Blue": StripEffect.BLUE,
+    "Cyan": StripEffect.CYAN,
+    "Red Pulse": StripEffect.RED_PULSE,
+    "Strobe": StripEffect.STROBE,
+    "Rainbow": StripEffect.RAINBOW,
 }
 
 class TunerGUI:
@@ -195,6 +207,14 @@ class TunerGUI:
                             self._tags["reverse"] = dpg.add_checkbox(label="Reverse", callback=self._on_reverse)
                             dpg.add_spacer(width=4)
                             self._tags["logo"] = dpg.add_checkbox(label="Logo Projector", callback=self._on_logo)
+                        dpg.add_spacer(height=4)
+                        self._tags["strip_effect"] = dpg.add_combo(
+                            items=tuple(_STRIP_EFFECT_LABELS.keys()),
+                            label="LED Strip",
+                            default_value="Auto",
+                            width=form_w,
+                            callback=self._on_strip_effect,
+                        )
 
                     with dpg.group():
                         dpg.add_spacer(height=4)
@@ -274,6 +294,10 @@ class TunerGUI:
     def _on_reverse(self, _sender, value):
         if self._lights is not None:
             self._lights.reverse = value
+
+    def _on_strip_effect(self, _sender, value):
+        if self._lights is not None:
+            self._lights.strip_effect = _STRIP_EFFECT_LABELS[value]
 
     def update_textures(self, result: LineTrackingResult):
         dpg.set_value(self._tags["tex_main"], _frame_to_texture(result.display_frame))

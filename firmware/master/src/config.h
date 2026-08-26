@@ -8,8 +8,8 @@ constexpr uint32_t SERIAL_BAUD = 115200;
 
 constexpr uint8_t PIN_FL_R_EN = 24;
 constexpr uint8_t PIN_FL_L_EN = 25;
-constexpr uint8_t PIN_FL_RPWM = 5;
-constexpr uint8_t PIN_FL_LPWM = 6;
+constexpr uint8_t PIN_FL_RPWM = 6;
+constexpr uint8_t PIN_FL_LPWM = 5;
 
 constexpr uint8_t PIN_FR_R_EN = 26;
 constexpr uint8_t PIN_FR_L_EN = 27;
@@ -76,9 +76,9 @@ constexpr uint8_t STEER_MAX_PWM = 210;
 // replace these three values before trusting the steering — they are
 // conservative placeholders. Left/right may need swapping depending on how the
 // pot couples to the linkage.
-constexpr uint16_t STEER_CENTER_RAW    = 539;
-constexpr uint16_t STEER_MAX_LEFT_RAW  = 993;
-constexpr uint16_t STEER_MAX_RIGHT_RAW = 15;  
+constexpr uint16_t STEER_CENTER_RAW    = 526;
+constexpr uint16_t STEER_MAX_LEFT_RAW  = 800;
+constexpr uint16_t STEER_MAX_RIGHT_RAW = 300;
 
 // The control loop assumes positive output should raise the raw pot reading. If
 // positive PWM on PIN_STEER_RPWM instead lowers the reading (depends on motor

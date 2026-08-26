@@ -37,12 +37,13 @@ bool init() {
   return true;
 }
 
-bool send_lights(uint8_t bitmask) {
+bool send_lights(uint8_t bitmask, uint8_t effect) {
   if (!ready) return false;
   struct can_frame frame;
   frame.can_id = config::CAN_LIGHTS_ID;
-  frame.can_dlc = 1;
+  frame.can_dlc = 2;
   frame.data[0] = bitmask;
+  frame.data[1] = effect;
   return mcp.sendMessage(&frame) == MCP2515::ERROR_OK;
 }
 

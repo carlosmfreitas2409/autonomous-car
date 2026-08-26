@@ -138,7 +138,7 @@ while gui.is_running():
         prev_stopped = True
         autonomous.reset()
         traffic_policy.reset()
-        lights.update(0.0, estopped=True)
+        lights.update(0.0, estopped=True, autonomous=gui.is_autonomous())
         lights_output = lights.compute()
         arduino.send_lights(lights_output)
         gui.render_frame()
@@ -180,7 +180,7 @@ while gui.is_running():
     draw_throttle_bar(perc.display_frame, throttle)
     draw_policy_banner(perc.display_frame, constraint)
 
-    lights.update(throttle, estopped=False)
+    lights.update(throttle, estopped=False, autonomous=gui.is_autonomous())
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
     arduino.send_motor(throttle, steering)

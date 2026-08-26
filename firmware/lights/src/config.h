@@ -15,6 +15,15 @@ constexpr uint8_t PIN_RELAY_REVERSE    = 4;
 constexpr uint8_t PIN_RELAY_LOGO       = 6;
 constexpr uint8_t PIN_RELAY_LED        = 5;
 
+constexpr uint8_t  PIN_STRIP_DATA        = 16;
+constexpr uint16_t STRIP_LED_COUNT       = 27;
+constexpr uint8_t  STRIP_BRIGHTNESS      = 200;
+constexpr uint8_t  STRIP_FRAME_MS        = 10;
+constexpr uint16_t STRIP_REFRESH_MS      = 250;
+constexpr uint16_t STROBE_ON_MS          = 40;
+constexpr uint16_t STROBE_OFF_MS         = 60;
+constexpr uint16_t PULSE_STEP            = 437;
+constexpr uint16_t RAINBOW_HUE_STEP      = 256;
 
 constexpr uint8_t PIN_STATUS_LED = 13;
 
