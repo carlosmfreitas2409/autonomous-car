@@ -76,7 +76,8 @@ void handle_lights(char* args) {
       !parse_bit_token(save, 3, mask) ||             // low beam
       !parse_bit_token(save, 4, mask) ||             // brake
       !parse_bit_token(save, 5, mask) ||             // reverse
-      !parse_bit_token(save, 6, mask)) {             // logo
+      !parse_bit_token(save, 6, mask) ||             // logo
+      !parse_bit_token(save, 7, mask)) {             // projector
     Serial.println(F("ERR L"));
     return;
   }

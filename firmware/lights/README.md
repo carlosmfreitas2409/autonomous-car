@@ -1,6 +1,6 @@
 # Lights Arduino — Relay control + LED strip (CAN slave)
 
-Firmware for the slave microcontroller that drives the car's seven lighting relays plus an addressable LED strip. Receives commands from the master Mega over a CAN bus (MCP2515). The Python host never talks to this board directly — it sends `L` over USB to the Mega, and the Mega forwards a CAN frame on `0x100`.
+Firmware for the slave microcontroller that drives the car's lighting relays plus an addressable LED strip. Receives commands from the master Mega over a CAN bus (MCP2515). The Python host never talks to this board directly — it sends `L` over USB to the Mega, and the Mega forwards a CAN frame on `0x100`.
 
 A lights crash still cannot affect motors or steering — the two firmwares run on physically separate MCUs.
 
@@ -21,7 +21,7 @@ pio run -d firmware/lights -t compiledb
 ## Hardware
 
 - **Board**: Arduino Nano (ATmega328P, new bootloader). Same firmware pin map as Uno — no source changes required. If upload fails, switch `platformio.ini` to `board = nanoatmega328` and `upload_speed = 57600` (old bootloader).
-- **Relays**: 7-channel active-LOW relay board (the common blue Arduino module).
+- **Relays**: 8-channel active-LOW relay board (the common blue Arduino module).
 - **LED strip**: 12V addressable strip. DIN on A2, positive wired straight to the 12V rail (not relayed), strip ground bonded to the Nano's ground.
 - **Power**: relay coils on a separate 5V rail; common ground with the Nano. Do not back-feed the Nano from the relay supply.
 
@@ -35,7 +35,8 @@ pio run -d firmware/lights -t compiledb
 | 4 | D9 | Low beam | Both front low-beam projectors |
 | 5 | D3 | Brake | Brake wire of both rear 4-in-1 lamps |
 | 6 | D4 | Reverse | Reverse wire of both rear 4-in-1 lamps |
-| 7 | D6 | Logo | Both logo projectors |
+| 7 | D6 | Logo | Logo projector |
+| 8 | D5 | Projector | Front projector |
 | — | A2 (D16) | LED strip DIN | Data line of the addressable strip (always-on 12V supply) |
 | — | D13 | Status LED | Solid-on after boot (flickers during SPI traffic; cosmetic) |
 
@@ -49,9 +50,9 @@ MCP2515: CS=D10, MISO=D12, MOSI=D11, SCK=D13, INT=D2.
 
 | ID | DLC | Payload | Effect |
 |---|---|---|---|
-| `0x100` | 2 | `data[0]` = 7-bit relay bitmask, `data[1]` = strip effect id | Set relay intents and strip effect. Sticky — held until the next frame. |
+| `0x100` | 2 | `data[0]` = 8-bit relay bitmask, `data[1]` = strip effect id | Set relay intents and strip effect. Sticky — held until the next frame. |
 
-Bitmask layout: bit 0 left, 1 right, 2 drl, 3 low beam, 4 brake, 5 reverse, 6 logo. Bit 7 reserved (must be 0).
+Bitmask layout: bit 0 left, 1 right, 2 drl, 3 low beam, 4 brake, 5 reverse, 6 logo, 7 projector.
 
 Strip effect ids: `0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow, `6` cyan, `7` red pulse. Unknown ids are treated as off. A DLC-1 frame (from a master built before the strip existed) is still accepted, with the effect taken as off.
 
@@ -122,9 +123,9 @@ All `L` commands below are sent over USB to the **master Mega**, not this board.
 
 1. Open the master monitor → `RDY car-master v1`. Open the lights monitor → `RDY car-lights`. Neither should print `ERR CAN`.
 2. Power the lights board with no CAN traffic → watchdog fires within 1 s → all relays off, strip dark.
-3. Each relay individually: send (e.g.) `L 0 0 1 0 0 0 0` to the master → relay 3 clicks on; `L 0 0 0 0 0 0 0` → off. Repeat for each position.
-4. Rear independence: `L 0 0 1 0 0 0 0` (DRL only — rear dim, fronts on); `L 0 0 1 0 1 0 0` (DRL + brake — rear bright, fronts unchanged); `L 0 0 0 0 1 0 0` (brake only — rear bright, fronts dark).
-5. Turn signal blink: `L 1 0 0 0 0 0 0` → right relay clicks on/off at the configured cadence; rear lamp pulses, front sequential sweeps. Confirm sweep completes per cycle. Repeat for left and hazard (`L 1 1 0 0 0 0 0`).
-6. LED strip: `L 0 0 0 0 0 0 0 1` → strip goes solid red; step through `2` green, `3` blue, `4` strobe, `5` rainbow; `L 0 0 0 0 0 0 0 0` → strip clears. If nothing happens at all, the master is probably still running pre-strip firmware — it sends a DLC-1 frame, which the lights board reads as "off". Reflash it.
-7. Backwards compatibility: a 7-token `L 0 0 1 0 0 0 0` still works and leaves the strip off.
+3. Each relay individually: send (e.g.) `L 0 0 1 0 0 0 0 0` to the master → relay 3 clicks on; `L 0 0 0 0 0 0 0 0` → off. Repeat for each position.
+4. Rear independence: `L 0 0 1 0 0 0 0 0` (DRL only — rear dim, fronts on); `L 0 0 1 0 1 0 0 0` (DRL + brake — rear bright, fronts unchanged); `L 0 0 0 0 1 0 0 0` (brake only — rear bright, fronts dark).
+5. Turn signal blink: `L 1 0 0 0 0 0 0 0` → right relay clicks on/off at the configured cadence; rear lamp pulses, front sequential sweeps. Confirm sweep completes per cycle. Repeat for left and hazard (`L 1 1 0 0 0 0 0 0`).
+6. LED strip: `L 0 0 0 0 0 0 0 0 1` → strip goes solid red; step through `2` green, `3` blue, `4` strobe, `5` rainbow; `L 0 0 0 0 0 0 0 0 0` → strip clears. If nothing happens at all, the master is probably still running pre-strip firmware — it sends a DLC-1 frame, which the lights board reads as "off". Reflash it.
+7. Backwards compatibility: an 8-token `L 0 0 1 0 0 0 0 0` still works and leaves the strip off.
 8. Watchdog: with rainbow running and a light on, pull the CAN cable. All relays should drop and the strip go dark within 1 s. Reconnect → next frame restores the commanded state.

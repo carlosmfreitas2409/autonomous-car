@@ -19,6 +19,7 @@ void apply_bitmask(uint8_t mask) {
   intent.brake      = (mask & (1u << 4)) != 0;
   intent.reverse    = (mask & (1u << 5)) != 0;
   intent.logo       = (mask & (1u << 6)) != 0;
+  intent.projector  = (mask & (1u << 7)) != 0;
   relays::set_intent(intent);
 }
 

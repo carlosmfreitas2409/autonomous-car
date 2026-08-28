@@ -24,7 +24,7 @@ void init() {
       config::PIN_RELAY_RIGHT_TURN, config::PIN_RELAY_LEFT_TURN,
       config::PIN_RELAY_DRL,        config::PIN_RELAY_LOW_BEAM,
       config::PIN_RELAY_BRAKE,      config::PIN_RELAY_REVERSE,
-      config::PIN_RELAY_LOGO,
+      config::PIN_RELAY_LOGO,       config::PIN_RELAY_PROJECTOR,
   };
   for (uint8_t i = 0; i < sizeof(pins); ++i) {
     pinMode(pins[i], OUTPUT);
@@ -49,6 +49,7 @@ void update(uint32_t now_ms) {
   write_relay(config::PIN_RELAY_BRAKE, intent.brake);
   write_relay(config::PIN_RELAY_REVERSE, intent.reverse);
   write_relay(config::PIN_RELAY_LOGO, intent.logo);
+  write_relay(config::PIN_RELAY_PROJECTOR, intent.projector);
 
   const bool any_signal = intent.left_turn || intent.right_turn;
   if (!any_signal) {

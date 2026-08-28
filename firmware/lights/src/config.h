@@ -13,7 +13,7 @@ constexpr uint8_t PIN_RELAY_LOW_BEAM   = 9;
 constexpr uint8_t PIN_RELAY_BRAKE      = 3;
 constexpr uint8_t PIN_RELAY_REVERSE    = 4;
 constexpr uint8_t PIN_RELAY_LOGO       = 6;
-constexpr uint8_t PIN_RELAY_LED        = 5;
+constexpr uint8_t PIN_RELAY_PROJECTOR  = 5;
 
 constexpr uint8_t  PIN_STRIP_DATA        = 16;
 constexpr uint16_t STRIP_LED_COUNT       = 27;

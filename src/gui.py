@@ -186,6 +186,8 @@ class TunerGUI:
                             self._tags["reverse"] = dpg.add_checkbox(label="Reverse", callback=self._on_reverse)
                             dpg.add_spacer(width=4)
                             self._tags["logo"] = dpg.add_checkbox(label="Logo Projector", callback=self._on_logo)
+                            dpg.add_spacer(width=4)
+                            self._tags["projector"] = dpg.add_checkbox(label="Projector", callback=self._on_projector)
                         dpg.add_spacer(height=4)
                         self._tags["strip_effect"] = dpg.add_combo(
                             items=tuple(_STRIP_EFFECT_LABELS.keys()),
@@ -252,6 +254,10 @@ class TunerGUI:
     def _on_logo(self, _sender, value):
         if self._lights is not None:
             self._lights.logo = value
+
+    def _on_projector(self, _sender, value):
+        if self._lights is not None:
+            self._lights.projector = value
 
     def _on_reverse(self, _sender, value):
         if self._lights is not None:
