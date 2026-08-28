@@ -4,7 +4,6 @@ namespace buzzer {
 
 void init();
 
-
-void update(bool active);
+void update(bool reversing, bool alarm);
 
 }  // namespace buzzer

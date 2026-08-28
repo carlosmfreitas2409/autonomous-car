@@ -75,6 +75,20 @@ void render(uint32_t now_ms) {
       break;
     }
 
+    case Effect::RED_STROBE: {
+      if (rendered_effect != effect) {
+        strobe_on = true;
+      } else {
+        const uint16_t phase_dur =
+            strobe_on ? config::STROBE_ON_MS : config::STROBE_OFF_MS;
+        if ((now_ms - strobe_phase_started_ms) < phase_dur) return;
+        strobe_on = !strobe_on;
+      }
+      strobe_phase_started_ms = now_ms;
+      pixels.fill(strobe_on ? Adafruit_NeoPixel::Color(255, 0, 0) : 0);
+      break;
+    }
+
     case Effect::RAINBOW: {
       const uint16_t count = pixels.numPixels();
       for (uint16_t i = 0; i < count; ++i) {
@@ -105,8 +119,8 @@ void init() {
 }
 
 void set_effect(uint8_t id) {
-  effect = (id > (uint8_t)Effect::RED_PULSE) ? Effect::OFF
-                                             : static_cast<Effect>(id);
+  effect = (id > (uint8_t)Effect::RED_STROBE) ? Effect::OFF
+                                              : static_cast<Effect>(id);
 }
 
 void off() {

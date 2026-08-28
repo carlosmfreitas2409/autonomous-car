@@ -62,6 +62,8 @@ bool parse_bit_token(char*& save, uint8_t bit, uint8_t& mask) {
 }
 
 void handle_lights(char* args) {
+  if (safety::state() == safety::State::FAULT) return;
+
   char* save = nullptr;
   char* first = strtok_r(args, " \t", &save);
   if (!first) {

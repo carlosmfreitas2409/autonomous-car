@@ -54,7 +54,7 @@ MCP2515: CS=D10, MISO=D12, MOSI=D11, SCK=D13, INT=D2.
 
 Bitmask layout: bit 0 left, 1 right, 2 drl, 3 low beam, 4 brake, 5 reverse, 6 logo, 7 projector.
 
-Strip effect ids: `0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow, `6` cyan, `7` red pulse. Unknown ids are treated as off. A DLC-1 frame (from a master built before the strip existed) is still accepted, with the effect taken as off.
+Strip effect ids: `0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow, `6` cyan, `7` red pulse, `8` red strobe. Unknown ids are treated as off. A DLC-1 frame (from a master built before the strip existed) is still accepted, with the effect taken as off.
 
 Turn-signal blink cadence is firmware-side: master sends a sticky boolean, the firmware toggles the relay every `BLINK_ON_MS` / `BLINK_OFF_MS` (`src/config.h`). Both sides share one state machine, so hazards stay in sync.
 
@@ -102,12 +102,15 @@ By default the host drives the strip from the car's own state rather than a fixe
 | State | Effect | Meaning |
 |---|---|---|
 | E-stopped | `7` red pulse | Halted. Wins over everything else. |
+| Steering FAULT | `8` red strobe | Hardware fault. Sent by the **master**, not the host — see below. |
 | Autonomous | `6` cyan | The computer is driving. |
 | Manual | `2` green | A human has the pad. |
 
 The mapping lives in `LightsController._resolve_strip()` (`src/lights.py`), not in firmware — this board only knows how to render an effect id. The GUI's **Auto** entry selects this behaviour; picking any other entry pins the strip to that effect for bench testing.
 
 Red *pulse* rather than red strobe for e-stop: the car boots latched in e-stop and sits there for long stretches, and a strobe that whole time is fatiguing enough that you stop seeing it. Swap `RED_PULSE` for `STROBE` in `_resolve_strip()` if you want it louder.
+
+Effect `8` red strobe is the one exception to "the host decides the lights". When the master latches a steering FAULT it drives the lights itself — hazards blinking plus this hard red strobe, repeated every 200 ms so the 1 s CAN watchdog never trips — and ignores the host's `L` frames for as long as the fault lasts. That way a car whose steering has broken still signals even if the laptop crashed or was unplugged. E-stop's slow breathe versus this sharp blink is the visual difference between "deliberately halted" and "something is broken".
 
 ### Colour order
 
@@ -126,6 +129,6 @@ All `L` commands below are sent over USB to the **master Mega**, not this board.
 3. Each relay individually: send (e.g.) `L 0 0 1 0 0 0 0 0` to the master → relay 3 clicks on; `L 0 0 0 0 0 0 0 0` → off. Repeat for each position.
 4. Rear independence: `L 0 0 1 0 0 0 0 0` (DRL only — rear dim, fronts on); `L 0 0 1 0 1 0 0 0` (DRL + brake — rear bright, fronts unchanged); `L 0 0 0 0 1 0 0 0` (brake only — rear bright, fronts dark).
 5. Turn signal blink: `L 1 0 0 0 0 0 0 0` → right relay clicks on/off at the configured cadence; rear lamp pulses, front sequential sweeps. Confirm sweep completes per cycle. Repeat for left and hazard (`L 1 1 0 0 0 0 0 0`).
-6. LED strip: `L 0 0 0 0 0 0 0 0 1` → strip goes solid red; step through `2` green, `3` blue, `4` strobe, `5` rainbow; `L 0 0 0 0 0 0 0 0 0` → strip clears. If nothing happens at all, the master is probably still running pre-strip firmware — it sends a DLC-1 frame, which the lights board reads as "off". Reflash it.
+6. LED strip: `L 0 0 0 0 0 0 0 0 1` → strip goes solid red; step through `2` green, `3` blue, `4` strobe, `5` rainbow, `8` red strobe; `L 0 0 0 0 0 0 0 0 0` → strip clears. If nothing happens at all, the master is probably still running pre-strip firmware — it sends a DLC-1 frame, which the lights board reads as "off". Reflash it.
 7. Backwards compatibility: an 8-token `L 0 0 1 0 0 0 0 0` still works and leaves the strip off.
 8. Watchdog: with rainbow running and a light on, pull the CAN cable. All relays should drop and the strip go dark within 1 s. Reconnect → next frame restores the commanded state.

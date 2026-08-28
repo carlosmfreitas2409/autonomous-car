@@ -81,10 +81,9 @@ constexpr int16_t STEER_DEADBAND_UNITS = 3;
 constexpr uint8_t STEER_MIN_MOVE_PWM = 150;
 constexpr uint8_t STEER_MAX_PWM = 210;
 
-// Pot ADC range is 0..1023. RUN tools/calibration_pot/calibration_pot.ino and
-// replace these three values before trusting the steering — they are
-// conservative placeholders. Left/right may need swapping depending on how the
-// pot couples to the linkage.
+constexpr uint16_t STEER_SENSOR_BAD_MS = 100;
+constexpr uint16_t STEER_STALL_TIMEOUT_MS = 250;
+
 constexpr uint16_t STEER_CENTER_RAW    = 526;
 constexpr uint16_t STEER_MAX_LEFT_RAW  = 800;
 constexpr uint16_t STEER_MAX_RIGHT_RAW = 300;

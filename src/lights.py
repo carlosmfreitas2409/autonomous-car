@@ -18,6 +18,7 @@ class StripEffect(Enum):
     RAINBOW = 5
     CYAN = 6
     RED_PULSE = 7
+    RED_STROBE = 8
 
 
 @dataclass
