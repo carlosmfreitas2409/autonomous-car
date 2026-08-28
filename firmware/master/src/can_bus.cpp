@@ -47,4 +47,18 @@ bool send_lights(uint8_t bitmask, uint8_t effect) {
   return mcp.sendMessage(&frame) == MCP2515::ERROR_OK;
 }
 
+bool poll_sonar(uint8_t data[8]) {
+  if (!ready) return false;
+
+  struct can_frame frame;
+  if (mcp.readMessage(&frame) != MCP2515::ERROR_OK) return false;
+
+  if (frame.can_id != config::CAN_SONAR_ID || frame.can_dlc < config::SONAR_SENSORS) {
+    return false;
+  }
+
+  for (uint8_t i = 0; i < 8; i++) data[i] = frame.data[i];
+  return true;
+}
+
 }

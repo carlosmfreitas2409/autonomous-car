@@ -69,10 +69,18 @@ class LightsController:
         self.strip_effect: StripEffect | None = None
         self._estopped = False
         self._autonomous = True
+        self._obstacle_blocked = False
         self._braking = False
         self._prev_throttle = 0.0
 
-    def update(self, throttle: float, *, estopped: bool, autonomous: bool) -> None:
+    def update(
+        self,
+        throttle: float,
+        *,
+        estopped: bool,
+        autonomous: bool,
+        obstacle_blocked: bool = False,
+    ) -> None:
         speed = abs(throttle)
         prev_speed = abs(self._prev_throttle)
         decelerating = (prev_speed - speed) > self._BRAKE_DECEL_THRESHOLD
@@ -82,12 +90,15 @@ class LightsController:
         self._prev_throttle = throttle
         self._estopped = estopped
         self._autonomous = autonomous
+        self._obstacle_blocked = obstacle_blocked
 
     def _resolve_strip(self) -> StripEffect:
         if self.strip_effect is not None:
             return self.strip_effect
         if self._estopped:
             return StripEffect.RED_PULSE
+        if self._obstacle_blocked:
+            return StripEffect.RED
         return StripEffect.CYAN if self._autonomous else StripEffect.GREEN
 
     def compute(self) -> LightsOutput:
