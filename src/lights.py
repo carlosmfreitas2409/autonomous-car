@@ -49,9 +49,10 @@ class LightsOutput:
     # Front low beam.
     low_beam: bool = False
 
-    # Logo projectors.
-    logo_left: bool = False
-    logo_right: bool = False
+    logo: bool = False
+
+    # Doors projector
+    projector: bool = False
 
     strip_effect: StripEffect = StripEffect.OFF
 
@@ -65,6 +66,7 @@ class LightsController:
         self.drl = False
         self.low_beam = False
         self.logo = False
+        self.projector = False
         self.reverse = False
         self.strip_effect: StripEffect | None = None
         self._estopped = False
@@ -119,7 +121,7 @@ class LightsController:
             reverse_left=self.reverse,
             reverse_right=self.reverse,
             low_beam=self.low_beam,
-            logo_left=self.logo,
-            logo_right=self.logo,
+            logo=self.logo,
+            projector=self.projector,
             strip_effect=self._resolve_strip(),
         )

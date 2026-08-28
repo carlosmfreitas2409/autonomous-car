@@ -123,11 +123,12 @@ class Arduino:
     low = int(output.low_beam)
     brake = int(output.back_left_brake or output.back_right_brake)
     reverse = int(output.reverse_left or output.reverse_right)
-    logo = int(output.logo_left or output.logo_right)
+    logo = int(output.logo)
+    projector = int(output.projector)
     strip = output.strip_effect.value
-    self._master.write(f"L {left} {right} {drl} {low} {brake} {reverse} {logo} {strip}")
+    self._master.write(f"L {left} {right} {drl} {low} {brake} {reverse} {logo} {projector} {strip}")
 
   def close(self):
-    self._master.write("L 0 0 0 0 0 0 0 0")
+    self._master.write("L 0 0 0 0 0 0 0 0 0")
     self._master.write("E")
     self._master.close()

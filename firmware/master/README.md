@@ -63,7 +63,7 @@ USB Serial @ 115200 baud, newline-terminated ASCII.
 | `M` | `<throttle 0..255> <steering -255..+255>` | Set drive throttle and steering target. Resets watchdog. First non-zero `M` clears latched estop. |
 | `E` | — | Emergency stop. Latched. All PWMs forced to 0. Cleared only by a subsequent non-zero `M`. |
 | `H` | — | Heartbeat — resets watchdog without changing setpoints. |
-| `L` | `<left> <right> <drl> <low> <brake> <reverse> <logo> [strip]` | Pack the 7 booleans into a bitmask and transmit as CAN ID `0x100` to the lights Nano. `strip` is the optional LED strip effect id (`0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow, `6` cyan, `7` red pulse); omitted or out of range means off. Must match the `Effect` enum in `firmware/lights/src/strip.h` and `StripEffect` in `src/lights.py`. Does **not** affect the drive watchdog. |
+| `L` | `<left> <right> <drl> <low> <brake> <reverse> <logo> <projector> [strip]` | Pack the 8 booleans into a bitmask and transmit as CAN ID `0x100` to the lights Nano. `strip` is the optional LED strip effect id (`0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow); omitted or out of range means off. Does **not** affect the drive watchdog. |
 
 Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure (no MCP2515 / bus off) produces `ERR CAN`.
 

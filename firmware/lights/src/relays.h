@@ -12,6 +12,7 @@ struct Intent {
   bool brake;
   bool reverse;
   bool logo;
+  bool projector;
 };
 
 void init();
