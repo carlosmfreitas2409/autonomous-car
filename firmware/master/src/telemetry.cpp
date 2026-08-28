@@ -44,7 +44,9 @@ void update() {
   Serial.print(' ');
   Serial.print(safety::state_char());
   Serial.print(' ');
-  Serial.println(safety::ms_since_last_command());
+  Serial.print(safety::ms_since_last_command());
+  Serial.print(' ');
+  Serial.println(steering::fault_char());
 #endif
 }
 

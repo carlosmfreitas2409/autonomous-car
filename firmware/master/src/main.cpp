@@ -33,6 +33,7 @@ void configure_high_freq_pwm() {
 uint32_t last_control_ms = 0;
 bool fault_blink_state = false;
 uint32_t last_blink_ms = 0;
+uint32_t last_fault_lights_ms = 0;
 
 }
 
@@ -57,7 +58,8 @@ void setup() {
   Serial.println(F("RDY car-master v1"));
 
   if (!steer_ok) {
-    Serial.println(F("ERR STEER"));
+    Serial.print(F("ERR STEER "));
+    Serial.println(steering::fault_char());
     safety::enter_fault();
   }
   if (!can_ok) {
@@ -78,12 +80,24 @@ void loop() {
     motors::update();
     if (safety::state() != safety::State::FAULT) {
       steering::update();
+
+      if (steering::fault() != steering::Fault::NONE) {
+        Serial.print(F("ERR STEER "));
+        Serial.println(steering::fault_char());
+        safety::enter_fault();
+      }
     }
   }
 
+  const bool fault_alarm = safety::state() == safety::State::FAULT;
   const bool reversing =
       safety::state() == safety::State::RUN && motors::current_throttle() < 0;
-  buzzer::update(reversing);
+  buzzer::update(reversing, fault_alarm);
+
+  if (fault_alarm && (now - last_fault_lights_ms) >= 200) {
+    last_fault_lights_ms = now;
+    can_bus::send_lights(0b11, 8);
+  }
 
   telemetry::update();
 

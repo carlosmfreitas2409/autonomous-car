@@ -25,22 +25,31 @@ If unsure: **disconnect the camera** and command angles directly via `M 0 +127`,
 
 | Constant | What you observe | What to do |
 |---|---|---|
-| `STEER_KP` (1.2) | Wheels move sluggishly toward target, undershoot | Raise. Common range 0.8–3.0. |
+| `STEER_KP` (2.2) | Wheels move sluggishly toward target, undershoot | Raise. Common range 0.8–3.0. |
 | | Wheels overshoot and oscillate around target | Lower. |
 | `STEER_KD` (0.12) | Overshoots and rings before settling | Raise. Common range 0.05–0.4. |
 | | Movement feels jerky/hesitant | Lower. |
-| `STEER_MIN_MOVE_PWM` (120) | Wheel hums near target but doesn't actually move | Raise (130, 145...). |
+| `STEER_MIN_MOVE_PWM` (150) | Wheel hums near target but doesn't actually move | Raise (130, 145...). |
 | | Wheel "kicks" when reaching target | Lower. |
 | `STEER_DEADBAND_UNITS` (3) | Wheel twitches when holding still | Raise (5, 8). |
 | | Final position is sloppy/imprecise | Lower. |
 
 Tuning workflow: send `M 0 -200`, wait, send `M 0 +200`, wait, send `M 0 0`. Watch the pot angle (`angle_raw`, 0–1023) in telemetry. Adjust one constant at a time.
 
+> **Interaction with the steering failsafes.** Lowering `STEER_MIN_MOVE_PWM` or
+> `STEER_MAX_PWM` makes the actuator slower, which eats into the margin of the
+> no-motion guard (`ERR STEER S`). If you drop either meaningfully, re-time how
+> long a healthy sweep takes to cover 31 counts and raise
+> `STEER_STALL_TIMEOUT_MS` to ~3× that. The plausibility band and stall delta are
+> derived from `STEER_CENTER_RAW`/`MAX_LEFT`/`MAX_RIGHT`, so a bad calibration
+> also means bad guard thresholds — see *Steering feedback failsafes* in
+> `firmware/master/README.md`.
+
 ### Maybe tune
 
 | Constant | When |
 |---|---|
-| `STEER_MAX_PWM` (200) | Lower it if the steering feels too violent. Raise (toward 255) only if it's noticeably weak under real cornering load. |
+| `STEER_MAX_PWM` (210) | Lower it if the steering feels too violent. Raise (toward 255) only if it's noticeably weak under real cornering load. |
 | `DRIVE_SLEW_UP_PER_TICK` (4) | Lower if the car launches too aggressively or browns out. Raise if you want snappier acceleration. |
 | `DRIVE_SLEW_DOWN_PER_TICK` (32) | Almost never. Lower it only if the deceleration is too abrupt for your taste. |
 
@@ -136,10 +145,10 @@ The two numbers that matter for tuning are `angle_raw` (where the wheel actually
 Decision tree based on what you see:
 
 - **Angle reaches target smoothly, no overshoot, settles fast** → Done. Don't touch.
-- **Angle never quite reaches target** → Raise `STEER_KP` slightly (e.g. 1.2 → 1.6).
-- **Angle overshoots target, comes back, overshoots again, oscillates** → Lower `STEER_KP` (1.2 → 0.8) **or** raise `STEER_KD` (0.12 → 0.2).
-- **Angle approaches but stops a bit short, then jumps the last few units in a "kick"** → Lower `STEER_MIN_MOVE_PWM` (120 → 105) or raise `STEER_DEADBAND_UNITS` (3 → 5).
-- **Motor hums, angle doesn't move at all on small commands** → Raise `STEER_MIN_MOVE_PWM` (120 → 140).
+- **Angle never quite reaches target** → Raise `STEER_KP` slightly (e.g. 2.2 → 2.6).
+- **Angle overshoots target, comes back, overshoots again, oscillates** → Lower `STEER_KP` (2.2 → 1.8) **or** raise `STEER_KD` (0.12 → 0.2).
+- **Angle approaches but stops a bit short, then jumps the last few units in a "kick"** → Lower `STEER_MIN_MOVE_PWM` (150 → 130) or raise `STEER_DEADBAND_UNITS` (3 → 5).
+- **Motor hums, angle doesn't move at all on small commands** → Raise `STEER_MIN_MOVE_PWM` (150 → 175).
 - **Angle wiggles when wheel is supposed to be still** → Raise `STEER_DEADBAND_UNITS` (3 → 8).
 
 ### The iteration loop

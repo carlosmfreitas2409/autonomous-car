@@ -40,10 +40,19 @@ void init() {
   phase_start_ms = millis() - config::BUZZER_BEEP_OFF_MS;
 }
 
-void update(bool active) {
+void update(bool reversing, bool alarm) {
   const uint32_t now = millis();
 
-  if (!active) {
+  if (alarm) {
+    if (!beeping) {
+      tone_on();
+      beeping = true;
+    }
+    phase_start_ms = now;
+    return;
+  }
+
+  if (!reversing) {
     if (beeping) silence();
     phase_start_ms = now - config::BUZZER_BEEP_OFF_MS;
     return;

@@ -4,6 +4,13 @@
 
 namespace steering {
 
+enum class Fault : uint8_t {
+  NONE = 0,
+  POT_DISCONNECTED,
+  POT_OUT_OF_RANGE,
+  STALL,
+};
+
 bool init();
 
 void set_target_from_command(int16_t signed_pwm);
@@ -17,13 +24,13 @@ void update();
 
 void emergency_stop();
 
+Fault fault();
+char fault_char();
+
 uint16_t current_angle_raw();
 uint16_t target_raw();
 int16_t last_pwm();
 
-// Measured steering position normalized to [-1, 1]: positive = steered toward
-// STEER_MAX_LEFT_RAW (left), negative = toward STEER_MAX_RIGHT_RAW (right),
-// 0 = centered. Used by the drive electronic differential.
 float normalized_position();
 
 }  // namespace steering

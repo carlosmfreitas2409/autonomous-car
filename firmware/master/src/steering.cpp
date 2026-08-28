@@ -16,8 +16,14 @@ constexpr int16_t POT_RAW_MAX = 1023;
 // Median-of-N sampling to knock down ADC jitter on the analog read.
 constexpr uint8_t POT_SAMPLES = 9;
 
+constexpr int16_t PROBE_MAX_SHIFT = 150;
+
 int16_t left_span = 0;
 int16_t right_span = 0;
+
+uint16_t valid_lo = 0;
+uint16_t valid_hi = (uint16_t)POT_RAW_MAX;
+int16_t stall_min_delta = 0;
 
 uint16_t target_angle = config::STEER_CENTER_RAW;
 uint16_t current_angle = config::STEER_CENTER_RAW;
@@ -27,6 +33,14 @@ int16_t last_output_pwm = 0;
 
 uint16_t prev_measurement = config::STEER_CENTER_RAW;
 uint32_t prev_micros = 0;
+
+Fault fault_reason = Fault::NONE;
+
+uint32_t out_of_band_since_ms = 0;
+
+int8_t stall_dir = 0;
+uint32_t stall_start_ms = 0;
+uint16_t stall_start_angle = config::STEER_CENTER_RAW;
 
 // Folds any int back into the 0..1023 pot ADC range.
 uint16_t clamp_raw(int32_t v) {
@@ -81,6 +95,26 @@ uint16_t read_angle() {
   return samples[POT_SAMPLES / 2];
 }
 
+bool pot_connected() {
+  pinMode(config::PIN_STEER_POT, INPUT);
+  const uint16_t open_read = read_angle();
+
+  pinMode(config::PIN_STEER_POT, INPUT_PULLUP);
+  delay(3);
+  const uint16_t pulled_read = read_angle();
+
+  pinMode(config::PIN_STEER_POT, INPUT);
+  delay(3);
+  (void)read_angle();
+
+  return ((int16_t)pulled_read - (int16_t)open_read) < PROBE_MAX_SHIFT;
+}
+
+void raise_fault(Fault reason) {
+  fault_reason = reason;
+  disable();
+}
+
 }  // namespace
 
 bool init() {
@@ -96,14 +130,33 @@ bool init() {
   analogWrite(config::PIN_STEER_RPWM, 0);
   analogWrite(config::PIN_STEER_LPWM, 0);
 
-  // A railed reading means the pot wiper or an outer leg is disconnected. Refuse
-  // to close the loop on a dead sensor — the motor would drive blindly into a
-  // mechanical stop.
-  uint16_t a = read_angle();
-  if (a == 0 || a >= (uint16_t)POT_RAW_MAX) return false;
+  fault_reason = Fault::NONE;
 
   left_span = (int16_t)config::STEER_MAX_LEFT_RAW - (int16_t)config::STEER_CENTER_RAW;
   right_span = (int16_t)config::STEER_MAX_RIGHT_RAW - (int16_t)config::STEER_CENTER_RAW;
+
+  const int16_t travel_lo = min((int16_t)config::STEER_CENTER_RAW,
+                                min((int16_t)config::STEER_MAX_LEFT_RAW,
+                                    (int16_t)config::STEER_MAX_RIGHT_RAW));
+  const int16_t travel_hi = max((int16_t)config::STEER_CENTER_RAW,
+                                max((int16_t)config::STEER_MAX_LEFT_RAW,
+                                    (int16_t)config::STEER_MAX_RIGHT_RAW));
+  const int16_t span = travel_hi - travel_lo;
+  valid_lo = clamp_raw((int32_t)travel_lo - span / 3);
+  valid_hi = clamp_raw((int32_t)travel_hi + span / 3);
+
+  stall_min_delta = max((int16_t)(2 * config::STEER_DEADBAND_UNITS), (int16_t)(span / 16));
+
+  if (!pot_connected()) {
+    fault_reason = Fault::POT_DISCONNECTED;
+    return false;
+  }
+
+  uint16_t a = read_angle();
+  if (a < valid_lo || a > valid_hi) {
+    fault_reason = Fault::POT_OUT_OF_RANGE;
+    return false;
+  }
 
   current_angle = a;
   prev_measurement = current_angle;
@@ -111,6 +164,11 @@ bool init() {
   prev_micros = micros();
   enabled = false;
   last_output_pwm = 0;
+
+  out_of_band_since_ms = 0;
+  stall_dir = 0;
+  stall_start_ms = millis();
+  stall_start_angle = current_angle;
   return true;
 }
 
@@ -132,9 +190,20 @@ void freeze_target_at_current() {
 }
 
 void enable() {
+  if (enabled) return;
+
+  if (!pot_connected()) {
+    fault_reason = Fault::POT_DISCONNECTED;
+    return;
+  }
+
   enabled = true;
   digitalWrite(config::PIN_STEER_R_EN, HIGH);
   digitalWrite(config::PIN_STEER_L_EN, HIGH);
+
+  stall_dir = 0;
+  stall_start_ms = millis();
+  stall_start_angle = current_angle;
 }
 
 void disable() {
@@ -151,7 +220,21 @@ void emergency_stop() {
 }
 
 void update() {
+  if (fault_reason != Fault::NONE) return;
+
   current_angle = read_angle();
+
+  if (current_angle < valid_lo || current_angle > valid_hi) {
+    const uint32_t now_ms = millis();
+    if (out_of_band_since_ms == 0) {
+      out_of_band_since_ms = now_ms;
+    } else if (now_ms - out_of_band_since_ms > config::STEER_SENSOR_BAD_MS) {
+      raise_fault(Fault::POT_OUT_OF_RANGE);
+      return;
+    }
+  } else {
+    out_of_band_since_ms = 0;
+  }
 
   int16_t err = (int16_t)target_angle - (int16_t)current_angle;
 
@@ -198,7 +281,35 @@ void update() {
   if (output > 0 && cur_offset >= upper_offset) output = 0;
   if (output < 0 && cur_offset <= lower_offset) output = 0;
 
+  if (enabled) {
+    const int8_t dir = (int8_t)((output > 0) - (output < 0));
+    const uint32_t now_ms = millis();
+    if (dir == 0 || dir != stall_dir) {
+      stall_dir = dir;
+      stall_start_ms = now_ms;
+      stall_start_angle = current_angle;
+    } else if (abs((int16_t)current_angle - (int16_t)stall_start_angle) >= stall_min_delta) {
+      stall_start_ms = now_ms;
+      stall_start_angle = current_angle;
+    } else if (now_ms - stall_start_ms > config::STEER_STALL_TIMEOUT_MS) {
+      raise_fault(Fault::STALL);
+      return;
+    }
+  }
+
   drive_pwm(output);
+}
+
+Fault fault() { return fault_reason; }
+
+char fault_char() {
+  switch (fault_reason) {
+    case Fault::NONE: return '-';
+    case Fault::POT_DISCONNECTED: return 'D';
+    case Fault::POT_OUT_OF_RANGE: return 'R';
+    case Fault::STALL: return 'S';
+  }
+  return '?';
 }
 
 uint16_t current_angle_raw() { return current_angle; }
