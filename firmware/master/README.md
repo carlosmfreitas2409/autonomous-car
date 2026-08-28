@@ -32,18 +32,25 @@ Telemetry output is gated by a compile flag — uncomment `-DTELEMETRY_ENABLED=1
 
 ### Pinout
 
-| Signal | Pin | Timer |
-|---|---|---|
-| FL drive RPWM / LPWM | 5 / 2 | T3 |
-| FR drive RPWM / LPWM | 6 / 7 | T4 |
-| RL drive RPWM / LPWM | 44 / 45 | T5 |
-| RR drive RPWM / LPWM | 46 / 3 | T5 / T3 |
-| Steering RPWM / LPWM | 11 / 12 | T1 |
-| Steering pot wiper | A0 | ADC |
-| MCP2515 SPI (CS / MISO / MOSI / SCK) | 53 / 50 / 51 / 52 | — |
-| Status LED | 13 | — |
+| Signal | RPWM / LPWM | Timer | R_EN / L_EN |
+|---|---|---|---|
+| FL drive | 5 / 6 | T3 / T4 | 24 / 25 |
+| FR drive | 7 / 8 | T4 | 26 / 27 |
+| RL drive | 3 / 4 | T3 / T0 | 22 / 23 |
+| RR drive | 9 / 10 | T2 | 28 / 29 |
+| Steering | 11 / 12 | T1 | 30 / 31 |
 
-All BTS7960 `R_EN` and `L_EN` pins are tied directly to the Arduino's 5V rail — bridges are always armed. "Estop" means PWM = 0 on every drive and steering output (software-only). The BTS7960's internal pull-downs on RPWM/LPWM keep the bridges quiet during boot, before the firmware initializes its pins.
+| Signal | Pin |
+|---|---|
+| Steering pot wiper | A11 |
+| MCP2515 SPI (CS / MISO / MOSI / SCK) | 53 / 50 / 51 / 52 |
+| Reverse buzzer | 46 (T5) |
+| Status LED | 13 |
+
+`R_EN` and `L_EN` are driven by the firmware, not strapped to 5V — `motors::disable()` and
+`steering::disable()` drop them, so an estop removes the bridge enables as well as zeroing PWM. The
+BTS7960's internal pull-downs on RPWM/LPWM keep the bridges quiet during boot, before the firmware
+initializes its pins.
 
 ## Serial protocol
 
@@ -65,23 +72,36 @@ Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure 
 - `RDY car-master v1` — boot banner.
 - `ERR ...` — parse errors and fault notifications.
 - `T <angle_raw> <target_raw> <throttle> <steer_pwm> <state> <wd_ms>` — telemetry at 10 Hz, behind `TELEMETRY_ENABLED` compile flag. `state` ∈ `R W E F`.
+- `S <state> <nearest_cm> <d0..d2>` — obstacle state at 10 Hz, behind `TELEMETRY_ENABLED`. `state` ∈ `C` clear, `S` slowing, `B` blocked, `X` stale. Distances are cm, with `255` = nothing in range. The host uses `state` and `nearest_cm` to slow/stop in autonomous mode.
 
 ## Behavior
 
 - **Boot state**: ESTOP, all PWMs at 0. The car cannot move between power-on and the first deliberate non-zero `M` from the host.
 - **Watchdog**: 500 ms. With no command, throttle ramps to 0 and steering target freezes at the current measured angle (wheels stop where they are).
 - **Drive slew**: up at 4 PWM/tick (200 Hz → 0→255 in ~320 ms); down at 32 PWM/tick (~40 ms).
-- **Steering**: 200 Hz P+D loop on the pot's 0–1023 ADC reading (derivative on measurement). Starting gains `Kp = 1.2`, `Kd = 0.12`, `±3` raw-unit deadband. Min-move PWM = 120 to break static friction. The reading is median-of-9 filtered to reject ADC spikes. Soft limits at the configured max angles (refuse to drive into a stop, allow recovery in the opposite direction).
+- **Steering**: 200 Hz P+D loop on the pot's 0–1023 ADC reading (derivative on measurement). Gains `Kp = 2.2`, `Kd = 0.12`, `±3` raw-unit deadband. Min-move PWM = 150 to break static friction, capped at 210. The reading is median-of-9 filtered to reject ADC spikes. Soft limits at the configured max angles (refuse to drive into a stop, allow recovery in the opposite direction).
 - **Steering-pot fault** (the pot reads a rail — 0 or ≥1023 — at boot, meaning a disconnected wiper or outer leg) → permanent FAULT state (`ERR STEER`), status LED blinks fast, all PWMs forced to 0.
+
+### Obstacle avoidance
+
+Front distance data arrives over CAN from the sonar node (`firmware/sonar/`, ID `0x080` at 20 Hz).
+`obstacle.cpp` classifies the nearest reading into a state (`CLEAR`/`SLOWING`/`BLOCKED`/`STALE`) and
+reports it on the `S` telemetry line. It does **not** touch the motors.
+
+Obstacle avoidance is enforced by the host (`src/input/autonomous.py`) and runs in **autonomous mode
+only** — manual (PS5) driving is never governed by the sonar. The host zeroes throttle at or below
+30 cm and tapers up to full by 80 cm.
+
+- **Fail-safe**: no frame for 300 ms means *blocked*, never *clear*.
 
 ## Steering calibration
 
 Calibration is **edit-and-flash**, not runtime. Three constants in `src/config.h`, all in the pot's 0–1023 ADC range:
 
 ```cpp
-constexpr uint16_t STEER_CENTER_RAW    = 512;   // wheels straight
-constexpr uint16_t STEER_MAX_LEFT_RAW  = 620;   // safe max-left (NOT the hard stop)
-constexpr uint16_t STEER_MAX_RIGHT_RAW = 404;   // safe max-right
+constexpr uint16_t STEER_CENTER_RAW    = 539;   // wheels straight
+constexpr uint16_t STEER_MAX_LEFT_RAW  = 993;   // safe max-left (NOT the hard stop)
+constexpr uint16_t STEER_MAX_RIGHT_RAW = 15;    // safe max-right
 ```
 
 The shipped values are conservative placeholders — you **must** capture real ones for your linkage. The dedicated tool `tools/calibration_pot/calibration_pot.ino` makes this easy (it pulses the motor by serial command and prints a ready-to-paste snippet):
@@ -107,3 +127,13 @@ The values stay correct until the pot or linkage are physically moved. Recalibra
 6. PID step response: `M 0 -255` → `M 0 255` → `M 0 0`. Tune `Kp`/`Kd` if it rings or overshoots.
 7. Manually push past the configured max angle while commanding hold-center → PWM cuts in the limit direction, holds against in the other.
 8. Per-wheel current sanity (clamp ammeter on each motor lead during a 0→full ramp): all four wheels within ~20% of each other.
+
+### Obstacle reporting (sonar node powered, `TELEMETRY_ENABLED`)
+
+The firmware only reports; the host acts on it. These check the `S` line is correct.
+
+9. Hand at ~60 cm from the array → `S` state goes `S` (slowing); at ~30 cm → `B` (blocked). Withdraw
+   → back to `C`. `nearest_cm` tracks a tape measure to ±2 cm.
+10. Unplug the sonar node → `S` reports `X` (stale) within 300 ms. Reconnect → recovers.
+11. In the host GUI, switch to autonomous and confirm the car slows/stops as the reading closes in;
+    switch to manual (PS5) and confirm it does **not**.

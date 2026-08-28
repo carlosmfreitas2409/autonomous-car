@@ -2,11 +2,24 @@ import serial
 import logging
 import time
 
+from dataclasses import dataclass
 from typing import Optional
 
 from lights import LightsOutput
 
 logger = logging.getLogger(__name__)
+
+SONAR_NO_ECHO = 0xFF
+
+
+@dataclass
+class SonarReading:
+  state: str
+  nearest_cm: Optional[int]
+
+  @property
+  def blocked(self) -> bool:
+    return self.state in ("B", "X")
 
 
 class _SerialPort:
@@ -47,6 +60,15 @@ class _SerialPort:
       logger.error(f"Serial read failed: {e}")
     return None
 
+  def read_lines(self, limit: int = 40) -> list[str]:
+    lines = []
+    for _ in range(limit):
+      line = self.read()
+      if not line:
+        break
+      lines.append(line)
+    return lines
+
   def close(self):
     if self._serial is None:
       return
@@ -72,6 +94,24 @@ class Arduino:
 
   def send_heartbeat(self):
     self._master.write("H")
+
+  def read_sonar(self) -> Optional[SonarReading]:
+    latest = None
+
+    for line in self._master.read_lines():
+      parts = line.split()
+      if len(parts) >= 3 and parts[0] == "S" and parts[1] in ("C", "S", "B", "X"):
+        try:
+          nearest = int(parts[2])
+        except ValueError:
+          continue
+        latest = SonarReading(
+          state=parts[1],
+          nearest_cm=None if nearest >= SONAR_NO_ECHO else nearest,
+        )
+      elif line.startswith("ERR"):
+        logger.warning(f"master: {line}")
+    return latest
 
   def send_lights(self, output: LightsOutput):
     left = int(output.front_left_signal or output.back_left_signal)

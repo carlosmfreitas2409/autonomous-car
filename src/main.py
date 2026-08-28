@@ -78,6 +78,7 @@ gui.set_lights_controller(lights)
 fps = 0.0
 prev_time = time.time()
 prev_stopped = False
+last_sonar = None
 
 while gui.is_running():
     now = time.time()
@@ -93,10 +94,15 @@ while gui.is_running():
     if ps5.poll_mode_toggle():
         gui.toggle_mode()
 
+    sonar = arduino.read_sonar()
+    if sonar is not None:
+        last_sonar = sonar
+
     if gui.is_stopped():
         if not prev_stopped:
             arduino.send_estop()
         prev_stopped = True
+        gui.update_sonar(last_sonar)
         autonomous.reset()
         lights.update(0.0, estopped=True, autonomous=gui.is_autonomous())
         lights_output = lights.compute()
@@ -117,7 +123,7 @@ while gui.is_running():
     perc = tracker.process(frame, params)
 
     if gui.is_autonomous():
-        steering, throttle = autonomous.step(perc.lane_offset, perc.lane_curvature, params, dt)
+        steering, throttle = autonomous.step(perc.lane_offset, perc.lane_curvature, params, dt, last_sonar)
     else:
         autonomous.reset()
         steering, throttle = ps5.poll()
@@ -126,13 +132,15 @@ while gui.is_running():
     draw_steering_bar(perc.display_frame, steering)
     draw_throttle_bar(perc.display_frame, throttle)
 
-    lights.update(throttle, estopped=False, autonomous=gui.is_autonomous())
+    obstacle_blocked = gui.is_autonomous() and last_sonar is not None and last_sonar.blocked
+    lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(), obstacle_blocked=obstacle_blocked)
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
     arduino.send_motor(throttle, steering)
 
     gui.update_textures(perc)
     gui.update_telemetry(fps, perc.lane_offset or 0, steering, throttle)
+    gui.update_sonar(last_sonar)
     gui.render_frame()
 
 cap.release()

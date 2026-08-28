@@ -5,6 +5,7 @@
 #include "command_parser.h"
 #include "config.h"
 #include "motors.h"
+#include "obstacle.h"
 #include "safety.h"
 #include "steering.h"
 #include "telemetry.h"
@@ -49,6 +50,7 @@ void setup() {
   bool steer_ok = steering::init();
 
   safety::init();
+  obstacle::init();
 
   const bool can_ok = can_bus::init();
 
@@ -66,6 +68,7 @@ void setup() {
 }
 
 void loop() {
+  obstacle::update();
   command_parser::poll();
   safety::update();
 

@@ -45,6 +45,15 @@ constexpr uint16_t BUZZER_BEEP_OFF_MS = 350;
 
 constexpr uint16_t CAN_LIGHTS_ID = 0x100;
 
+constexpr uint16_t CAN_SONAR_ID = 0x080;
+constexpr uint8_t SONAR_SENSORS = 3;
+constexpr uint8_t SONAR_NO_ECHO = 0xFF;
+
+constexpr uint16_t SONAR_TIMEOUT_MS = 300;
+
+constexpr uint8_t STOP_CM = 60;
+constexpr uint8_t SLOW_CM = 80;
+
 constexpr uint16_t CONTROL_LOOP_HZ = 200;
 constexpr uint16_t CONTROL_LOOP_PERIOD_MS = 1000 / CONTROL_LOOP_HZ;
 

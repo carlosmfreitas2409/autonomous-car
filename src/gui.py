@@ -28,6 +28,13 @@ _STRIP_EFFECT_LABELS = {
     "Rainbow": StripEffect.RAINBOW,
 }
 
+_SONAR_STATES = {
+    "C": ("clear", (0, 255, 0)),
+    "S": ("slowing", (255, 200, 0)),
+    "B": ("BLOCKED", (255, 80, 80)),
+    "X": ("STALE", (255, 80, 80)),
+}
+
 class TunerGUI:
     def __init__(self, config: Config, frame_w: int, frame_h: int):
         self._autonomous = True
@@ -106,6 +113,8 @@ class TunerGUI:
                         self._tags["tel_steer"] = dpg.add_text("Steer: --", color=(0, 255, 0))
                         dpg.add_spacer(width=4)
                         self._tags["tel_throttle"] = dpg.add_text("Throttle: --", color=(0, 255, 0))
+                        dpg.add_spacer(width=4)
+                        self._tags["tel_sonar"] = dpg.add_text("Sonar: --", color=(150, 150, 150))
                     with dpg.group(horizontal=True, height=24):
                         self._tags["mode"] = dpg.add_button(label="Autonomous Mode", callback=self._toggle_mode, width=120)
                         self._tags["estop"] = dpg.add_button(label="Emergency Stop", callback=self._toggle_estop, width=110)
@@ -277,6 +286,18 @@ class TunerGUI:
         dpg.set_value(self._tags["tel_error"], f"Error: {error:+d} px")
         dpg.set_value(self._tags["tel_steer"], f"Steer: {steering:+.3f}")
         dpg.set_value(self._tags["tel_throttle"], f"Throttle: {throttle:.2f}")
+
+    def update_sonar(self, reading):
+        tag = self._tags["tel_sonar"]
+        if reading is None:
+            dpg.set_value(tag, "Sonar: no data")
+            dpg.configure_item(tag, color=(255, 80, 80))
+            return
+
+        label, color = _SONAR_STATES.get(reading.state, ("?", (150, 150, 150)))
+        distance = f"{reading.nearest_cm} cm" if reading.nearest_cm is not None else "clear"
+        dpg.set_value(tag, f"Sonar: {distance} [{label}]")
+        dpg.configure_item(tag, color=color)
 
     def is_running(self) -> bool:
         return dpg.is_dearpygui_running()

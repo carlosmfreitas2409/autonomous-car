@@ -16,6 +16,9 @@ _CURVATURE_FULL = 0.5
 # On the very sharpest bends the car may slow to this fraction of min_speed.
 _SHARP_CURVE_FLOOR = 0.75
 
+_OBSTACLE_SLOW_CM = 150.0
+_OBSTACLE_STOP_CM = 60.0
+
 
 class _PIDController:
     def __init__(self, kp: float, ki: float, kd: float, output_limits: tuple[float, float] = (-1.0, 1.0)):
@@ -64,14 +67,28 @@ class Autonomous:
         self._last_steering = 0.0
         self._last_throttle = 0.0
 
-    def step(self, lane_offset: Optional[int], lane_curvature: Optional[float], params: Config, dt: float) -> tuple[float, float]:
+    def obstacle_scale(self, sonar) -> float:
+        if sonar is None:
+            return 1.0
+        if sonar.blocked:
+            return 0.0
+        if sonar.nearest_cm is None or sonar.nearest_cm >= _OBSTACLE_SLOW_CM:
+            return 1.0
+        if sonar.nearest_cm <= _OBSTACLE_STOP_CM:
+            return 0.0
+        span = _OBSTACLE_SLOW_CM - _OBSTACLE_STOP_CM
+        return (sonar.nearest_cm - _OBSTACLE_STOP_CM) / span
+
+    def step(self, lane_offset: Optional[int], lane_curvature: Optional[float], params: Config, dt: float, sonar=None) -> tuple[float, float]:
+        obstacle = self.obstacle_scale(sonar)
+
         if lane_offset is None:
             # Lane lost: hold the last command for a short grace period (in case
             # it reappears), then stop. Don't reset the PID during the grace so
             # it resumes smoothly.
             self._lost_time += dt
             if self._lost_time <= _LANE_LOSS_TIMEOUT:
-                return self._last_steering, self._last_throttle
+                return self._last_steering, self._last_throttle * obstacle
             self._pid.reset()
             self._last_steering = 0.0
             self._last_throttle = 0.0
@@ -103,4 +120,5 @@ class Autonomous:
 
         self._last_steering = steering
         self._last_throttle = throttle
-        return steering, throttle
+
+        return steering, throttle * obstacle
