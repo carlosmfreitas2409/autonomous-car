@@ -5,7 +5,7 @@ exported ONNX through onnxruntime alone. Install with:
 
     pip install -r requirements-dev.txt
 
-Bootstrap, before any custom sign exists. Exports the stock COCO yolov8n,
+Bootstrap, before any custom sign exists. Exports the stock COCO yolo26n,
 which covers stop signs and traffic lights well enough to exercise the whole
 chain -- threading, tracking, light reading, braking, GUI -- on real hardware:
 
@@ -63,7 +63,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--bootstrap", action="store_true", help="export stock COCO weights instead of training")
     parser.add_argument("--data", type=Path, help="data.yaml from synthesize_dataset.py")
-    parser.add_argument("--base", default="yolov8n.pt", help="starting weights")
+    parser.add_argument("--base", default="yolo26n.pt", help="starting weights")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--imgsz", type=int, default=DEFAULT_IMGSZ)
