@@ -16,3 +16,15 @@ __pycache__/
 
 firmware/**/compile_commands.json
 firmware/**/.cache
+
+# Sign detection: generated data and weights stay on the machine that made
+# them. The hand-drawn labels under dataset/real/labels are the exception -
+# they cost human time and cannot be regenerated.
+dataset/*
+!dataset/real/
+dataset/real/*
+!dataset/real/labels/
+runs/
+yolo*.pt
+clips/*.mov
+.pytest_cache/
