@@ -177,19 +177,27 @@ always bounds the same physical object.
 
 ## E. Running any of this
 
-The hand-drawn labels are tracked; the photos they point at live in `assets/`
-and the evals read them from a working copy, which `dataset/` (gitignored)
-holds. From a fresh clone:
+Everything that cannot be regenerated is versioned under `assets/`; everything
+under `dataset/` is derived and the whole directory is safe to delete.
+
+```
+assets/real/images/{close,far,med,very}/*.jpg   the venue photographs
+assets/real/labels/{close,far,med,very}/*.txt   the hand-drawn boxes
+assets/sign_cutouts/<class>/*.png               cutouts to paste, background removed
+dataset/backgrounds/*.jpg                       frames to paste onto      (derived)
+dataset/synth/                                  the composited training set (derived)
+```
+
+From a fresh clone:
 
 ```bash
-mkdir -p dataset/real/images && cp -R assets/new_traffic/* dataset/real/images/
 pip install -r requirements.txt
 pytest
 python3 tools/eval_light_state.py --confidence 1.1   # the reader, hand boxes
 python3 tools/eval_delivery_variant.py --trials 60   # needs dataset/backgrounds too
 ```
 
-`dataset/backgrounds/` is the 519-frame background pile and is not in the repo;
+`dataset/backgrounds/` is the 513-frame background pile and is not in the repo;
 `tools/extract_frames.py` rebuilds it from clips.
 
 ## F. Retraining, about an hour
@@ -262,7 +270,7 @@ record was 6/28.
 
 On the plan's own gate set — the 28 filename-labelled photos, excluding the ten
 close-range ones whose state was read off the photo by eye and recorded in
-`assets/new_traffic/close/states.txt` — it is **28/28**. Both failures are
+`assets/real/images/close/states.txt` — it is **28/28**. Both failures are
 close-range frames.
 
 **The detector**, as it stands today: there is no model in this branch yet. Run
@@ -324,7 +332,7 @@ reprint and roughly doubles the usable range.
 
 - **No real photograph of any printed sign exists anywhere in this project.**
   Every `stop`, `detour` and `delivery_sign` instance the code has ever seen is
-  a flat paste of one artwork file. Until that shoot happens, `dataset/real`
+  a flat paste of one artwork file. Until that shoot happens, `assets/real`
   says nothing whatsoever about those three classes, and this write-up will not
   round up.
 - No model has been trained on this branch, so there is no detector number for

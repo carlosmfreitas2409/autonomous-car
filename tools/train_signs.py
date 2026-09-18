@@ -81,7 +81,7 @@ def main() -> int:
     print(f"\n{destination}")
     print("Copy that one file to the Mac, then there:")
     print(f"  python3 tools/probe_signs.py --model {destination}")
-    print(f"  python3 tools/eval_signs.py --model {destination} --dataset dataset/real")
+    print(f"  python3 tools/eval_signs.py --model {destination} --dataset assets/real")
     print("  python3 tools/eval_light_state.py")
     return 0
 

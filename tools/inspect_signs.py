@@ -6,7 +6,7 @@ rejection* rather than silently absent: anything that fails structural
 verification is drawn thin and grey with its reason next to it. A detector you
 can only see the survivors of is a detector you cannot debug.
 
-    python3 tools/inspect_signs.py --images 'dataset/real/images/**/*.jpg'
+    python3 tools/inspect_signs.py --images 'assets/real/images/**/*.jpg'
     python3 tools/inspect_signs.py --video clips/light_approach.mp4
     python3 tools/inspect_signs.py --camera 1
     python3 tools/inspect_signs.py --images a.jpg --box 400,60,520,340   # no detector at all

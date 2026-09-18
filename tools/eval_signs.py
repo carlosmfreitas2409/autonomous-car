@@ -3,7 +3,7 @@
 
 The previous model reported mAP50 0.97 on a validation split its own compositor
 generated, from its own cutouts, and found six of twenty-eight real photos. So
-this never scores a model on synthetic data. It scores it on `dataset/real`,
+this never scores a model on synthetic data. It scores it on `assets/real`,
 which is hand-labelled, and it reports:
 
   * an F1 sweep over the confidence threshold, so the runtime threshold is
@@ -15,7 +15,7 @@ which is hand-labelled, and it reports:
     whether the `s` variant's extra capacity is affordable.
 
     python3 tools/eval_signs.py --model models/signs_n.onnx
-    python3 tools/eval_signs.py --model models/signs_s.onnx --dataset dataset/real
+    python3 tools/eval_signs.py --model models/signs_s.onnx --dataset assets/real
 """
 
 import argparse
@@ -75,7 +75,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", default="models/signs.onnx")
-    parser.add_argument("--dataset", default="dataset/real")
+    parser.add_argument("--dataset", default="assets/real")
     parser.add_argument("--confidence", type=float, default=0.05,
                         help="floor for the sweep; every detection above it is collected once")
     args = parser.parse_args()
@@ -84,8 +84,6 @@ def main() -> int:
     images = sorted(p for p in (root / "images").rglob("*") if p.suffix.lower() in (".jpg", ".png"))
     if not images:
         print(f"no images under {root / 'images'}")
-        print("dataset/real/images is built from the tracked photos:")
-        print("  mkdir -p dataset/real/images && cp -R assets/new_traffic/* dataset/real/images/")
         return 2
 
     detector = SignDetector(args.model, confidence=args.confidence)
@@ -187,7 +185,7 @@ def _per_class(collected, truths, threshold) -> None:
     for label in KNOWN_LABELS:
         tp, fp, fn = stats[label]
         if tp + fp + fn == 0:
-            print(f"  {label:<16s}  -    -    -    no instances in dataset/real")
+            print(f"  {label:<16s}  -    -    -    no instances in assets/real")
             continue
         recall = tp / (tp + fn) if tp + fn else 0.0
         print(f"  {label:<16s} {tp:4d} {fp:4d} {fn:4d}   {recall:6.2f}")

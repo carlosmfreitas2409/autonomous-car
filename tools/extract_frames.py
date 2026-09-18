@@ -6,7 +6,7 @@ ten. Every shoot in this phase is video for that reason, and this is what turns
 one into training backgrounds or into images to label.
 
     python3 tools/extract_frames.py clips/light_approach.mp4 --out dataset/backgrounds --every 6
-    python3 tools/extract_frames.py clips/*.mov --out dataset/real/images/detour --every 12 --limit 120
+    python3 tools/extract_frames.py clips/*.mov --out assets/real/images/detour --every 12 --limit 120
 """
 
 import argparse

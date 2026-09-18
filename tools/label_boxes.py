@@ -15,8 +15,8 @@ Keys
     s           save now (saving also happens on every move)
     q / ESC     quit
 
-    python3 tools/label_boxes.py --images 'dataset/real/images/**/*.jpg'
-    python3 tools/label_boxes.py --images 'dataset/real/images/**/*.jpg' --prefill models/signs.onnx
+    python3 tools/label_boxes.py --images 'assets/real/images/**/*.jpg'
+    python3 tools/label_boxes.py --images 'assets/real/images/**/*.jpg' --prefill models/signs.onnx
 """
 
 import argparse
@@ -98,9 +98,9 @@ def draw(frame, boxes, current, name, index, total, scale):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--images", required=True, help="glob, e.g. 'dataset/real/images/**/*.jpg'")
-    parser.add_argument("--images-root", default="dataset/real/images")
-    parser.add_argument("--labels-root", default="dataset/real/labels")
+    parser.add_argument("--images", required=True, help="glob, e.g. 'assets/real/images/**/*.jpg'")
+    parser.add_argument("--images-root", default="assets/real/images")
+    parser.add_argument("--labels-root", default="assets/real/labels")
     parser.add_argument("--prefill", metavar="MODEL",
                         help="seed each unlabelled image with this model's boxes")
     parser.add_argument("--confidence", type=float, default=0.35)

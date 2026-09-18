@@ -83,7 +83,7 @@ def yaw_of(name: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dataset", default="dataset/real")
+    parser.add_argument("--dataset", default="assets/real")
     parser.add_argument("--model", default="models/signs.onnx")
     parser.add_argument("--confidence", type=float, default=0.35,
                         help="detector threshold; above 1.0 forces hand boxes")
@@ -96,8 +96,6 @@ def main() -> int:
     images = sorted(p for p in images_root.rglob("*.jpg"))
     if not images:
         print(f"no images under {images_root}")
-        print("dataset/real/images is built from the tracked photos:")
-        print("  mkdir -p dataset/real/images && cp -R assets/new_traffic/* dataset/real/images/")
         return 2
 
     detector = SignDetector(args.model, confidence=min(args.confidence, 0.99))
