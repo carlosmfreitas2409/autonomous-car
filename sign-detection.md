@@ -232,7 +232,7 @@ Everything else:
 | `tools/eval_light_state.py` | the state reader on the venue photos, filename ground truth |
 | `tools/eval_delivery_variant.py` | letters vs silhouettes, sets `MIN_CROP_HEIGHT` |
 | `tools/eval_signs.py` | real-photo P/R, F1 sweep, latency on this machine |
-| `tools/probe_signs.py` | close-range and bare-emitter gate, non-zero exit |
+| `tools/probe_signs.py` | the gate: close range, bare emitters, and real-photo recall |
 | `tools/extract_frames.py` | clip → frames |
 | `tools/list_cameras.py` | which camera index is which |
 
@@ -327,6 +327,70 @@ the car can name the bay from ~1.4 m and closer, and further out it says
 alternatives stand — three detector classes with the measured 6–10 %
 cross-confusion, or colour-coding the *letter* (not the face), which costs one
 reprint and roughly doubles the usable range.
+
+### Round 1 of training: measured, and it failed
+
+Both sizes trained on 4000 composited frames, 2026-09-18.
+
+| | `signs_n` | `signs_s` |
+|---|---|---|
+| `traffic_light` recall, real photos | **0.32** | 0.26 |
+| ... of those with a lamp lit | **0.19** | 0.06 |
+| latency, M2 Pro | 10 ms | 10 ms |
+
+**Every miss is a lit lamp; every reliable hit is an unlit one.** Raw pre-NMS
+scores at the light's location are *exactly 0.000* on lit photos and 0.960 on
+the unlit one - an absent detection, not a weak one. On
+`clips/light_approach.mp4` it found the light in 2 of 251 frames and called a
+grey hoodie `delivery_sign` at 0.93 in 38 % of them.
+
+Two things did work, and are worth keeping: the **close-range collapse is
+fixed** (0.90-0.95 from 140 to 560 px, where the previous model measured 0.00
+at 500 px), and **bare emitters score 0.00** on bright backgrounds.
+
+The diagnosis, in four steps:
+
+1. The *same cutout* pasted on a random background scores **0.96**; the photo
+   it was cut from scores **0.30**. Same pixels - so the object is fine.
+2. Not an NMS artefact: raw scores across all four classes at that location are
+   0.000.
+3. Keep the real housing, replace everything outside it with an ordinary room:
+
+   | real pixels kept | box only | +0.5 box | +1 box | +2 box | whole photo |
+   |---|---|---|---|---|---|
+   | `med/red_head` | 0.96 | 0.89 | **0.00** | **0.00** | 0.30 |
+   | `med/off_head` | 0.96 | 0.93 | 0.96 | 0.96 | 0.96 |
+
+   The killer is the scene **one to two box-widths around a lit housing**.
+4. Not darkness on its own - the venue averages 103 grey against the
+   backgrounds' 138, but the `off` photos are just as dark and detect at 0.96.
+   It is the **spill**.
+
+Root cause: `bloom()` lit the cutout and never lit the room, so the model had
+never seen a housing drowning in its own glow.
+
+### What changed after that, and what it is worth
+
+- `scene_glow()` now lights the room: a radial wash out to 1.1-3 housing
+  heights, plus veiling glare across the whole frame scaled by apparent size.
+- Backgrounds are darkened toward venue levels *before* the lamp is pasted.
+- **37 hand-verified frames of the real clip** are mixed in at 20 % of the
+  training set (`assets/clip_labels/`), with the person who walks through them
+  as an unlabelled negative.
+
+Measured against the round-1 model, which misses 87 % of real lit photos:
+
+| composited lit lamps | mean confidence | missed |
+|---|---|---|
+| round 1: no glow, bright rooms | 0.95 | 0 % |
+| + darkening | 0.95 | 0 % |
+| + scene glow | 0.83 | 12 % |
+| + veiling glare (current) | 0.72 | 18 % |
+| *real venue photos* | *0.10* | *87 %* |
+
+So the synthesis is meaningfully harder and still much easier than reality. It
+narrows the gap; it does not close it. **The real frames are the lever, and 37
+of them is not many** - shoot B is what finishes this.
 
 ### Not measured at all yet
 

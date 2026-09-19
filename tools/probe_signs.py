@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
 """The retrain gate: pass or fail, non-zero exit on fail.
 
-Two checks, both from things that have actually gone wrong here.
+Three checks, all from things that have actually gone wrong here.
+
+**Read (c) first.** Checks (a) and (b) paste cutouts through the same compositor
+the model trained on, so they mark their own homework: the first model trained
+from this pipeline passed (a) at 0.90-0.95 on lit cutouts while scoring 0.000
+on the real photographs those cutouts were cut from. They catch a *scale*
+regression, which is worth catching, and nothing else. Only (c) touches data
+the training set has never seen.
 
 **(a) Close range.** Every traffic-light cutout, pasted at 40 through 640 px,
 must stay above 0.6 confidence *at every size*. The previous model was trained
 with a 280 px cap and measured 0.97 at 260 px, 0.18 at 400 px and 0.00 at
 500 px - it vanished exactly where the car has to stop, and an averaged metric
 never showed it, because most of the validation set was small.
+
+**(c) Real photographs.** `traffic_light` recall on `assets/real`, which is
+hand-labelled and never trained on. This is the only check here that can fail
+for the right reason.
 
 **(b) Bare emitters.** A lone lamp, a pair of lamps and an LED bar must not
 reach the runtime threshold. The record has a bare red disc called `stop` at
@@ -35,6 +46,10 @@ from synthesize_dataset import (  # noqa: E402
 SIZES = (40, 80, 140, 220, 320, 440, 560, 640)
 CLOSE_RANGE_FLOOR = 0.6
 
+# What the model has to manage on photographs it has never seen. The plan's
+# Gate 4 number.
+REAL_RECALL_FLOOR = 0.9
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
@@ -44,6 +59,8 @@ def main() -> int:
                         help="the runtime threshold the distractors must not reach")
     parser.add_argument("--cutouts", default="assets/sign_cutouts/traffic_light")
     parser.add_argument("--backgrounds", nargs="+", default=["dataset/backgrounds"])
+    parser.add_argument("--dataset", default="assets/real",
+                        help="hand-labelled real photographs for check (c)")
     parser.add_argument("--seed", type=int, default=3)
     args = parser.parse_args()
 
@@ -100,6 +117,18 @@ def main() -> int:
     print(f"  {'BAD' if loudest >= args.confidence else 'ok '} loudest distractor "
           f"{loudest:.2f}")
 
+    print(f"\n(c) real photographs, recall floor {REAL_RECALL_FLOOR}")
+    recall, found, total, lit_recall = _real_recall(detector, Path(args.dataset), args.confidence)
+    if total:
+        mark = "ok " if recall >= REAL_RECALL_FLOOR else "BAD"
+        print(f"  {mark} {found}/{total} found at confidence {args.confidence}   recall {recall:.2f}")
+        print(f"      of those with a lamp lit: {lit_recall:.2f}")
+        if recall < REAL_RECALL_FLOOR:
+            failures.append(f"real-photo recall {recall:.2f} < {REAL_RECALL_FLOOR}")
+    else:
+        print(f"  ?? no labelled photographs under {args.dataset} - (c) skipped, so this")
+        print("     run only tells you about composited data")
+
     print()
     if failures:
         print(f"FAIL - {len(failures)} problems")
@@ -110,6 +139,45 @@ def main() -> int:
         return 1
     print("PASS")
     return 0
+
+
+def _real_recall(detector, root: Path, threshold: float):
+    """How many hand-labelled traffic lights the model actually finds."""
+    images = sorted(p for p in (root / "images").rglob("*.jpg"))
+    found = total = lit_found = lit_total = 0
+    for path in images:
+        label = (root / "labels") / path.relative_to(root / "images").with_suffix(".txt")
+        if not label.exists():
+            continue
+        frame = cv.imread(str(path))
+        height, width = frame.shape[:2]
+        for line in label.read_text().splitlines():
+            parts = line.split()
+            if len(parts) != 5 or parts[0] != "3":
+                continue
+            cx, cy, w, h = (float(v) for v in parts[1:])
+            truth = ((cx - w / 2) * width, (cy - h / 2) * height,
+                     (cx + w / 2) * width, (cy + h / 2) * height)
+            hit = any(_iou(d.bbox, truth) >= 0.5
+                      for d in detector.detect(frame)
+                      if d.label == "traffic_light" and d.confidence >= threshold)
+            total += 1
+            found += hit
+            if not path.stem.startswith("off"):
+                lit_total += 1
+                lit_found += hit
+    return (found / total if total else 0.0, found, total,
+            lit_found / lit_total if lit_total else 0.0)
+
+
+def _iou(a, b) -> float:
+    inter_w = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    inter_h = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    intersection = inter_w * inter_h
+    if intersection <= 0:
+        return 0.0
+    union = ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - intersection)
+    return intersection / union if union > 0 else 0.0
 
 
 if __name__ == "__main__":
