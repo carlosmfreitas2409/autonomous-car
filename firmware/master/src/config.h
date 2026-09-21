@@ -85,9 +85,9 @@ constexpr uint8_t STEER_MAX_PWM = 210;
 // replace these three values before trusting the steering — they are
 // conservative placeholders. Left/right may need swapping depending on how the
 // pot couples to the linkage.
-constexpr uint16_t STEER_CENTER_RAW    = 526;
-constexpr uint16_t STEER_MAX_LEFT_RAW  = 800;
-constexpr uint16_t STEER_MAX_RIGHT_RAW = 300;
+constexpr uint16_t STEER_CENTER_RAW    = 499;
+constexpr uint16_t STEER_MAX_LEFT_RAW  = 840;
+constexpr uint16_t STEER_MAX_RIGHT_RAW = 155;
 
 // The control loop assumes positive output should raise the raw pot reading. If
 // positive PWM on PIN_STEER_RPWM instead lowers the reading (depends on motor
