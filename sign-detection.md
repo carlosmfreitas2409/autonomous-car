@@ -4,9 +4,10 @@ Phase 1. The car has to recognise five things: a **stop** sign, a **detour**
 sign, three **delivery** signs (pentagon B, hexagon A, heptagon C — white,
 thin black outline, big black letter), and a **traffic light**.
 
-Nothing here touches how the car drives. `src/main.py`, `src/gui.py`,
+Phase 1 did not touch how the car drives. Phase 2 (section I, at the end)
+wires the stack into `src/main.py` and `src/gui.py` as one throttle scale.
 `src/config.py`, `src/input/autonomous.py`, `src/arduino.py` and the firmware
-are untouched, and no new `Config` field exists.
+are still untouched, and no new `Config` field exists.
 
 ---
 
@@ -137,6 +138,46 @@ The reader, in order:
    carries. If they disagree, or the margin is thin, or no cell verifies, or
    nothing is emitting, the answer is **`UNKNOWN`** — a first-class answer, not
    a failure.
+
+### The one thing step 1 structurally cannot see
+
+Yellow is the middle lamp, so its flood erases the covers on **both** sides and
+no three cells survive. Red and green flood one neighbour and read correctly
+12/12 and 9/9. Measured on the approach clip: the whole yellow phase — 19
+frames where the lamp is plainly lit — returned `UNKNOWN`, with every candidate
+disc being the flooded region itself and **0 of 88 hypotheses** clearing the
+contrast test. The premise "a cover is lighter than the body it sits in" had
+simply stopped being true.
+
+So when no stack is found, one last cue is tried: where the blown core sits in
+the box, as a fraction of its height. The three cells sit at 0.22, 0.53 and
+0.84 straight out of the housing geometry, and measured over the clip the core
+lands at 0.18–0.26 for red, 0.49–0.51 for yellow and 0.78–0.83 for green.
+Two gates gate it: something must actually be clipping the sensor (lit lamps
+reach 253–254 at the 97th percentile across all 30 lit photos, unlit housings
+183 at most), and the bright region must be *one lamp* rather than the whole
+box.
+
+**This path may only ever answer YELLOW**, and that restriction is why it is
+safe to have. Position alone is not trustworthy here — on the two closest venue
+photos the housing is cut off by the frame, the fractions mean nothing, and the
+core lands at 0.32, nearer red's 0.22 than yellow's 0.53. Allowed to answer
+freely it calls both of them RED confidently, turning two safe refusals into
+two wrong answers; I measured that and did not ship it. Restricted to yellow it
+refuses them instead, and the worst it can ever do is say YELLOW when the truth
+was red, green or nothing — all of which mean "do not proceed" or cost one
+needless stop. It can never produce the answer that actually hurts, which is
+GREEN.
+
+It is **not** the old "slice the box into three bands" bug, which rounded a
+2.3:1 housing into two and lost the middle lamp entirely. Nothing is rounded: a
+continuous centroid is compared against three known positions, and an answer is
+given only when it is clearly nearest to one of them.
+
+Two other repairs were tried first and both measured worse, so neither shipped:
+anchoring the fit to the caller's box (no change at all, 35/38 either way), and
+calibrating the threshold ladder on the housing rather than the whole crop
+(fixed one photo, broke two others, 35/38 → 33/38).
 
 ---
 
@@ -313,9 +354,11 @@ Two findings, both of which settle arguments that were previously unsettled:
 - **Wrong answers are rare everywhere and absent above 48 px.** What the reader
   does when it cannot tell is refuse.
 
-`MIN_CROP_HEIGHT = 110`, where fused first reaches 0.95 and stays there — for a
+`MIN_CROP_HEIGHT = 60`, where fused first reaches 0.95 and stays there — for a
 15 cm sign on a camera that puts a 50 cm housing at 260 px from 2 m, about
-**1.4 m**. Two runs on different seeds agree on both 110 and the 80 px
+**2.6 m**. (It was 110 px / 1.4 m until `SIDES_ONLY_MARGIN` landed; refusing
+weak side counts took `wrong` to zero above 48 px, and the floor is set by
+where wrong answers stop.) Two runs on different seeds agree on both 110 and the 80 px
 crossover; individual rows move by about ±0.03, which is two standard errors at
 180 trials, so the floor is pooled over every height at or above it rather than
 read off a single row.
@@ -392,7 +435,94 @@ So the synthesis is meaningfully harder and still much easier than reality. It
 narrows the gap; it does not close it. **The real frames are the lever, and 37
 of them is not many** - shoot B is what finishes this.
 
+### Round 2: the fix worked, measured the same way
+
+Retrained on the same pipeline with `scene_glow`, darkened backgrounds and the
+37 real clip frames mixed in.
+
+| on real photographs, never trained on | round 1 | round 2 |
+|---|---|---|
+| `traffic_light` recall (gate check c) | 0.34 | **0.82** |
+| ... of those with a lamp **lit** | 0.19 | **0.77** |
+| best F1 | 0.47 | **0.84** |
+| recall at 180-320 px | 0.39 | **1.00** |
+| latency, M2 Pro | 10 ms | 8 ms |
+
+| on `clips/light_approach.mp4`, 251 frames | round 1 | round 2 |
+|---|---|---|
+| light found | 2 frames (0.8 %) | **174 frames (69 %)** |
+| ... and read a state | - | 160 frames (64 %) |
+| hoodie called `delivery_sign` | 96 frames (38 %) | 26 frames (10 %) |
+
+End to end, 35/38 photos correct, lit 27/30, unlit 8/8, no red read as green.
+The detector now supplies 31 of 38 boxes itself, against 12 in round 1.
+
+On the clip the reader now reports the full sequence — **GREEN → YELLOW → RED →
+GREEN** — where before the yellow phase came back `UNKNOWN`. See the blown-core
+fallback in section C.
+
+**Runtime confidence: 0.35.** The F1 optimum is 0.50, but recall is worth more
+than precision here because the crop readers are a second gate - measured, the
+end-to-end score is 35/38 at 0.25, 0.35 and 0.50 alike, and the lower threshold
+simply moves boxes from the hand-label fallback to the detector.
+
+What is still wrong:
+
+- **Nine photos still missed**, and they split in two. Four are the *right box*
+  at low confidence (IoU 0.63-0.91, confidence 0.19-0.43) - a threshold
+  problem. Five are genuine blanks: three very close green/yellow frames and
+  two distant ones.
+- **Check (a) now fails at 40-140 px.** Expected, and it is the check marking
+  its own homework again: the training distribution moved toward dark glowing
+  scenes, so bright easy pastes are relatively rarer. (c) is the number to read.
+- **Bare emitters reach 0.83 on dark backgrounds.** The false-positive
+  suppression only ever held in bright rooms; darkening the probe exposed it.
+
+### The hoodie, and the one genuinely unsafe residue
+
+Of the 26 remaining `delivery_sign` false positives on the clip, the variant
+reader refused 21 - but five came back as a confident "A". All five arrived by
+the same route: **"sides only - letter unreadable"**, with the harmonic beating
+its runner-up by just 1.1 to 1.4x.
+
+That path was the one place in the module where a single cue was accepted
+without checking that it had spoken clearly. Measured over rendered signs: when
+the side count is right its harmonic wins by 3.25x at the median; when it is
+wrong, by 1.23x with a 95th percentile of 1.68x. `SIDES_ONLY_MARGIN = 1.8` sits
+just above that, and **all 26 false positives are now refused**.
+
+### Round 2's blind spot: a real close-up
+
+Found on the footage shot 2026-09-22, and it is the reason the model "did not
+work" when tested by holding the light up to the camera.
+
+**Every class dies above roughly 200 px of apparent height, on real images
+only.** Walking toward the detour sign:
+
+| box height | 116 | 142 | 166 | 184 | 201 | 220+ |
+|---|---|---|---|---|---|---|
+| confidence | 0.92 | 0.92 | 0.78 | 0.15 | 0.27 | **0.00** |
+
+Same for the light: 0.74 recall with the light at mid distance on a red-lit
+stage, **0.08** (1 frame in 13) with it close up in the dark hall, where the
+boxes run 290-450 px.
+
+It is size, not blow-out. Scaling those same close-up frames down so the light
+becomes small takes it from 0.00 to 0.44-0.65 — identical pixels, different
+apparent size.
+
+And `probe_signs` check (a) passes at 220-640 px, because it pastes cutouts
+through the compositor. The synthetic-versus-real gap that made round 1 blind
+to lit lamps is still there; it has just moved to close range. The 37 real clip
+frames that fixed round 1 span **89-359 px**, so the model has never seen a
+real large one.
+
+Lowering the runtime threshold does not help: the confidences are 0.00, not
+0.2. The fix is real close-up frames, which is what
+`assets/real/images/lightning/` and `.../signs/` now hold.
+
 ### Not measured at all yet
+
 
 - **No real photograph of any printed sign exists anywhere in this project.**
   Every `stop`, `detour` and `delivery_sign` instance the code has ever seen is
@@ -434,3 +564,76 @@ Backgrounds want **variety, not quantity** — 200 frames across six rooms
 generalises where 1 000 frames of one room teaches that room. No background
 frame may contain a real sign: an unlabelled sign actively teaches that the
 sign is not a sign.
+
+---
+
+## I. Phase 2: running it live, as a speed constraint
+
+Nothing in the readers or the class list changed. What was added is a thread,
+a tracker, a policy and a GUI pane, arranged so the control loop never waits
+on any of it.
+
+```
+sign camera (index 1/2/3, never 0)
+   └─ SignWorker thread ─ SignDetector ─ SignTracker ─ render_overlay
+            │  publishes one immutable SignSnapshot behind a lock
+control loop: snapshot = worker.get_snapshot()          ← the only added cost
+              constraint = SignPolicy.update(snapshot)   ← pure arithmetic
+              throttle *= constraint.scale; steering frozen while .hold
+```
+
+**Tracker** (`src/perception/sign_tracker.py`). Detections get an id by IoU
+(same label, ≥ 0.2) and keep it through a gap of up to 0.6 s. A track is
+*confirmed* when seen in 3 of the last 5 updates; a light's state and a
+delivery letter *commit* when 3 of the last 5 readings agree. `UNKNOWN` never
+commits and never votes against a committed state, so one blown-out frame
+cannot flip RED to GREEN. A light with no committed state is not actionable at
+all. Distance is `real_height × focal / box_height` with the printed signs at
+0.43 m, the housing at 0.50 m, and the focal length from the 63.3° HFOV and
+the frame width the camera actually delivers. With HFOV 63.3° at 1280 px, a
+260 px housing reads 2.0 m, matching the anchor in §D. Boxes touching the top
+or bottom edge are clipped and do not update the distance.
+
+**Policy** (`src/input/sign_policy.py`). Same shape as the sonar's
+`obstacle_scale`: a stop sign or a RED/YELLOW light ramps the throttle from
+1.0 at 3 m to 0.0 at 2 m. A stop then holds for 0.5 s and dwells to 3.5 s
+total, distance ignored once holding so jitter across the line cannot reopen
+the ramp. A light gate can only form between 2 m and 3 m (one first seen
+closer is waved through) and waits for a committed GREEN; a stale snapshot,
+losing the track for 2 s, or the 10 s ceiling also end it. Every hold ends.
+A sign is consumed by track id once acted on, every stop id still in view at
+release is consumed with it, and for 3 s after any release nothing within
+2.5 m may start a new one. E-stop drops the active hold but keeps what was
+consumed. Detour and delivery signs are reported, never acted on.
+
+**Steering while stopped.** `obstacle_scale` zeroes throttle but the PID keeps
+chasing threshold jitter on a static frame, and the firmware's minimum move
+kicks the wheel. While `constraint.hold` is true the loop sends the same
+steering value every iteration; the PID keeps running with its output
+discarded, and there is no reset on release, so no derivative spike. This
+relies on `ki ≈ 0` (the Config default).
+
+**Constants, and why there are no sliders.** 3 m / 2 m are the stopping
+distances the car can honour at base speed; 0.35 is the measured confidence
+(§G); the heights and HFOV are physical. Nothing here is tunable from the GUI.
+
+**Bench replay.** `SIGN_CAMERA` replaces the camera index list and accepts an
+index or a video path:
+
+```bash
+SIGN_CAMERA=clips/light_approach.mp4 python3 src/main.py
+```
+
+With the car e-stopped, watch the third tile: GREEN → YELLOW → RED committing
+with hysteresis, the distance falling, the policy going SLOWING → WAITING_GREEN
+→ CLEAR, and every rejected housing drawn thin and grey with its reason.
+
+**Without a model or a camera.** The model is not committed: copy the winner
+to `models/signs.onnx` (gitignored). Missing model: header chip "Signs: no
+model at models/signs.onnx" in orange, the pane shows live frames under a red
+banner, the car drives exactly as before. Missing camera: "Signs: NO CAMERA
+(tried 1,2,3)" in red, retried every 2 s, the car drives exactly as before. A
+model copied in after start is picked up on the next start only.
+
+Distances are nominal until the sign heights and the HFOV are confirmed on the
+car's own camera; the GUI prefixes them with "≈".

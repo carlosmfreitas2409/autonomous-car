@@ -266,24 +266,32 @@ def render_onto(frame: np.ndarray, bgra: np.ndarray, height: int,
     return (x0 + int(left), y0 + int(top), x0 + int(right) + 1, y0 + int(bottom) + 1)
 
 
-def degrade_frame(frame: np.ndarray, rng: random.Random) -> np.ndarray:
+def degrade_frame(frame: np.ndarray, rng: random.Random,
+                  gentle: bool = False) -> np.ndarray:
     """Everything between the scene and the file: optics, sensor, codec.
 
     Exposure and gamma first because the venue is dark and the car's camera
     will push it, then blur - motion or defocus, not both - then sensor noise,
     then JPEG. In that order, because that is the order a camera does it in.
+
+    `gentle` is for frames that are already photographs. They arrive with the
+    real camera's exposure, blur and compression already in them, and putting
+    the full synthetic range on top double-counts it: a red-lit stage pushed
+    another 1.45x in gain and shifted again in white balance comes out as a
+    white rectangle with a box around it, which teaches nothing.
     """
     out = frame.astype(np.float32)
 
-    gain = rng.uniform(0.55, 1.45)
-    gamma = rng.uniform(0.75, 1.35)
+    gain = rng.uniform(0.85, 1.15) if gentle else rng.uniform(0.55, 1.45)
+    gamma = rng.uniform(0.92, 1.10) if gentle else rng.uniform(0.75, 1.35)
     out = 255.0 * np.power(np.clip(out * gain / 255.0, 0, 1), gamma)
 
     # White balance drifts: the hall is warm, daylight is not.
-    cast = np.float32([rng.uniform(0.9, 1.12) for _ in range(3)])
+    spread = (0.97, 1.04) if gentle else (0.9, 1.12)
+    cast = np.float32([rng.uniform(*spread) for _ in range(3)])
     out = np.clip(out * cast, 0, 255)
 
-    choice = rng.random()
+    choice = 1.0 if gentle and rng.random() < 0.6 else rng.random()
     if choice < 0.35:
         length = rng.randint(3, 15)
         angle = rng.uniform(0, np.pi)
@@ -299,10 +307,11 @@ def degrade_frame(frame: np.ndarray, rng: random.Random) -> np.ndarray:
         radius = rng.choice((3, 5, 7))
         out = cv.GaussianBlur(out, (radius, radius), 0)
 
-    out += np.random.normal(0, rng.uniform(1.5, 9.0), out.shape)
+    out += np.random.normal(0, rng.uniform(1.0, 4.0) if gentle else rng.uniform(1.5, 9.0),
+                            out.shape)
     out = np.clip(out, 0, 255).astype(np.uint8)
 
-    quality = rng.randint(38, 92)
+    quality = rng.randint(62, 95) if gentle else rng.randint(38, 92)
     ok, buffer = cv.imencode(".jpg", out, [cv.IMWRITE_JPEG_QUALITY, quality])
     return cv.imdecode(buffer, cv.IMREAD_COLOR) if ok else out
 
@@ -387,22 +396,66 @@ def load_clip_samples(directory: Path) -> list:
             if not ok:
                 break
             if index in wanted:
-                samples.append((frame, spec["label"], tuple(wanted[index])))
+                samples.append((frame, [(spec["label"], tuple(wanted[index]))]))
             index += 1
         capture.release()
         print(f"  {manifest.name}: {len(wanted)} verified frames from {clip.name}")
     return samples
 
 
-def real_sample(frame, box, rng: random.Random):
-    """One real frame, re-cropped and re-scaled so the light is not always the
-    same size. Returns the frame and the box, or None if the crop failed."""
+def load_labelled_folders(root: Path) -> list:
+    """Hand-labelled stills, as (frame, [(label, box), ...]).
+
+    Every box in a frame is carried together, never one at a time. A frame with
+    a light *and* a stop sign in it that was cropped around only the light
+    would teach that the stop sign is background - the same "an unlabelled sign
+    is not a sign" mistake the backgrounds rule exists to prevent.
+
+    A label file with no boxes is kept too: it is a frame of the venue with
+    nothing in it, which is the most direct negative there is.
+    """
+    images_root, labels_root = root / "images", root / "labels"
+    if not images_root.exists():
+        return []
+    samples = []
+    for image_path in sorted(images_root.rglob("*")):
+        if image_path.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+            continue
+        label_path = labels_root / image_path.relative_to(images_root).with_suffix(".txt")
+        if not label_path.exists():
+            continue
+        frame = cv.imread(str(image_path))
+        if frame is None:
+            continue
+        height, width = frame.shape[:2]
+        boxes = []
+        for line in label_path.read_text().splitlines():
+            parts = line.split()
+            if len(parts) != 5:
+                continue
+            cx, cy, w, h = (float(v) for v in parts[1:])
+            boxes.append((CLASSES[int(parts[0])],
+                          ((cx - w / 2) * width, (cy - h / 2) * height,
+                           (cx + w / 2) * width, (cy + h / 2) * height)))
+        samples.append((frame, boxes))
+    return samples
+
+
+def real_sample(frame, boxes, rng: random.Random):
+    """One real frame, re-cropped and re-scaled so the object is not always the
+    same size. Returns the frame and every box still inside it, or None.
+
+    The window is chosen around one box but *all* of them are carried through,
+    and any that the crop cut into is dropped along with the crop - a half a
+    sign with a whole sign's label is worse than no sample at all.
+    """
+    if not boxes:
+        return None
     frame_h, frame_w = frame.shape[:2]
-    x0, y0, x1, y1 = box
+    _, anchor = boxes[rng.randrange(len(boxes))]
+    x0, y0, x1, y1 = anchor
     width, height = x1 - x0, y1 - y0
 
-    # A window that keeps the whole housing but varies how much room is around
-    # it, which is what varies its apparent size once resized to FRAME_SIZE.
     margin = rng.uniform(0.15, 3.0)
     wx0 = rng.uniform(max(0, x0 - width * margin), x0)
     wy0 = rng.uniform(max(0, y0 - height * margin), y0)
@@ -411,18 +464,55 @@ def real_sample(frame, box, rng: random.Random):
     if wx1 - wx0 < 32 or wy1 - wy0 < 32:
         return None
 
+    # Grow the window to the output's aspect ratio before cropping. Resizing a
+    # window of some other shape into FRAME_SIZE stretches everything in it,
+    # and a traffic light wider than it is tall is not a traffic light - it
+    # also breaks phase-2 distance, which divides by box height.
+    aspect = FRAME_SIZE[0] / FRAME_SIZE[1]
+    centre_x, centre_y = (wx0 + wx1) / 2, (wy0 + wy1) / 2
+    half_w, half_h = (wx1 - wx0) / 2, (wy1 - wy0) / 2
+    if half_w / half_h < aspect:
+        half_w = half_h * aspect
+    else:
+        half_h = half_w / aspect
+    # Keep it inside the frame without changing its shape.
+    half_w = min(half_w, frame_w / 2, (frame_h / 2) * aspect)
+    half_h = half_w / aspect
+    centre_x = float(np.clip(centre_x, half_w, frame_w - half_w))
+    centre_y = float(np.clip(centre_y, half_h, frame_h - half_h))
+    wx0, wx1 = centre_x - half_w, centre_x + half_w
+    wy0, wy1 = centre_y - half_h, centre_y + half_h
+
     window = frame[int(wy0):int(wy1), int(wx0):int(wx1)]
+    if window.shape[0] < 16 or window.shape[1] < 16:
+        return None
     scale_x = FRAME_SIZE[0] / window.shape[1]
     scale_y = FRAME_SIZE[1] / window.shape[0]
     out = cv.resize(window, FRAME_SIZE)
-    moved = ((x0 - wx0) * scale_x, (y0 - wy0) * scale_y,
-             (x1 - wx0) * scale_x, (y1 - wy0) * scale_y)
-    if rng.random() < 0.5:
+    flip = rng.random() < 0.5
+    if flip:
         out = cv.flip(out, 1)
-        moved = (FRAME_SIZE[0] - moved[2], moved[1], FRAME_SIZE[0] - moved[0], moved[3])
-    if moved[2] - moved[0] < 6 or moved[3] - moved[1] < 6:
+
+    kept = []
+    for label, (bx0, by0, bx1, by1) in boxes:
+        inside_w = min(bx1, wx1) - max(bx0, wx0)
+        inside_h = min(by1, wy1) - max(by0, wy0)
+        if inside_w <= 0 or inside_h <= 0:
+            continue
+        # Anything the window clipped is dropped: a partial object carrying a
+        # whole object's box teaches a box that is not the object.
+        if inside_w * inside_h < 0.92 * (bx1 - bx0) * (by1 - by0):
+            continue
+        moved = ((bx0 - wx0) * scale_x, (by0 - wy0) * scale_y,
+                 (bx1 - wx0) * scale_x, (by1 - wy0) * scale_y)
+        if flip:
+            moved = (FRAME_SIZE[0] - moved[2], moved[1], FRAME_SIZE[0] - moved[0], moved[3])
+        if moved[2] - moved[0] < 6 or moved[3] - moved[1] < 6:
+            continue
+        kept.append((label, tuple(int(v) for v in moved)))
+    if not kept:
         return None
-    return out, tuple(int(v) for v in moved)
+    return out, kept
 
 
 def clip_negative_crops(samples: list, rng: random.Random, count: int) -> list:
@@ -438,7 +528,10 @@ def clip_negative_crops(samples: list, rng: random.Random, count: int) -> list:
     attempts = 0
     while len(crops) < count and attempts < count * 20:
         attempts += 1
-        frame, _, (x0, y0, x1, y1) = samples[rng.randrange(len(samples))]
+        frame, boxes = samples[rng.randrange(len(samples))]
+        if not boxes:
+            continue
+        x0 = min(b[1][0] for b in boxes); x1 = max(b[1][2] for b in boxes)
         frame_h, frame_w = frame.shape[:2]
         # Take a slab from whichever side of the housing has the most room.
         gaps = [("left", 0, x0), ("right", x1, frame_w)]
@@ -523,7 +616,7 @@ def make_sample(frame, cutouts, rng):
         return None
     if lamp is not None and rng.random() < 0.85:
         scene_glow(frame, box, lamp[0], lamp[1], rng)
-    return label, box, name
+    return [(label, box)]
 
 
 def yolo_line(label: str, box, shape) -> str:
@@ -540,6 +633,8 @@ def main() -> int:
     parser.add_argument("--out", default="dataset/synth")
     parser.add_argument("--cutouts", default="assets/sign_cutouts")
     parser.add_argument("--backgrounds", nargs="+", default=["dataset/backgrounds"])
+    parser.add_argument("--real-images", default="assets/real_train",
+                        help="hand-labelled real stills to train on; '' for none")
     parser.add_argument("--clip-labels", default="assets/clip_labels",
                         help="hand-verified boxes for real footage; '' to train synthetic only")
     parser.add_argument("--real-share", type=float, default=REAL_SHARE,
@@ -562,6 +657,11 @@ def main() -> int:
     clip_samples = []
     if args.clip_labels and Path(args.clip_labels).exists():
         clip_samples = load_clip_samples(Path(args.clip_labels))
+    if args.real_images and Path(args.real_images).exists():
+        folders = load_labelled_folders(Path(args.real_images))
+        objects = sum(len(b) for _, b in folders)
+        print(f"  {args.real_images}: {len(folders)} labelled stills, {objects} objects")
+        clip_samples += folders
     if not clip_samples:
         print("  no real footage - training on composites alone, which is what")
         print("  scored 0.000 on every lit venue photo last time")
@@ -584,12 +684,14 @@ def main() -> int:
     for index in range(args.count):
         split = "val" if rng.random() < VAL_SHARE else "train"
         sample = None
+        from_real = False
         if clip_samples and rng.random() < args.real_share:
-            real, label, box = clip_samples[rng.randrange(len(clip_samples))]
-            made = real_sample(real, box, rng)
+            real, boxes = clip_samples[rng.randrange(len(clip_samples))]
+            made = real_sample(real, boxes, rng)
             if made is not None:
-                frame, moved = made
-                sample = (label, moved, "real")
+                frame, kept = made
+                sample = kept
+                from_real = True
                 real_used += 1
             else:
                 frame = background_frame(rng.choice(backgrounds), rng)
@@ -602,13 +704,14 @@ def main() -> int:
             if rng.random() < DISTRACTOR_SHARE:
                 draw_distractors(frame, rng)
             sample = make_sample(frame, cutouts, rng)
-        frame = degrade_frame(frame, rng)
+        # Real photographs get a light touch; see degrade_frame.
+        frame = degrade_frame(frame, rng, gentle=from_real)
 
         lines = []
-        if sample is not None:
-            label, box, _ = sample
-            lines.append(yolo_line(label, box, frame.shape))
-            counts[label] += 1
+        if sample:
+            for label, box in sample:
+                lines.append(yolo_line(label, box, frame.shape))
+                counts[label] += 1
         else:
             empty += 1
 

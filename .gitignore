@@ -26,3 +26,6 @@ runs/
 yolo*.pt
 clips/*.mov
 .pytest_cache/
+models/*.onnx
+
+.DS_Store
