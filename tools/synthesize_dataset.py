@@ -75,6 +75,10 @@ VAL_SHARE = 0.15
 # Share of output frames taken from real labelled footage rather than composited.
 REAL_SHARE = 0.2
 
+# ...and how many of those are a real patch shrunk into another scene rather
+# than the whole frame re-cropped. See real_patch_paste.
+PATCH_PASTE_SHARE = 0.5
+
 # The venue is darker than every room these backgrounds were shot in: the
 # photographs average 103 grey against the backgrounds' 138, and only 0.5 % of
 # backgrounds are as dark as the median venue photo. The background is darkened
@@ -515,6 +519,88 @@ def real_sample(frame, boxes, rng: random.Random):
     return out, kept
 
 
+def real_patch_paste(samples: list, backgrounds: list, rng: random.Random):
+    """Put a real object, with its real surroundings, smaller into another room.
+
+    `real_sample` can only ever make an object *larger*, because it crops into a
+    frame and blows the crop up - it cannot zoom out past the frame's edge. With
+    every new still being a close-up, that left the 90-180 px band at 10 % of
+    training boxes, and round 3 duly went from 4/8 to 1/8 on the eval's distant
+    photos while fixing close range.
+
+    So a patch is lifted instead - the object plus a couple of box-widths of the
+    scene around it, which is where its spill lives - and pasted at a smaller
+    apparent size onto a different background. That spill is the thing an alpha
+    cutout throws away and the thing round 1 died without, so this is a better
+    small-object sample than a cutout paste, not a worse one. The patch is
+    feathered at its edge; it is a real light in a real room either side of the
+    seam.
+    """
+    for _ in range(12):
+        frame, boxes = samples[rng.randrange(len(samples))]
+        if not boxes:
+            continue
+        label, (x0, y0, x1, y1) = boxes[rng.randrange(len(boxes))]
+        width, height = x1 - x0, y1 - y0
+        if width < 24 or height < 24:
+            continue
+
+        reach = rng.uniform(1.5, 2.6)
+        px0, py0 = x0 - width * reach, y0 - height * reach
+        px1, py1 = x1 + width * reach, y1 + height * reach
+        frame_h, frame_w = frame.shape[:2]
+        if px0 < 0 or py0 < 0 or px1 > frame_w or py1 > frame_h:
+            continue
+        # A second object inside the patch would travel unlabelled.
+        if any(other is not boxes[0] and not (b[2] <= px0 or b[0] >= px1 or b[3] <= py0 or b[1] >= py1)
+               for other, b in ((o, o[1]) for o in boxes if o[1] != (x0, y0, x1, y1))):
+            continue
+
+        patch = frame[int(py0):int(py1), int(px0):int(px1)]
+        if patch.size == 0:
+            continue
+
+        target = np.exp(rng.uniform(np.log(34), np.log(200)))
+        scale = target / height
+        new_w = max(8, int(round(patch.shape[1] * scale)))
+        new_h = max(8, int(round(patch.shape[0] * scale)))
+        if new_w >= FRAME_SIZE[0] or new_h >= FRAME_SIZE[1]:
+            continue
+        patch = cv.resize(patch, (new_w, new_h), interpolation=cv.INTER_AREA)
+
+        canvas = background_frame(rng.choice(backgrounds), rng)
+        at_x = rng.randint(0, FRAME_SIZE[0] - new_w)
+        at_y = rng.randint(0, FRAME_SIZE[1] - new_h)
+
+        region = canvas[at_y:at_y + new_h, at_x:at_x + new_w].astype(np.float32)
+        patch = patch.astype(np.float32)
+
+        # Match the patch's brightness to the scene it is joining, measured at
+        # the rim where the two meet rather than in the middle, which is the
+        # lamp. Without it a patch off a red stage dropped into a lit classroom
+        # is a rectangle of the wrong exposure, and a rectangle is a shortcut
+        # the detector will learn instead of the object.
+        rim = max(1, int(0.12 * min(new_h, new_w)))
+        patch_rim = float(np.median(np.concatenate([patch[:rim].ravel(), patch[-rim:].ravel()])))
+        scene_rim = float(np.median(np.concatenate([region[:rim].ravel(), region[-rim:].ravel()])))
+        patch = np.clip(patch * float(np.clip((scene_rim + 12) / (patch_rim + 12), 0.45, 2.2)), 0, 255)
+
+        # Radial, not rectangular: a square feather still leaves four straight
+        # edges for the model to find.
+        yy, xx = np.mgrid[0:new_h, 0:new_w]
+        radius = np.hypot((xx - new_w / 2) / (new_w / 2), (yy - new_h / 2) / (new_h / 2))
+        alpha = np.clip(1.0 - (radius - 0.45) / 0.55, 0.0, 1.0) ** 1.5
+        alpha = alpha[:, :, None]
+
+        canvas[at_y:at_y + new_h, at_x:at_x + new_w] = (
+            region * (1 - alpha) + patch * alpha).astype(np.uint8)
+
+        moved = (at_x + (x0 - px0) * scale, at_y + (y0 - py0) * scale,
+                 at_x + (x1 - px0) * scale, at_y + (y1 - py0) * scale)
+        return canvas, [(label, tuple(int(v) for v in moved))]
+    return None
+
+
 def clip_negative_crops(samples: list, rng: random.Random, count: int) -> list:
     """Frames from the same footage with the light provably cropped out.
 
@@ -686,8 +772,13 @@ def main() -> int:
         sample = None
         from_real = False
         if clip_samples and rng.random() < args.real_share:
-            real, boxes = clip_samples[rng.randrange(len(clip_samples))]
-            made = real_sample(real, boxes, rng)
+            # Half the real samples are shrunk into another scene, which is the
+            # only way a close-up still can contribute a distant object.
+            made = (real_patch_paste(clip_samples, backgrounds, rng)
+                    if rng.random() < PATCH_PASTE_SHARE else None)
+            if made is None:
+                real, boxes = clip_samples[rng.randrange(len(clip_samples))]
+                made = real_sample(real, boxes, rng)
             if made is not None:
                 frame, kept = made
                 sample = kept
