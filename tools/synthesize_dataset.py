@@ -27,6 +27,12 @@ stage lamp, a phone screen or a person. The record has a bare red disc called
 `stop` at 0.86 and a green disc called `traffic_light` at 0.63. Half the frames
 here carry unlabelled emitters, and one in six carries no sign at all.
 
+Emitters are not the whole of it. The venue's stage fixtures, switched off,
+are a pale disc with dark marks inside - which at 20-80 px is what a delivery
+sign is too - and round-4 called them `delivery_sign` at up to 0.95 on the car.
+`assets/distractor_cutouts/` holds the real fixtures, cut from photographs of
+the venue's pillars, and they are pasted unlabelled among the other clutter.
+
 **A box that is the sign face or the lamp housing and nothing else.** Never the
 post. Phase-2 distance comes from real_height / pixel_height, which is only
 constant if the box always bounds the same physical object, and the state
@@ -85,6 +91,14 @@ PATCH_PASTE_SHARE = 0.5
 # *before* the lamp is pasted, never after, because a dark room with a bright
 # lamp in it is the thing to reproduce - darkening afterwards dims the lamp too.
 DARKEN = (0.30, 1.05)
+
+# The stage fixtures, pasted as clutter: in how many of the frames that carry
+# distractors, and at what apparent height. The car saw them at 20-35 px and
+# the current model confuses them most at 24-80 px; 160 px is a pillar passed
+# close by. Never stacked in a column, although that is how they hang: a
+# vertical run of discs is the traffic light's own silhouette.
+FIXTURE_SHARE = 0.5
+FIXTURE_HEIGHT = (12, 160)
 
 # What each lamp throws onto the room, in BGR, keyed by the cutout's own name.
 LIT_COLOUR = {"red": (55, 60, 235), "yellow": (60, 215, 240), "green": (95, 220, 105)}
@@ -320,15 +334,27 @@ def degrade_frame(frame: np.ndarray, rng: random.Random,
     return cv.imdecode(buffer, cv.IMREAD_COLOR) if ok else out
 
 
-def draw_distractors(frame: np.ndarray, rng: random.Random) -> None:
+def draw_distractors(frame: np.ndarray, rng: random.Random, fixtures=()) -> None:
     """Bright things that are emphatically not signs, and carry no label.
 
     A vertical stack of three lamps is never drawn: that is the traffic
     light's own silhouette, and teaching the model it is a negative would
     teach it to miss the thing it exists to find. Pairs are drawn, because a
     pair is what a stage rig actually looks like.
+
+    `fixtures` are real stage fixtures from assets/distractor_cutouts/, pasted
+    one at a time and darkened like the backgrounds, since the photographs they
+    were cut from were shot with the hall lights on.
     """
     frame_h, frame_w = frame.shape[:2]
+    if fixtures and rng.random() < FIXTURE_SHARE:
+        for _ in range(rng.randint(1, 3)):
+            fixture = rng.choice(fixtures).copy()
+            fixture[:, :, :3] = np.clip(fixture[:, :, :3] * rng.uniform(*DARKEN), 0, 255)
+            if rng.random() < 0.5:
+                fixture = cv.flip(fixture, 1)
+            height = int(round(np.exp(rng.uniform(*np.log(FIXTURE_HEIGHT)))))
+            render_onto(frame, fixture, height, rng)
     for _ in range(rng.randint(1, 4)):
         kind = rng.random()
         colour = rng.choice([(40, 40, 255), (40, 220, 255), (60, 230, 90),
@@ -653,6 +679,17 @@ def load_cutouts(root: Path) -> dict:
     return cutouts
 
 
+def load_fixtures(root: Path) -> list:
+    fixtures = []
+    for path in sorted(root.glob("*.png")):
+        image = cv.imread(str(path), cv.IMREAD_UNCHANGED)
+        if image is None or image.shape[2] != 4:
+            print(f"  skipping {path}: needs an alpha channel")
+            continue
+        fixtures.append(image)
+    return fixtures
+
+
 def load_backgrounds(directories) -> list:
     paths = []
     for directory in directories:
@@ -719,6 +756,8 @@ def main() -> int:
     parser.add_argument("--out", default="dataset/synth")
     parser.add_argument("--cutouts", default="assets/sign_cutouts")
     parser.add_argument("--backgrounds", nargs="+", default=["dataset/backgrounds"])
+    parser.add_argument("--distractors", default="assets/distractor_cutouts",
+                        help="real non-sign objects pasted unlabelled; '' for none")
     parser.add_argument("--real-images", default="assets/real_train",
                         help="hand-labelled real stills to train on; '' for none")
     parser.add_argument("--clip-labels", default="assets/clip_labels",
@@ -738,7 +777,9 @@ def main() -> int:
     if not backgrounds:
         print(f"no backgrounds under {args.backgrounds}")
         return 2
-    print(f"{sum(len(v) for v in cutouts.values())} cutouts, {len(backgrounds)} backgrounds")
+    fixtures = load_fixtures(Path(args.distractors)) if args.distractors else []
+    print(f"{sum(len(v) for v in cutouts.values())} cutouts, {len(backgrounds)} backgrounds, "
+          f"{len(fixtures)} fixture distractors")
 
     clip_samples = []
     if args.clip_labels and Path(args.clip_labels).exists():
@@ -793,7 +834,7 @@ def main() -> int:
             # Distractors first: they are clutter in the scene, and drawing them
             # last would occasionally paint over the sign while its label stayed.
             if rng.random() < DISTRACTOR_SHARE:
-                draw_distractors(frame, rng)
+                draw_distractors(frame, rng, fixtures)
             sample = make_sample(frame, cutouts, rng)
         # Real photographs get a light touch; see degrade_frame.
         frame = degrade_frame(frame, rng, gentle=from_real)
