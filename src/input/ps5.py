@@ -1,4 +1,8 @@
+from typing import Optional
+
 import pygame
+
+from path import HOME_PATH, Path
 
 
 _STICK_AXIS = 0  # Left stick X
@@ -6,7 +10,19 @@ _RTRIGGER_AXIS = 5  # R2 (DualSense via SDL2 on macOS)
 _LTRIGGER_AXIS = 4
 _YBUTTON_AXIS = 3
 _BBUTTON = 1  # Circle (DualSense via SDL2 on macOS)
+# Shoulder buttons, SDL2 GameController mapping (consistent with Triangle 3 /
+# Circle 1 above). Verify with `tools/ps5_buttons.py` before trusting them:
+# main.py also logs every button press by index.
+_L1_BUTTON = 9
+_R1_BUTTON = 10
 _TRIGGER_DEADZONE = 0.05
+
+BUTTON_NAMES = {
+    0: "Cross", 1: "Circle", 2: "Square", 3: "Triangle",
+    4: "Share", 5: "PS", 6: "Options", 7: "L3", 8: "R3",
+    9: "L1", 10: "R1", 11: "D-up", 12: "D-down", 13: "D-left", 14: "D-right",
+    15: "Touchpad",
+}
 
 class PS5Controller:
     def __init__(self, deadzone: float = 0.08):
@@ -14,6 +30,9 @@ class PS5Controller:
         self._joystick: pygame.joystick.JoystickType | None = None
         self._y_was_pressed = False
         self._b_was_pressed = False
+        self._l1_was_pressed = False
+        self._r1_was_pressed = False
+        self._buttons_were_pressed: set[int] = set()
 
         if not pygame.display.get_init():
             pygame.display.init()
@@ -61,6 +80,43 @@ class PS5Controller:
         toggled = pressed and not self._b_was_pressed
         self._b_was_pressed = pressed
         return toggled
+
+    def poll_path_buttons(self) -> Optional[Path]:
+        """Edge-triggered like the toggles: R1 arms the Detour, L1 goes home.
+
+        The Detour returns home by itself once the car is inside it (see
+        `path.DetourReturn`); L1 is the manual override.
+
+        Two stateless buttons cannot desync from the GUI radio, so there is no
+        toggle here; pressing R1 twice is still Detour. Both pressed on the
+        same frame: home wins.
+        """
+        if not self._update():
+            self._l1_was_pressed = False
+            self._r1_was_pressed = False
+            return None
+
+        l1 = self._joystick.get_button(_L1_BUTTON)
+        r1 = self._joystick.get_button(_R1_BUTTON)
+        l1_edge = l1 and not self._l1_was_pressed
+        r1_edge = r1 and not self._r1_was_pressed
+        self._l1_was_pressed = l1
+        self._r1_was_pressed = r1
+        if l1_edge:
+            return HOME_PATH
+        if r1_edge:
+            return Path.DETOUR
+        return None
+
+    def poll_button_presses(self) -> list[int]:
+        """Indices of every button that went down since the last call (for the log)."""
+        if not self._update():
+            self._buttons_were_pressed = set()
+            return []
+        pressed = {i for i in range(self._joystick.get_numbuttons()) if self._joystick.get_button(i)}
+        edges = sorted(pressed - self._buttons_were_pressed)
+        self._buttons_were_pressed = pressed
+        return edges
 
     def poll(self) -> tuple[float, float]:
         if not self._update():

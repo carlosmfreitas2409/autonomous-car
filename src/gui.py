@@ -6,9 +6,21 @@ import serial.tools.list_ports
 from config import Config
 from lights import LightsController, StripEffect, TurnSignal
 
+from path import HOME_PATH, Path
 from perception.line_tracking import LineTrackingResult
 from perception.sign_worker import DEBUG_HEIGHT, DEBUG_WIDTH, SignSnapshot
 from input.sign_policy import PolicyState, SignConstraint
+
+
+_PATH_LABELS = {
+    "Normal": Path.NORMAL,
+    "Straight": Path.STRAIGHT,
+    "Detour": Path.DETOUR,
+}
+_PATH_NAMES = {path: label for label, path in _PATH_LABELS.items()}
+_PATH_COLOR_IDLE = (150, 150, 150)
+_PATH_COLOR_DETOUR = (255, 160, 40)
+_PATH_COLOR_WARN = (255, 80, 80)
 
 
 _TURN_SIGNAL_LABELS = {
@@ -53,6 +65,7 @@ class TunerGUI:
         self._tags = {}
         self._signs_uploaded_at = -1.0
         self._lights: LightsController | None = None
+        self._turn_signal_before_detour: str | None = None
         self._build(config, frame_w, frame_h)
 
         self._refresh_ports()
@@ -129,8 +142,19 @@ class TunerGUI:
                         dpg.add_spacer(width=4)
                         self._tags["tel_sonar"] = dpg.add_text("Sonar: --", color=(150, 150, 150))
                         dpg.add_spacer(width=4)
+                        self._tags["tel_lane"] = dpg.add_text("Lane: --", color=(150, 150, 150))
+                        dpg.add_spacer(width=4)
+                        self._tags["tel_stop"] = dpg.add_text("Stop: --", color=(150, 150, 150))
+                        dpg.add_spacer(width=4)
                         self._tags["tel_signs"] = dpg.add_text("Signs: --", color=(150, 150, 150))
                     with dpg.group(horizontal=True, height=24):
+                        self._tags["path_label"] = dpg.add_text("Path:", color=_PATH_COLOR_IDLE)
+                        self._tags["path"] = dpg.add_radio_button(
+                            tuple(_path_item_label(label) for label in _PATH_LABELS),
+                            horizontal=True,
+                            default_value=_path_item_label(_PATH_NAMES[HOME_PATH]),
+                        )
+                        dpg.add_spacer(width=8)
                         self._tags["mode"] = dpg.add_button(label="Autonomous Mode", callback=self._toggle_mode, width=120)
                         self._tags["estop"] = dpg.add_button(label="Emergency Stop", callback=self._toggle_estop, width=110)
 
@@ -300,11 +324,52 @@ class TunerGUI:
         dpg.set_value(self._tags["tex_main"], _frame_to_texture(result.display_frame))
         dpg.set_value(self._tags["tex_blur"], _frame_to_texture(result.debug_frame))
 
-    def update_telemetry(self, fps: float, error: int, steering: float, throttle: float):
+    def update_telemetry(self, fps: float, error: int, steering: float, throttle: float, lane_state: str = "--", stop_reason: str | None = None):
         dpg.set_value(self._tags["tel_fps"], f"FPS: {fps:.1f}")
         dpg.set_value(self._tags["tel_error"], f"Error: {error:+d} px")
         dpg.set_value(self._tags["tel_steer"], f"Steer: {steering:+.3f}")
         dpg.set_value(self._tags["tel_throttle"], f"Throttle: {throttle:.2f}")
+        dpg.set_value(self._tags["tel_lane"], f"Lane: {lane_state}")
+        dpg.set_value(self._tags["tel_stop"], f"Stop: {stop_reason or '--'}")
+        dpg.configure_item(self._tags["tel_stop"], color=(255, 80, 80) if stop_reason else (150, 150, 150))
+
+    # --- path ------------------------------------------------------------
+
+    def path(self) -> Path:
+        return _PATH_LABELS[_path_item_name(dpg.get_value(self._tags["path"]))]
+
+    def set_path(self, path: Path):
+        dpg.set_value(self._tags["path"], _path_item_label(_PATH_NAMES[path]))
+
+    def update_path_status(self, path: Path, profile_ready: bool, lane_state: str):
+        """Colour the Path label: orange while the Detour is armed, red when an
+        anchored path was selected before the tracker has a lane width."""
+        tag = self._tags["path_label"]
+        if path is not Path.NORMAL and not profile_ready:
+            dpg.set_value(tag, f"Path ({lane_state}):")
+            dpg.configure_item(tag, color=_PATH_COLOR_WARN)
+        elif path is Path.DETOUR:
+            dpg.set_value(tag, "Path:")
+            dpg.configure_item(tag, color=_PATH_COLOR_DETOUR)
+        else:
+            dpg.set_value(tag, "Path:")
+            dpg.configure_item(tag, color=_PATH_COLOR_IDLE)
+
+    def set_turn_signal(self, label: str | None):
+        """Mirror the Detour latch on the right turn signal.
+
+        `dpg.set_value` does not fire the radio's callback, so the lights
+        controller is updated explicitly. Passing None restores the value the
+        operator had before the Detour was armed."""
+        tag = self._tags["turn_signal"]
+        if label is None:
+            if self._turn_signal_before_detour is None:
+                return
+            label, self._turn_signal_before_detour = self._turn_signal_before_detour, None
+        elif self._turn_signal_before_detour is None:
+            self._turn_signal_before_detour = dpg.get_value(tag)
+        dpg.set_value(tag, label)
+        self._on_turn_signal(tag, label)
 
     def update_sonar(self, reading):
         tag = self._tags["tel_sonar"]
@@ -370,6 +435,15 @@ class TunerGUI:
 
     def shutdown(self):
         dpg.destroy_context()
+
+
+def _path_item_label(name: str) -> str:
+    """Radio item text; the home path is marked so the GUI and L1 always agree."""
+    return f"{name} (home)" if _PATH_LABELS[name] is HOME_PATH else name
+
+
+def _path_item_name(label: str) -> str:
+    return label.replace(" (home)", "")
 
 
 def _monotonic() -> float:
