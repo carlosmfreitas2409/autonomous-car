@@ -1,5 +1,7 @@
 .conductor
 assets/*.mov
+clips/
+recordings/
 
 .venv
 

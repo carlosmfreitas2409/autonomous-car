@@ -16,6 +16,9 @@ SONAR_NO_ECHO = 0xFF
 class SonarReading:
   state: str
   nearest_cm: Optional[int]
+  # Per-sensor distances, left to right, None where nothing echoed. Empty when
+  # the master only sent the nearest value.
+  distances: tuple[Optional[int], ...] = ()
 
   @property
   def blocked(self) -> bool:
@@ -105,9 +108,17 @@ class Arduino:
           nearest = int(parts[2])
         except ValueError:
           continue
+        distances = []
+        for part in parts[3:]:
+          try:
+            value = int(part)
+          except ValueError:
+            break
+          distances.append(None if value >= SONAR_NO_ECHO else value)
         latest = SonarReading(
           state=parts[1],
           nearest_cm=None if nearest >= SONAR_NO_ECHO else nearest,
+          distances=tuple(distances),
         )
       elif line.startswith("ERR"):
         logger.warning(f"master: {line}")
