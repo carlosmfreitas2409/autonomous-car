@@ -14,7 +14,10 @@ the training set has never seen.
 must stay above 0.6 confidence *at every size*. The previous model was trained
 with a 280 px cap and measured 0.97 at 260 px, 0.18 at 400 px and 0.00 at
 500 px - it vanished exactly where the car has to stop, and an averaged metric
-never showed it, because most of the validation set was small.
+never showed it, because most of the validation set was small. The sign artwork
+gets the same test up to 560 px: the signs had the same cap, at 260 px, and
+this check only looked at the light, so it took the first real delivery photos
+to find it.
 
 **(c) Real photographs.** `traffic_light` recall on `assets/real`, which is
 hand-labelled and never trained on. This is the only check here that can fail
@@ -44,6 +47,8 @@ from synthesize_dataset import (  # noqa: E402
     background_frame, bloom, draw_distractors, load_backgrounds, render_onto)
 
 SIZES = (40, 80, 140, 220, 320, 440, 560, 640)
+SIGN_SIZES = (40, 80, 140, 220, 320, 440, 560)
+SIGN_CLASSES = ("delivery_sign", "detour", "stop")
 CLOSE_RANGE_FLOOR = 0.6
 
 # What the model has to manage on photographs it has never seen. The plan's
@@ -103,6 +108,31 @@ def main() -> int:
         if size in worst:
             mark = "ok " if worst[size] >= CLOSE_RANGE_FLOOR else "BAD"
             print(f"  {mark} {size:4d} px   worst confidence {worst[size]:.2f}")
+
+    print(f"\n    every sign artwork at every size, floor {CLOSE_RANGE_FLOOR}")
+    signs_root = Path(args.cutouts).parent
+    for label in SIGN_CLASSES:
+        worst = {}
+        for path in sorted((signs_root / label).glob("*.png")):
+            cutout = cv.imread(str(path), cv.IMREAD_UNCHANGED)
+            if cutout is None or cutout.shape[2] != 4:
+                continue
+            for size in SIGN_SIZES:
+                frame = background_frame(rng.choice(backgrounds), rng)
+                box = render_onto(frame, cutout, size, rng,
+                                  position=(frame.shape[1] // 2 - size // 2,
+                                            frame.shape[0] // 2 - size // 2))
+                if box is None:
+                    continue
+                found = max((d.confidence for d in detector.detect(frame)
+                             if d.label == label), default=0.0)
+                worst[size] = min(worst.get(size, 1.0), found)
+                if found < CLOSE_RANGE_FLOOR:
+                    failures.append(f"{label}/{path.name} at {size}px -> {found:.2f}")
+        if worst:
+            row = "  ".join(f"{size}:{worst[size]:.2f}" for size in SIGN_SIZES if size in worst)
+            mark = "ok " if min(worst.values()) >= CLOSE_RANGE_FLOOR else "BAD"
+            print(f"  {mark} {label:14s} {row}")
 
     print(f"\n(b) bare emitters below the runtime threshold {args.confidence}")
     loudest = 0.0

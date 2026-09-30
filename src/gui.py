@@ -7,6 +7,8 @@ from config import Config
 from lights import LightsController, StripEffect, TurnSignal
 
 from perception.line_tracking import LineTrackingResult
+from perception.sign_worker import DEBUG_HEIGHT, DEBUG_WIDTH, SignSnapshot
+from input.sign_policy import PolicyState, SignConstraint
 
 
 _TURN_SIGNAL_LABELS = {
@@ -35,11 +37,21 @@ _SONAR_STATES = {
     "X": ("STALE", (255, 80, 80)),
 }
 
+_POLICY_COLOUR = {
+    PolicyState.CLEAR: (0, 255, 0),
+    PolicyState.SLOWING: (255, 200, 0),
+    PolicyState.HOLDING: (255, 80, 80),
+    PolicyState.DWELLING: (255, 80, 80),
+    PolicyState.WAITING_GREEN: (255, 80, 80),
+}
+
+
 class TunerGUI:
     def __init__(self, config: Config, frame_w: int, frame_h: int):
         self._autonomous = True
         self._stopped = True
         self._tags = {}
+        self._signs_uploaded_at = -1.0
         self._lights: LightsController | None = None
         self._build(config, frame_w, frame_h)
 
@@ -85,7 +97,8 @@ class TunerGUI:
             self._tags["logo_tex"] = dpg.add_static_texture(logo_width, logo_height, logo_data)
             self._tags["tex_main"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
             self._tags["tex_blur"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
-            self._tags["tex_threshold"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
+            blank_signs = np.ones(DEBUG_WIDTH * DEBUG_HEIGHT * 4, dtype=np.float32)
+            self._tags["tex_signs"] = dpg.add_raw_texture(DEBUG_WIDTH, DEBUG_HEIGHT, blank_signs, format=dpg.mvFormat_Float_rgba)
 
         grid_w = frame_w // 2
         grid_h = frame_h // 2
@@ -115,6 +128,8 @@ class TunerGUI:
                         self._tags["tel_throttle"] = dpg.add_text("Throttle: --", color=(0, 255, 0))
                         dpg.add_spacer(width=4)
                         self._tags["tel_sonar"] = dpg.add_text("Sonar: --", color=(150, 150, 150))
+                        dpg.add_spacer(width=4)
+                        self._tags["tel_signs"] = dpg.add_text("Signs: --", color=(150, 150, 150))
                     with dpg.group(horizontal=True, height=24):
                         self._tags["mode"] = dpg.add_button(label="Autonomous Mode", callback=self._toggle_mode, width=120)
                         self._tags["estop"] = dpg.add_button(label="Emergency Stop", callback=self._toggle_estop, width=110)
@@ -133,11 +148,11 @@ class TunerGUI:
                         dpg.add_text("Camera")
                         dpg.add_image(self._tags["tex_main"], width=grid_w, height=grid_h)
                     with dpg.group():
-                        dpg.add_text("Blur + ROI")
+                        dpg.add_text("Threshold + ROI")
                         dpg.add_image(self._tags["tex_blur"], width=grid_w, height=grid_h)
                     with dpg.group():
-                        dpg.add_text("Threshold")
-                        dpg.add_image(self._tags["tex_threshold"], width=grid_w, height=grid_h)
+                        dpg.add_text("Signs")
+                        dpg.add_image(self._tags["tex_signs"], width=grid_w, height=grid_w * 9 // 16)
 
                 with dpg.table_row():
                     with dpg.group():
@@ -205,6 +220,11 @@ class TunerGUI:
                             width=form_w,
                             callback=self._on_strip_effect,
                         )
+
+                        dpg.add_spacer(height=8)
+                        dpg.add_text("Signs", color=(130, 200, 255))
+                        self._tags["signs_policy"] = dpg.add_text("Policy: --", color=(150, 150, 150))
+                        self._tags["signs_detail"] = dpg.add_text("", color=(200, 200, 200))
 
         dpg.set_primary_window("primary", True)
         dpg.setup_dearpygui()
@@ -278,8 +298,7 @@ class TunerGUI:
 
     def update_textures(self, result: LineTrackingResult):
         dpg.set_value(self._tags["tex_main"], _frame_to_texture(result.display_frame))
-        dpg.set_value(self._tags["tex_blur"], _frame_to_texture(result.blur_frame))
-        dpg.set_value(self._tags["tex_threshold"], _frame_to_texture(result.binary_frame))
+        dpg.set_value(self._tags["tex_blur"], _frame_to_texture(result.debug_frame))
 
     def update_telemetry(self, fps: float, error: int, steering: float, throttle: float):
         dpg.set_value(self._tags["tel_fps"], f"FPS: {fps:.1f}")
@@ -299,6 +318,44 @@ class TunerGUI:
         dpg.set_value(tag, f"Sonar: {distance} [{label}]")
         dpg.configure_item(tag, color=color)
 
+    def update_signs(self, snapshot: SignSnapshot, constraint: SignConstraint, applied: bool):
+        # The worker publishes at ~10 fps and this loop runs at ~30: only
+        # upload a frame once.
+        if snapshot.frame is not None and snapshot.timestamp != self._signs_uploaded_at:
+            dpg.set_value(self._tags["tex_signs"], _frame_to_texture(snapshot.frame))
+            self._signs_uploaded_at = snapshot.timestamp
+
+        chip = self._tags["tel_signs"]
+        if not snapshot.camera_open:
+            dpg.set_value(chip, f"Signs: {snapshot.status or 'NO CAMERA'}")
+            dpg.configure_item(chip, color=(255, 80, 80))
+        elif not snapshot.detector_available:
+            dpg.set_value(chip, f"Signs: {snapshot.status or 'no model'}")
+            dpg.configure_item(chip, color=(255, 200, 0))
+        elif constraint.stale:
+            dpg.set_value(chip, f"Signs: STALE {snapshot.age(_monotonic()):.1f}s")
+            dpg.configure_item(chip, color=(255, 80, 80))
+        else:
+            seen = [_short(track) for track in snapshot.tracks if track.actionable
+                    and track.label in ("stop", "traffic_light")]
+            dpg.set_value(chip, "Signs: " + (", ".join(seen) if seen else "clear"))
+            dpg.configure_item(chip, color=(0, 255, 0) if not seen else (255, 200, 0))
+
+        cap = constraint.scale * dpg.get_value(self._tags["base_speed"])
+        text = f"Policy: {constraint.state.value}"
+        if constraint.reason:
+            text += f" - {constraint.reason}"
+        text += f" · cap {cap:.2f}"
+        if not applied:
+            text += " (not applied - manual)"
+        dpg.set_value(self._tags["signs_policy"], text)
+        dpg.configure_item(self._tags["signs_policy"], color=_POLICY_COLOUR[constraint.state])
+
+        lines = []
+        for track in snapshot.tracks:
+            lines.append(_detail(track))
+        dpg.set_value(self._tags["signs_detail"], "\n".join(lines[:6]))
+
     def is_running(self) -> bool:
         return dpg.is_dearpygui_running()
 
@@ -313,6 +370,34 @@ class TunerGUI:
 
     def shutdown(self):
         dpg.destroy_context()
+
+
+def _monotonic() -> float:
+    import time
+    return time.monotonic()
+
+
+def _distance(track) -> str:
+    return f"≈{track.distance_m:.1f} m" if track.distance_m is not None else "? m"
+
+
+def _short(track) -> str:
+    if track.label == "traffic_light":
+        return f"light {track.light_state.value} {_distance(track)}"
+    return f"{track.label} {_distance(track)}"
+
+
+def _detail(track) -> str:
+    text = f"#{track.id} {track.label}"
+    if track.rejected:
+        return f"{text} {track.light_reason}"
+    if not track.confirmed:
+        return f"{text} unconfirmed"
+    if track.label == "traffic_light":
+        text += f" {track.light_state.value}"
+    elif track.label == "delivery_sign" and track.variant:
+        text += f" {track.variant}"
+    return f"{text} {_distance(track)}"
 
 
 def _frame_to_texture(frame: np.ndarray) -> np.ndarray:

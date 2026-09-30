@@ -13,8 +13,7 @@ _WIDTH_EMA_ALPHA = 0.2
 @dataclass
 class LineTrackingResult:
     display_frame: np.ndarray
-    blur_frame: np.ndarray
-    binary_frame: np.ndarray
+    debug_frame: np.ndarray
     lane_offset: Optional[int]
     lane_curvature: Optional[float]
 
@@ -53,9 +52,9 @@ class LineTracker:
         roi_y1 = round(height * min(1.0, params.roi_y1))
         roi_center_x = (roi_x0 + roi_x1) // 2
 
-        blur_display = cv.cvtColor(blur, cv.COLOR_GRAY2BGR)
-        cv.rectangle(blur_display, (roi_x0, roi_y0), (roi_x1, roi_y1), (0, 255, 0), 1)
-        cv.line(blur_display, (roi_center_x, roi_y0), (roi_center_x, roi_y1), (255, 255, 255), 1)
+        debug = cv.cvtColor(binary, cv.COLOR_GRAY2BGR)
+        cv.rectangle(debug, (roi_x0, roi_y0), (roi_x1, roi_y1), (0, 255, 0), 1)
+        cv.line(debug, (roi_center_x, roi_y0), (roi_center_x, roi_y1), (255, 255, 255), 1)
 
         scan_ys = np.linspace(roi_y0, roi_y1, max(1, params.scan_lines), dtype=int)
         scan_origin = self._prev_track_center if self._prev_track_center is not None else center_x
@@ -83,7 +82,7 @@ class LineTracker:
             if left_x != -1 and right_x != -1:
                 center = (left_x + right_x) // 2
                 widths.append(right_x - left_x)
-                cv.line(blur_display, (left_x, sy), (right_x, sy), (0, 255, 255), 1)
+                cv.line(debug, (left_x, sy), (right_x, sy), (0, 255, 255), 1)
             elif left_x != -1 and self._half_lane_width is not None:
                 center = int(left_x + self._half_lane_width)
             elif right_x != -1 and self._half_lane_width is not None:
@@ -117,7 +116,7 @@ class LineTracker:
             smoothed_x = int(self._smoothed_center)
             lane_offset = smoothed_x - roi_center_x
 
-            cv.line(blur_display, (smoothed_x, roi_y0), (smoothed_x, roi_y1), (0, 0, 255), 2)
+            cv.line(debug, (smoothed_x, roi_y0), (smoothed_x, roi_y1), (0, 0, 255), 2)
 
             # Curvature = lateral trend of the centerline across the ROI height,
             # expressed as the slope dx/dy (x-pixels per y-pixel). As a ratio it
@@ -139,12 +138,11 @@ class LineTracker:
                 far_y = min(center_ys)
                 near_x = int(np.polyval(fit, near_y))
                 far_x = int(np.polyval(fit, far_y))
-                cv.line(blur_display, (near_x, near_y), (far_x, far_y), (255, 0, 255), 1)
+                cv.line(debug, (near_x, near_y), (far_x, far_y), (255, 0, 255), 1)
 
         return LineTrackingResult(
             display_frame=frame,
-            blur_frame=blur_display,
-            binary_frame=cv.cvtColor(binary, cv.COLOR_GRAY2BGR),
+            debug_frame=debug,
             lane_offset=lane_offset,
             lane_curvature=lane_curvature,
         )

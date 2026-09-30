@@ -67,6 +67,14 @@ class Autonomous:
         self._last_steering = 0.0
         self._last_throttle = 0.0
 
+    def crawl_speed(self, params: Config) -> float:
+        """The slowest throttle the car still moves at: the sharp-bend floor.
+
+        Anything a policy ramps the throttle down to has to stay at or above
+        this, or the car stalls short of where the policy wanted it to stop.
+        """
+        return params.min_speed * _SHARP_CURVE_FLOOR
+
     def obstacle_scale(self, sonar) -> float:
         if sonar is None:
             return 1.0

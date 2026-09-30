@@ -10,8 +10,18 @@ from config import Config
 from lights import LightsController
 from perception.line_tracking import LineTracker
 from input.autonomous import Autonomous
+from input.sign_policy import SignConstraint, SignPolicy
+from perception.sign_worker import SignWorker
 from input.ps5 import PS5Controller
 from gui import TunerGUI
+
+
+# Sign perception runs on its own thread with its own camera (never index 0,
+# the drive camera). No model at SIGN_MODEL_PATH means no sign detection and
+# an unchanged car. Confidence is the value measured in sign-detection.md.
+SIGN_CAM_INDICES = (0, 2, 3)
+SIGN_MODEL_PATH = "models/signs.onnx"
+SIGN_CONFIDENCE = 0.35
 
 
 def draw_steering_bar(frame, steering):
@@ -48,7 +58,7 @@ def draw_throttle_bar(frame, throttle):
             cv.rectangle(frame, (bar_x - 5, bar_cy), (bar_x + 5, bar_cy + fill_h), color, -1)
 
 
-cap = cv.VideoCapture(0)
+cap = cv.VideoCapture(2)
 if not cap.isOpened():
     print("Error: Could not open video.")
     exit()
@@ -70,18 +80,22 @@ tracker = LineTracker()
 autonomous = Autonomous()
 ps5 = PS5Controller()
 lights = LightsController()
+sign_worker = SignWorker(SIGN_CAM_INDICES, SIGN_MODEL_PATH, SIGN_CONFIDENCE)
+sign_policy = SignPolicy()
+sign_worker.start()
 
 gui.set_pid_reset_callback(autonomous.reset)
 gui.set_master_port_callback(arduino.set_master_port)
 gui.set_lights_controller(lights)
 
 fps = 0.0
-prev_time = time.time()
+prev_time = time.monotonic()
 prev_stopped = False
 last_sonar = None
+held_steering = None
 
 while gui.is_running():
-    now = time.time()
+    now = time.monotonic()
     dt = now - prev_time
     prev_time = now
 
@@ -104,9 +118,12 @@ while gui.is_running():
         prev_stopped = True
         gui.update_sonar(last_sonar)
         autonomous.reset()
+        sign_policy.reset()
+        held_steering = None
         lights.update(0.0, estopped=True, autonomous=gui.is_autonomous())
         lights_output = lights.compute()
         arduino.send_lights(lights_output)
+        gui.update_signs(sign_worker.get_snapshot(), SignConstraint(reason="e-stop"), applied=False)
         gui.render_frame()
         continue
     prev_stopped = False
@@ -129,10 +146,34 @@ while gui.is_running():
         steering, throttle = ps5.poll()
         throttle *= params.base_speed
 
+    # One lock, then pure arithmetic: the control loop never waits on the
+    # sign camera or the model.
+    snapshot = sign_worker.get_snapshot()
+    constraint = sign_policy.update(snapshot, now)
+    if gui.is_autonomous():
+        if constraint.hold or throttle <= 0.0:
+            throttle *= constraint.scale
+        elif constraint.scale < 1.0:
+            # Slow down, but never below the speed the car still moves at:
+            # a ramp that bottoms out under the motors' minimum PWM parks
+            # the car above the stop line, where the policy never reaches
+            # its hold and so never releases.
+            throttle = max(throttle * constraint.scale, autonomous.crawl_speed(params))
+        if constraint.hold:
+            # Stopped: keep sending the same steering so the PID's chase of
+            # threshold jitter on a static frame cannot kick the wheel around.
+            # The PID keeps running with its output discarded; no reset on
+            # release, so there is no derivative spike.
+            if held_steering is None:
+                held_steering = steering
+            steering = held_steering
+        else:
+            held_steering = None
+
     draw_steering_bar(perc.display_frame, steering)
     draw_throttle_bar(perc.display_frame, throttle)
 
-    obstacle_blocked = gui.is_autonomous() and last_sonar is not None and last_sonar.blocked
+    obstacle_blocked = gui.is_autonomous() and ((last_sonar is not None and last_sonar.blocked) or constraint.hold)
     lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(), obstacle_blocked=obstacle_blocked)
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
@@ -141,9 +182,11 @@ while gui.is_running():
     gui.update_textures(perc)
     gui.update_telemetry(fps, perc.lane_offset or 0, steering, throttle)
     gui.update_sonar(last_sonar)
+    gui.update_signs(snapshot, constraint, applied=gui.is_autonomous())
     gui.render_frame()
 
 cap.release()
+sign_worker.close()
 ps5.shutdown()
 arduino.close()
 gui.shutdown()

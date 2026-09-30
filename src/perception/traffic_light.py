@@ -112,6 +112,33 @@ EMISSION_FLOOR = 0.43
 # so this is a framing choice rather than a knob to turn.
 CROP_MARGIN = 0.30
 
+# When the glow has erased the housing entirely there are no cells to find, and
+# the reader falls back on where the blown-out core sits inside the box the
+# detector drew. Two things gate that fallback, both measured on the venue
+# photographs:
+#
+#   * something in the box must actually be clipping the sensor. A lit lamp
+#     reaches 253-254 at the 97th percentile in every one of the 30 lit photos;
+#     an unlit housing reaches 183 at most, over 8. The gap is enormous and
+#     this sits in the middle of it.
+#   * the blown region must be *one lamp*, not the whole box. A cell is two
+#     radii of a housing that is 6.98 radii tall, so a single lamp plus its
+#     bloom stays well inside half the height; a bare lamp filling the box does
+#     not, and must not be read as a traffic light.
+_SATURATED = 230
+_BLOWN_SPREAD = 0.45
+
+# YELLOW is only ever answered when the glow is not red. Red versus yellow is
+# otherwise decided by position alone, and a stack fitted one cell too high -
+# a phantom cell in the red glow above the housing - turns the red lamp into
+# the middle one. The policy lets a yellow roll through at crawl speed, so that
+# is the misread that hurts. Measured over the whole crop, so it does not rest
+# on the fit it is checking: every red lamp in every shoot has a glow at least
+# 0.89 red rather than amber; yellows under ordinary light reach 0.73 at most.
+# Yellows in front of a red-lit stage also read red, and become RED here - a
+# needless stop, before a lamp that turns red next anyway.
+_RED_GLOW = 0.80
+
 # A pixel this bright carries no hue worth reading - it is the blown core, or
 # the part of the halo that has also clipped. Measured: the core sits at
 # saturation ~5 whatever colour is lit.
@@ -129,6 +156,9 @@ class CellStack:
     # housing off. Never inferred from weak evidence - only from geometry.
     clipped: tuple[int, ...] = ()
     score: float = 0.0
+    # True when the cells were taken from the crop's geometry rather than
+    # found in it, because the lamp had washed the housing out.
+    assumed: bool = False
 
     @property
     def found(self) -> int:
@@ -183,11 +213,25 @@ def read_light_state(crop: np.ndarray) -> LightReading:
         return LightReading(reason="crop too small")
 
     work, scale = _to_work_height(crop)
+    reading = _read(work, scale)
+    # Only a yellow whose own halo voted warm: a halo with no colour says
+    # nothing about the lamp, and the crop's glow can then be a red-lit stage
+    # behind a green lamp the fit got wrong.
+    warm_halo = reading.warm_votes > reading.green_votes and reading.colour_evidence > 0.05
+    if reading.state is LightState.YELLOW and warm_halo:
+        share = _red_glow_share(work)
+        if share >= _RED_GLOW:
+            reading.state = LightState.RED
+            reading.reason = f"glow is {share:.0%} red, not amber - {reading.reason}"
+    return reading
+
+
+def _read(work: np.ndarray, scale: float) -> LightReading:
     gray = _blur(cv.cvtColor(work, cv.COLOR_BGR2GRAY))
 
     stack = find_cell_stack(work)
     if stack is None:
-        return LightReading(reason="no three-cell stack")
+        return _read_by_blown_core(work, gray, scale)
 
     emission = _emission_per_cell(gray, stack)
     reading = LightReading(
@@ -212,6 +256,118 @@ def read_light_state(crop: np.ndarray) -> LightReading:
     _decide(reading, lit, colour_family)
     reading.debug = _debug_masks(work, stack, lit)
     return reading
+
+
+def _read_by_blown_core(work: np.ndarray, gray: np.ndarray, scale: float) -> LightReading:
+    """Last resort: read the lamp from where its blown core sits in the box.
+
+    A lamp bright enough to erase its own housing leaves nothing for the cell
+    finder to work with - measured on the yellow frames of the approach clip,
+    every candidate disc is the flooded region itself and not one of the three
+    hypotheses clears the contrast test, because the premise that a cover is
+    lighter than the body around it has stopped being true.
+
+    What survives is position. The crop is the housing box grown by
+    CROP_MARGIN, so the three cells sit at fixed fractions of its height -
+    0.22, 0.53 and 0.84, straight out of the housing geometry above. Measured
+    over the clip, the blown core's centroid lands at 0.18-0.26 for red,
+    0.49-0.51 for yellow and 0.78-0.83 for green: three tight, well separated
+    clusters.
+
+    This is emphatically *not* the old "slice the box into three bands" bug,
+    which rounded a 2.3:1 housing into two and lost the middle lamp entirely.
+    Nothing is rounded: a continuous centroid is compared against three known
+    positions, and an answer is only given when it is clearly nearest to one of
+    them.
+    """
+    height, width = gray.shape
+    inset = CROP_MARGIN / (1 + 2 * CROP_MARGIN)
+    top, bottom = inset * height, (1 - inset) * height
+    box_height = max(1.0, bottom - top)
+
+    inner = gray[int(top):int(bottom), int(inset * width):int((1 - inset) * width)]
+    if inner.size < 64:
+        return LightReading(reason="no three-cell stack")
+
+    level = float(np.percentile(inner, 97))
+    if level < _SATURATED:
+        return LightReading(reason="no three-cell stack, and nothing in the box is lit")
+
+    rows, _ = np.nonzero(gray >= level)
+    if rows.size < 20:
+        return LightReading(reason="no three-cell stack")
+    centre = (float(rows.mean()) - top) / box_height
+    spread = float(np.percentile(rows, 90) - np.percentile(rows, 10)) / box_height
+    if spread > _BLOWN_SPREAD:
+        return LightReading(
+            reason=f"no three-cell stack, and the bright region spans {spread:.0%} "
+                   f"of the box - one lamp does not")
+
+    # This path may only ever answer YELLOW, and that restriction is the whole
+    # reason it is safe to have.
+    #
+    # Yellow is the one state the main path structurally cannot read: it is the
+    # middle lamp, so its flood erases the covers on *both* sides and no three
+    # cells survive. Red and green flood one neighbour and are read correctly
+    # 12/12 and 9/9. So the gap is yellow-shaped, and a fallback that can only
+    # say yellow fills exactly it.
+    #
+    # It also bounds the damage. Position alone is not reliable here - on the
+    # two closest venue photos the housing is cut off by the frame, the
+    # fractions below mean nothing, and the blown core lands at 0.32, nearer
+    # red's 0.22 than yellow's 0.53. Allowed to answer freely this path calls
+    # both of them RED, confidently, turning two safe refusals into two wrong
+    # answers. Restricted to yellow it refuses them instead, and it can never
+    # produce GREEN. YELLOW on a red lamp is not harmless - the policy lets a
+    # yellow roll through at crawl speed - which is what the red-glow check in
+    # read_light_state is for; it covers this path too.
+    offsets = _cell_offsets()
+    lit = 1
+    spacing = offsets[1] - offsets[0]
+    distance = abs(centre - offsets[lit])
+    if distance > 0.4 * spacing:
+        return LightReading(
+            reason=f"no three-cell stack, and the bright core sits at {centre:.2f} "
+                   f"of the box, not the middle lamp's {offsets[lit]:.2f}")
+
+    stack = _stack_from_box(width, height)
+    reading = LightReading(cells=_rescale(stack, scale), lit_index=lit)
+    reading.position_evidence = float(np.clip(1.0 - distance / (0.4 * spacing), 0.0, 1.0))
+
+    warm, green = _halo_votes(work, stack, lit)
+    total = warm + green
+    reading.warm_votes, reading.green_votes = warm, green
+    reading.colour_evidence = abs(warm - green) / total if total > 0 else 0.0
+    family = None if total <= 0 else ("warm" if warm > green else "green")
+
+    _decide(reading, lit, family)
+    # Half credit: this path has one cue where the main one has two.
+    reading.confidence = round(0.5 * reading.confidence, 3)
+    reading.reason = f"housing washed out - {reading.reason}, core at {centre:.2f}"
+    reading.debug = _debug_masks(work, stack, lit)
+    return reading
+
+
+def _cell_offsets() -> tuple[float, float, float]:
+    """Where the three cells sit down the housing, as fractions of its height.
+
+    Derived from the housing geometry, not measured separately: the body is
+    HOUSING_MARGIN_TOP + 2 spacings + HOUSING_MARGIN_BOTTOM radii tall.
+    """
+    total = HOUSING_MARGIN_TOP + HOUSING_MARGIN_BOTTOM + 2 * SPACING_OVER_RADIUS
+    return tuple((HOUSING_MARGIN_TOP + i * SPACING_OVER_RADIUS) / total for i in range(3))
+
+
+def _stack_from_box(width: int, height: int) -> CellStack:
+    """The stack the crop's own geometry implies, when the image will not show
+    one. Flagged by `assumed` so nothing downstream mistakes it for a fit."""
+    inset = CROP_MARGIN / (1 + 2 * CROP_MARGIN)
+    top, bottom = inset * height, (1 - inset) * height
+    box_height = bottom - top
+    total = HOUSING_MARGIN_TOP + HOUSING_MARGIN_BOTTOM + 2 * SPACING_OVER_RADIUS
+    radius = box_height / total
+    centres = tuple(top + offset * box_height for offset in _cell_offsets())
+    return CellStack(width / 2.0, centres, radius, (0.0, 0.0, 0.0), assumed=True)
 
 
 # --------------------------------------------------------------------------
@@ -528,6 +684,25 @@ def _halo_votes(bgr: np.ndarray, stack: CellStack, lit: int) -> tuple[float, flo
     return float(weight[warm].sum()), float(weight[green].sum())
 
 
+def _red_glow_share(bgr: np.ndarray) -> float:
+    """How much of the crop's coloured glow is red rather than amber, 0..1.
+
+    The whole crop, not the halo of one cell, because the cell is what it
+    checks. Only pixels with real colour count - saturation 90 and up, neither
+    dark nor blown - weighted by saturation as in _halo_votes. A crop with no
+    colour at all says 0: no evidence against yellow.
+    """
+    hsv = cv.cvtColor(bgr, cv.COLOR_BGR2HSV)
+    hue = hsv[:, :, 0].astype(np.int32)
+    sat = hsv[:, :, 1].astype(np.float32)
+    val = hsv[:, :, 2]
+    coloured = (sat >= 90) & (val >= 60) & (val < _BLOWN)
+    weight = sat / 255.0
+    red = float(weight[coloured & ((hue <= 7) | (hue >= 170))].sum())
+    amber = float(weight[coloured & (hue >= 11) & (hue <= 35)].sum())
+    return red / (red + amber) if red + amber > 0 else 0.0
+
+
 def _halo_mask(shape, stack: CellStack, lit: int) -> Optional[np.ndarray]:
     height, width = shape
     cy = stack.centres[lit]
@@ -612,6 +787,7 @@ def _rescale(stack: CellStack, scale: float) -> CellStack:
         stack.contrast,
         stack.clipped,
         stack.score,
+        stack.assumed,
     )
 
 

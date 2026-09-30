@@ -133,7 +133,10 @@ The reader, in order:
    removes the need for a saturation floor, which is the constant that cannot
    be set once yellow is in the room — yellow's ring peaks near S=98 where red
    reaches 177.
-5. **Colour says "warm or green" only.** Position separates red from yellow.
+5. **Colour says "warm or green" only.** Position separates red from yellow -
+   with one veto: YELLOW is never answered when the whole crop's glow is red
+   rather than amber (round 5, below). Colour can prove "not yellow"; it can
+   never prove "red", because a yellow in front of a red-lit stage glows red.
 6. **Decision.** Position and colour are weighted by how much evidence each
    carries. If they disagree, or the margin is thin, or no cell verifies, or
    nothing is emitting, the answer is **`UNKNOWN`** — a first-class answer, not
@@ -521,17 +524,184 @@ Lowering the runtime threshold does not help: the confidences are 0.00, not
 0.2. The fix is real close-up frames, which is what
 `assets/real/images/lightning/` and `.../signs/` now hold.
 
+### Round 3: close range fixed, far range traded away
+
+Trained on the 63 hand-labelled stills from the 2026-09-22 shoot, wired in via
+`assets/real_train/`.
+
+| recall by apparent height, on the untouched 38 venue photos | round 2 | round 3 |
+|---|---|---|
+| far, 134-136 px | 4/8 | **1/8** |
+| med, 285-302 px | 18/18 | 18/18 |
+| close and very close, 321-374 px | 7/12 | **12/12** |
+| end to end, lit photos read correctly | 27/30 | **28/30** |
+
+**The close-range blind spot is closed.** It was also a straight trade: the far
+band went the other way, and not because it fell below the threshold - it is
+1/8 even at 0.15 and the raw scores are 0.00.
+
+The cause is the training size distribution, measured over 370 boxes:
+
+| band | round 3 | after the fix below |
+|---|---|---|
+| 0-90 px | 20.0 % | 32.4 % |
+| **90-180 px** | **10.3 %** | **20.0 %** |
+| 180-320 px | 27.0 % | 20.4 % |
+| 320+ px | 42.7 % | 27.3 % |
+
+Every new still is a close-up, and `real_sample` can only make an object
+*larger* - it crops into a frame and blows the crop up, so it cannot zoom out
+past the frame's edge. The 90-180 px band, which is exactly where the eval's
+distant photos sit, was left at a tenth of the training boxes.
+
+`real_patch_paste` fixes it by lifting the object plus a couple of box-widths
+of the scene around it - which is where its spill lives - and pasting that at a
+smaller apparent size onto a different background. It is a better small-object
+sample than an alpha cutout, not a worse one, because the spill is precisely
+what a cutout throws away and what round 1 died without. The patch is matched
+to the destination's exposure at its rim and faded radially rather than
+rectangularly; a square seam is a shortcut a detector will learn in place of
+the object.
+
+Two other things found and fixed while wiring the stills in, both of which had
+been silently corrupting round 2's real data as well:
+
+- real frames were getting the *full* synthetic degradation on top of the real
+  camera's, so a red-lit stage pushed another 1.45x in gain arrived as a white
+  rectangle with a box around it. Photographs now get a gentle pass.
+- `real_sample` resized an arbitrary window to 1280x720 without preserving
+  aspect, stretching every object. Traffic lights came out wider than tall.
+  After the fix the augmented aspect is median 2.12 with 97 % between 1.8 and
+  3.0, against real housings at 2.2-2.45.
+
+### Round 4: the trade resolved
+
+`real_patch_paste` plus the spotlight label removed from `cam0_000210`.
+
+| on the untouched 38 venue photos, at the runtime threshold 0.35 | r2 | r3 | **r4** |
+|---|---|---|---|
+| far, 134-136 px | 5/8 | 1/8 | **6/8** |
+| med, 285-302 px | 18/18 | 18/18 | **18/18** |
+| close and very, 321-374 px | 8/12 | 12/12 | **12/12** |
+| total | 31/38 | 31/38 | **36/38** |
+
+Recall **0.95**, best F1 **0.973**, and **zero false positives** anywhere in the
+sweep from 0.10 to 0.45 - so the runtime threshold sits in the middle of a wide
+plateau rather than on a cliff. Latency 8 ms.
+
+`probe_signs` check (c), the only one that cannot mark its own homework,
+**passes for the first time**: 36/38, recall 0.95, lit 0.94, against a 0.9
+floor. Bare emitters 0.00.
+
+End to end the detector now supplies **36 of 38 boxes itself**, against 12 in
+round 2, and on the approach clip the hoodie false positives are gone entirely
+- 26 `delivery_sign` boxes in round 3, none in round 4.
+
+**The one hole: yellow at mid range.** On the clip's yellow phase (f55-73) round
+2 scored 0.92-0.93 and rounds 3 and 4 score 0.00. It is not a size problem - the
+light is 110 px at f54 and 151 px at f76 and both are found at 0.90 - it is the
+yellow appearance, which is the thinnest state in training: 2 of the 37 clip
+frames and one group of stills. The venue photos do not show it because their
+yellows are read 7/9 by the state reader either way.
+
+Note also that `probe_signs` still exits non-zero on check (a), entirely at
+40-80 px. A 40 px housing is 17 px wide, which is below anything the state
+reader can work with - it needs roughly 90 px to find three cells. That band is
+testing something the system cannot use.
+
+### The second car-camera shoot: round 4 measured on it, before retraining
+
+Held out in `assets/real`: `signs2/` (40 frames, stop and detour) and
+`lighting2/` (frames 330-520 of the light shoot, the second room, states in
+`states.txt`). The rest of the light shoot is `assets/real_train/lighting2/`.
+Split by clip segment, never by frame - frames 10 apart are near-duplicates.
+
+| round 4, 96 photos at 0.30 | |
+|---|---|
+| detour | **17/17** |
+| stop | **21/23** - both misses blurred close-ups cut by the frame edge |
+| traffic light found | 52/56 |
+| false positives | 3 `delivery_sign` on stage fixtures, 1 `traffic_light` |
+| yellow in `lighting2/` found by the detector | **0/2** (read correctly on hand boxes) |
+
+The first honest number for `stop` and `detour`, and both are strong.
+
+**Stage fixtures are `delivery_sign`.** Switched off, the venue's round LED cans
+are a pale disc with dark marks inside, which at 20-80 px is what a delivery
+sign is. Pasted into dark frames the round-4 model calls them `delivery_sign`
+at >= 0.35 in 30-52 % of pastes at 24-80 px, up to 0.95. Harmless today - the
+policy never acts on `delivery_sign`, and every one seen on the car was under
+the variant reader's 60 px floor and refused - but real. The fixtures are now
+cut out in `assets/distractor_cutouts/` and pasted unlabelled; car-camera
+footage of them is the better fix and is still to be shot.
+
+**Red read as yellow, once.** `lighting2/cam0_000370`: the cell fitter put a
+phantom cell in the glow above the red lamp with its radius inflated (21 vs
+16), so the red lamp became the middle cell. Colour only separates warm from
+green, so red versus yellow is position alone. The right stack was the runner-up,
+0.188 against 0.205. With states written for the 92 training frames too, the
+reader alone is 247/274 over every frame and box source, and this is the only
+misread in the dangerous direction; the rest are yellow read as red (a needless
+stop) or refusals.
+
+A constraint that the fitted stack's implied housing must match the box
+(|edge offset| <= T box heights) was simulated and **not shipped**: T=0.15
+fixes it and four red refusals (252/274, no dangerous reads), but 370's offset
+is 0.17, T=0.10 and T=0.20 are both worse, and many correct green reads rest
+on wild fits the rule would reject without its fallback. That is a threshold
+fitted to one frame. What makes it tolerable is the tracker: a state commits on
+3 of the last 5 readings and UNKNOWN never votes, so an isolated misread between
+two reds cannot flip a committed RED - and 370 is isolated.
+
+### Round 5: the fixtures and the second shoot's training frames
+
+Trained with `assets/distractor_cutouts/` and `assets/real_train/lighting2/`.
+On the 96 held-out photos:
+
+| | r4 | **r5** |
+|---|---|---|
+| best F1 | 0.947 @ 0.30 | **0.990** @ 0.20 (0.984 at the runtime 0.35) |
+| traffic light found | 52/56 | **56/56** |
+| stop / detour | 21/23, 17/17 | **22/23**, 17/17 |
+| `delivery_sign` false positives (stage fixtures) | 3 | **0** |
+| probe (c) real-photo recall at 0.35 | 0.93 | **0.98** |
+| approach clip, yellow phase f55-73 found | **0/19** | **19/19**, 18 read YELLOW |
+| latency | 8 ms | 10 ms |
+
+The clip now reads GREEN -> YELLOW -> RED -> GREEN end to end. Probe (a) still
+fails, almost entirely at 40 px; the one large-size miss is an unlit housing at
+560 px, which the policy ignores either way.
+
+**Red read as yellow came back, twice in a row.** With r5's boxes both
+`lighting2/cam0_000360` and `370` read YELLOW - 360 flipped from RED on a 2 px
+change of box. Consecutive samples 10 frames apart are about a third of a
+second of yellow, enough to pass 3-of-5, so the tracker no longer covers it.
+
+The fix is colour, used in the one direction it is reliable in. Red versus
+yellow had been position alone; the whole crop's glow says whether it is red or
+amber, and every red lamp in every shoot measures >= 0.89 red, yellows under
+ordinary light <= 0.73. Yellows in front of the first shoot's red-lit stage
+measure red too, so the glow cannot prove red - but it can prove *not yellow*.
+`read_light_state` now only answers YELLOW when the glow is under 0.80 red;
+otherwise RED. Only when the lamp's own halo voted warm: a colourless halo in
+front of a red stage (a green lamp the fit got wrong, `lighting/cam0_000050`)
+would otherwise have become RED at a green.
+
+| state reader, every grade | red read as yellow | red <-> green |
+|---|---|---|
+| before | 2 (r5 boxes), 1 (r4 boxes, hand) | 0 |
+| after | **0** | **0** |
+
+Venue plus second shoot 54/56 with either model and with hand boxes; every
+yellow is still read. The cost is yellow read as red under the red stage
+(`lighting/cam0_000120`), a needless stop before a lamp that turns red next.
+
 ### Not measured at all yet
 
-
-- **No real photograph of any printed sign exists anywhere in this project.**
-  Every `stop`, `detour` and `delivery_sign` instance the code has ever seen is
-  a flat paste of one artwork file. Until that shoot happens, `assets/real`
-  says nothing whatsoever about those three classes, and this write-up will not
-  round up.
-- No model has been trained on this branch, so there is no detector number for
-  the new class list, and no `n`-versus-`s` decision.
-- Nothing has been run on the car's own camera.
+- **`delivery_sign` has no real photograph.** Every instance the code has
+  seen is a paste of the artwork, so its recall on the car is unknown, and its
+  only real-photo numbers are false positives.
+- Nothing has been measured in a room other than the venue.
 
 ---
 
@@ -595,16 +765,32 @@ the frame width the camera actually delivers. With HFOV 63.3° at 1280 px, a
 or bottom edge are clipped and do not update the distance.
 
 **Policy** (`src/input/sign_policy.py`). Same shape as the sonar's
-`obstacle_scale`: a stop sign or a RED/YELLOW light ramps the throttle from
-1.0 at 3 m to 0.0 at 2 m. A stop then holds for 0.5 s and dwells to 3.5 s
+`obstacle_scale`: a stop sign or a RED light ramps the throttle from
+1.0 at `_SLOW_DISTANCE_M` (3 m) to 0.0 at `_STOP_DISTANCE_M` (2 m as designed,
+1.5 m after the first car test on 2026-09-23). A stop then holds for 0.5 s and dwells to 3.5 s
 total, distance ignored once holding so jitter across the line cannot reopen
-the ramp. A light gate can only form between 2 m and 3 m (one first seen
-closer is waved through) and waits for a committed GREEN; a stale snapshot,
+the ramp. YELLOW only slows: the same ramp, floored at the crawl speed by the loop,
+and never a hold; a yellow that turns red while the car can still stop gates
+like any red. A light gate forms anywhere inside 3 m; a light revealed by a curve already
+inside the line holds at once (the car stops late rather than not at all),
+and only one first seen under 0.8 m, where braking would put the car under
+it, is waved through. Stop signs confirm on 2 of 3 frames instead of 3 of 5
+for the same reason and waits for a committed GREEN; a stale snapshot,
 losing the track for 2 s, or the 10 s ceiling also end it. Every hold ends.
 A sign is consumed by track id once acted on, every stop id still in view at
 release is consumed with it, and for 3 s after any release nothing within
 2.5 m may start a new one. E-stop drops the active hold but keeps what was
 consumed. Detour and delivery signs are reported, never acted on.
+
+**Why the ramp has a floor.** On the car (2026-09-23) the ramp parked the
+car above the line: as the scale fell the PWM dropped under what the motors
+need to move, the car stalled at ≈2.4 m estimated, the policy never saw
+≤ 2 m, never held, never released, and with throttle still ≈0.25 the brake
+lights stayed off. Two fixes, no knobs: while SLOWING the loop never sends
+less than `Autonomous.crawl_speed()` (the sharp-bend floor, `min_speed ×
+0.75`), so the car keeps creeping to the line; and an approach that has not
+reached the line after 8 s holds where it is, so every approach ends in a
+stop and a release. The policy logs every commit, hold and release at INFO.
 
 **Steering while stopped.** `obstacle_scale` zeroes throttle but the PID keeps
 chasing threshold jitter on a static frame, and the firmware's minimum move

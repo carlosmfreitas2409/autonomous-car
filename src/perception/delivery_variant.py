@@ -54,11 +54,12 @@ HOLES_TO_VARIANT = {0: "C", 1: "A", 2: "B"}
 # Signs shorter than this are not read at all - the reader reports
 # `delivery_sign` and nothing more, and the car reads it again from closer.
 # Set by tools/eval_delivery_variant.py, which measures where the fused answer
-# first reaches 0.95 and stays there: 110 px, which for a 15 cm sign on this
-# camera is about 1.4 m. Below it the reader mostly refuses rather than errs -
-# wrong answers are under 2 % from 34 px up - but it is not accurate enough to
-# turn into a bay on.
-MIN_CROP_HEIGHT = 110
+# first reaches 0.95 and stays there. Two seeds agree on 60 px, which for a
+# 15 cm sign on a camera that puts a 50 cm housing at 260 px from 2 m is about
+# 2.6 m. It was 110 px until SIDES_ONLY_MARGIN stopped a weak side count
+# answering on its own: refusing those took `wrong` to zero above 48 px, and
+# the floor is set by where wrong answers stop, not where refusals do.
+MIN_CROP_HEIGHT = 60
 
 # Where the two cues swap places. Measured by tools/eval_delivery_variant.py:
 # below this the silhouette is right more often than the letter, above it the
@@ -66,6 +67,10 @@ MIN_CROP_HEIGHT = 110
 # question the brief and the older write-up disagreed about: the silhouette
 # survives further out, and by 110 px the letter has overtaken it.
 CUE_CROSSOVER = 80
+
+# What the side count has to beat when it is the only cue that read. Just above
+# the 95th percentile of margins seen when the side count was *wrong* (1.68).
+SIDES_ONLY_MARGIN = 1.8
 
 # Work at 96 px tall at least: below that the face has no outline to sample and
 # the glyph has no holes to count. Capped, because past ~220 px the extra
@@ -455,6 +460,16 @@ def _fuse(reading: VariantReading, sign_height: float) -> None:
         reading.reason = "letter only - no side count"
         return
     if letter_variant is None:
+        # One cue speaking alone has to speak clearly. Measured on rendered
+        # signs: when the side count is right its harmonic beats the runner-up
+        # by 3.25x at the median, and when it is wrong by 1.23x, p95 1.68x. A
+        # grey hoodie shoulder - which the detector offered as a delivery sign
+        # on 10 % of a real clip - scores 1.1 to 1.4x. Below this floor the
+        # shape is not evidence of anything.
+        if reading.sides_margin < SIDES_ONLY_MARGIN:
+            reading.reason = (f"only the {reading.sides}-side count, and it won by "
+                              f"{reading.sides_margin:.1f}x - not enough alone")
+            return
         reading.variant = sides_variant
         reading.confidence = round(min(1.0, 0.25 * reading.sides_margin), 3)
         reading.reason = "sides only - letter unreadable"

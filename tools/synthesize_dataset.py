@@ -5,12 +5,15 @@ Compositing rather than hand-labelling, because the paste location *is* the
 label: labelling costs nothing and box tightness is exact. What it buys in
 volume it has to earn back in honesty, so three things here are not optional.
 
-**Every scale.** Per-class, because one range cannot fit both: a ~50 cm light
-housing is ~260 px at 2 m and ~520 px at 1 m, while a 15 cm delivery sign can
-never exceed ~200 px in a 720p frame before the car has driven past it. The
-most expensive mistake in this project's record was a 280 px cap on the light -
-confidence measured 0.97 at 260 px, 0.18 at 400 px and 0.00 at 500 px, so the
-housing vanished exactly where the car has to stop.
+**Every scale.** The most expensive mistake in this project's record was a
+280 px cap on the light - confidence measured 0.97 at 260 px, 0.18 at 400 px
+and 0.00 at 500 px, so the housing vanished exactly where the car has to stop.
+It happened twice: the signs were capped at 260 px on the belief that they were
+15 cm, and the printed ones are 43 cm - ~224 px at the 2 m stop line, ~450 px
+at 1 m. Round 5 found real delivery signs at 0.97 up to ~245 px and not at all
+from ~330 px, and pasted stop and delivery artwork scored 0.00 at 480 px. The
+top of each range is the object at the policy's 0.8 m pass distance: ~560 px
+for a sign, 640 for the 50 cm housing.
 
 **A lit lamp lights the room, not just itself.** The first model trained from
 this file scored 0.96 on its own pasted cutouts and **0.000** on the real photo
@@ -69,9 +72,9 @@ FRAME_SIZE = (1280, 720)
 # Apparent height in pixels, per class. See the module docstring.
 PASTE_HEIGHT = {
     "traffic_light": (22, 640),
-    "delivery_sign": (22, 260),
-    "detour": (22, 260),
-    "stop": (22, 260),
+    "delivery_sign": (22, 560),
+    "detour": (22, 560),
+    "stop": (22, 560),
 }
 
 NO_SIGN_SHARE = 1 / 6
