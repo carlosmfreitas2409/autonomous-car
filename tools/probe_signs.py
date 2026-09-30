@@ -28,7 +28,7 @@ reach the runtime threshold. The record has a bare red disc called `stop` at
 0.86 and a green disc called `traffic_light` at 0.63. A vertical stack of three
 lamps is deliberately not probed: that is the light's own silhouette.
 
-    python3 tools/probe_signs.py --model models/signs.onnx --confidence 0.35
+    python3 tools/probe_signs.py --model models/signs.onnx --confidence 0.5
 """
 
 import argparse
@@ -60,7 +60,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", default="models/signs.onnx")
-    parser.add_argument("--confidence", type=float, default=0.35,
+    parser.add_argument("--confidence", type=float, default=0.5,
                         help="the runtime threshold the distractors must not reach")
     parser.add_argument("--cutouts", default="assets/sign_cutouts/traffic_light")
     parser.add_argument("--backgrounds", nargs="+", default=["dataset/backgrounds"])

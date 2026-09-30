@@ -26,7 +26,7 @@ import argparse
 import glob
 import sys
 from pathlib import Path
-
+from time import sleep
 import cv2 as cv
 import numpy as np
 

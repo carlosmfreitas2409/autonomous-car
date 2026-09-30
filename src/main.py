@@ -26,7 +26,7 @@ from gui import TunerGUI
 # unchanged car. Confidence is the value measured in sign-detection.md.
 SIGN_CAM_INDICES = (0, 1, 2, 3)
 SIGN_MODEL_PATH = "models/signs.onnx"
-SIGN_CONFIDENCE = 0.35
+SIGN_CONFIDENCE = 0.5
 
 
 def draw_steering_bar(frame, steering):
@@ -70,7 +70,7 @@ parser = argparse.ArgumentParser(description="Autonomous car tuner")
 parser.add_argument("--video", help="replay a recorded video instead of the camera")
 parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
 parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
-parser.add_argument("--camera", type=int, default=3, help="camera index when not replaying a video (default 0)")
+parser.add_argument("--camera", type=int, default=2, help="camera index when not replaying a video (default 0)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 args = parser.parse_args()
 

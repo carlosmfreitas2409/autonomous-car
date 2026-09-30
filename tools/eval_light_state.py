@@ -85,7 +85,7 @@ def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dataset", default="assets/real")
     parser.add_argument("--model", default="models/signs.onnx")
-    parser.add_argument("--confidence", type=float, default=0.35,
+    parser.add_argument("--confidence", type=float, default=0.5,
                         help="detector threshold; above 1.0 forces hand boxes")
     parser.add_argument("--annotate", metavar="DIR",
                         help="write a crop|core|halo panel for every failure")

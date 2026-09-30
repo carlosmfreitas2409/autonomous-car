@@ -137,7 +137,7 @@ def _parse_source(indices) -> list:
 
 class SignWorker:
     def __init__(self, camera_indices=(1, 2, 3), model_path: str = "models/signs.onnx",
-                 confidence: float = 0.35):
+                 confidence: float = 0.5):
         self._sources = _parse_source(camera_indices)
         self._model_path = model_path
         self._confidence = confidence

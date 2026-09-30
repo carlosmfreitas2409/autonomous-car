@@ -464,10 +464,11 @@ On the clip the reader now reports the full sequence — **GREEN → YELLOW → 
 GREEN** — where before the yellow phase came back `UNKNOWN`. See the blown-core
 fallback in section C.
 
-**Runtime confidence: 0.35.** The F1 optimum is 0.50, but recall is worth more
-than precision here because the crop readers are a second gate - measured, the
-end-to-end score is 35/38 at 0.25, 0.35 and 0.50 alike, and the lower threshold
-simply moves boxes from the hand-label fallback to the detector.
+**Runtime confidence: 0.35 in round 2, 0.5 from round 6.** The F1 optimum was
+0.50, but recall was worth more than precision because the crop readers are a
+second gate - measured, the end-to-end score was 35/38 at 0.25, 0.35 and 0.50
+alike. By round 5 recall was flat from 0.35 to 0.70, and every hallucination
+seen scored 0.36-0.55, so the threshold moved up (see round 6).
 
 What is still wrong:
 
@@ -696,11 +697,53 @@ Venue plus second shoot 54/56 with either model and with hand boxes; every
 yellow is still read. The cost is yellow read as red under the red stage
 (`lighting/cam0_000120`), a needless stop before a lamp that turns red next.
 
+### The first real delivery signs (signs3), and the sign size cap
+
+37 car-camera frames: A (000-150), C in front of the stage (160-290), B
+(300-360). C is held out in `assets/real/images/signs3/`; A and B are training,
+in `assets/real_train/images/signs3/`. Round 5 on all of them, before labels:
+`delivery_sign` found at **0.96-0.97 up to ~245 px and not at all from ~330
+px** - the A from frame 090, C 210-240, B 340-360. Every variant the reader
+gave was the right letter; nothing was ever read as the wrong one.
+
+It is the light's round-1 failure again. `PASTE_HEIGHT` capped the signs at
+260 px on the belief that they were 15 cm; the printed ones are 43 cm, ~224 px
+at the 2 m stop line and ~450 px at 1 m, so detection would have died exactly
+where the bay is decided. Pasted artwork confirms it for stop too - 0.00 at
+480 px for both. Detour survived only because the first sign shoot gave it real
+close-ups. The signs now paste at 22-560 px (560 is a 43 cm sign at the 0.8 m
+pass distance), and `probe_signs` check (a) now covers the sign artwork as well
+as the light - it had only ever looked at the light, which is why it never
+caught this.
+
+### Round 6: signs at every size, and the threshold to 0.5
+
+Trained with the sign paste range at 22-560 px and signs3's A and B frames.
+At the new runtime threshold 0.5, on the held-out photos:
+
+| | r5 | **r6** |
+|---|---|---|
+| `delivery_sign` (signs3 C, 15 boxes) | 3/15 | **10/15** |
+| ...of those above 320 px | 0/3 | **2/3** |
+| stop / detour / traffic light | 22/23, 17/17, 55/56 | 22/23, 17/17, **56/56** |
+| probe (a), sign artwork 440-560 px | 0.00 | **0.97-0.99** |
+| probe (b), loudest bare emitter | 0.77 | **0.00** |
+| light state | 54/56, 0 swaps | 54/56, 0 swaps |
+| approach clip | 206/251, yellow 18/19 | same |
+
+Three of the five delivery misses are the B sign seen nearly edge-on; the real
+ones are the C in near darkness (160) and the C half out of frame (250).
+
+At 0.35 round 6 has five false boxes, at 0.5 one, with recall identical (105
+found at both), so `SIGN_CONFIDENCE` is now 0.5. The one left is the venue's
+red emergency-exit sign as `stop` at 0.54 - 23 px, which the tracker puts at
+~19 m, far outside the 3 m the policy acts at. On the old-track clips the white
+floor-tape curve at the frame edge reaches 0.55 as `traffic_light` in one frame
+and is read UNKNOWN there; it cannot commit a red.
+
 ### Not measured at all yet
 
-- **`delivery_sign` has no real photograph.** Every instance the code has
-  seen is a paste of the artwork, so its recall on the car is unknown, and its
-  only real-photo numbers are false positives.
+- **`delivery_sign` has only 15 held-out real boxes**, one room, one day.
 - Nothing has been measured in a room other than the venue.
 
 ---
@@ -800,8 +843,8 @@ discarded, and there is no reset on release, so no derivative spike. This
 relies on `ki ≈ 0` (the Config default).
 
 **Constants, and why there are no sliders.** 3 m / 2 m are the stopping
-distances the car can honour at base speed; 0.35 is the measured confidence
-(§G); the heights and HFOV are physical. Nothing here is tunable from the GUI.
+distances the car can honour at base speed; 0.5 is the measured confidence
+(§G, round 6); the heights and HFOV are physical. Nothing here is tunable from the GUI.
 
 **Bench replay.** `SIGN_CAMERA` replaces the camera index list and accepts an
 index or a video path:
