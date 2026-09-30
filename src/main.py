@@ -1,3 +1,5 @@
+import argparse
+import csv
 import cv2 as cv
 import logging
 import time
@@ -5,12 +7,14 @@ import time
 from arduino import Arduino
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("main")
 
 from config import Config
 from lights import LightsController
 from perception.line_tracking import LineTracker
 from input.autonomous import Autonomous
-from input.ps5 import PS5Controller
+from input.ps5 import BUTTON_NAMES, PS5Controller
+from path import HOME_PATH, DetourReturn, Path, anchor_for, profile_for
 from gui import TunerGUI
 
 
@@ -48,7 +52,18 @@ def draw_throttle_bar(frame, throttle):
             cv.rectangle(frame, (bar_x - 5, bar_cy), (bar_x + 5, bar_cy + fill_h), color, -1)
 
 
-cap = cv.VideoCapture(0)
+_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr")
+
+
+parser = argparse.ArgumentParser(description="Autonomous car tuner")
+parser.add_argument("--video", help="replay a recorded video instead of the camera")
+parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
+parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
+parser.add_argument("--camera", type=int, default=1, help="camera index when not replaying a video (default 0)")
+parser.add_argument("--log", help="write per-frame telemetry to this CSV")
+args = parser.parse_args()
+
+cap = cv.VideoCapture(args.video if args.video else args.camera)
 if not cap.isOpened():
     print("Error: Could not open video.")
     exit()
@@ -57,6 +72,22 @@ ret, first_frame = cap.read()
 if not ret:
     print("Error: Could not read first frame.")
     exit()
+
+recorder = None
+if args.record:
+    capture_fps = cap.get(cv.CAP_PROP_FPS)
+    if not capture_fps or capture_fps != capture_fps or capture_fps <= 0:
+        capture_fps = 30.0
+    frame_size = (first_frame.shape[1], first_frame.shape[0])
+    recorder = cv.VideoWriter(args.record, cv.VideoWriter_fourcc(*"mp4v"), capture_fps, frame_size)
+    logger.info(f"Recording {frame_size[0]}x{frame_size[1]} at {capture_fps:.0f} fps to {args.record}")
+
+log_file = None
+log_writer = None
+if args.log:
+    log_file = open(args.log, "w", newline="")
+    log_writer = csv.writer(log_file)
+    log_writer.writerow(_LOG_FIELDS)
 
 config = Config()
 ratio = config.downscale_ratio
@@ -68,6 +99,7 @@ gui = TunerGUI(config, frame_w, frame_h)
 arduino = Arduino()
 tracker = LineTracker()
 autonomous = Autonomous()
+detour_return = DetourReturn()
 ps5 = PS5Controller()
 lights = LightsController()
 
@@ -76,9 +108,15 @@ gui.set_master_port_callback(arduino.set_master_port)
 gui.set_lights_controller(lights)
 
 fps = 0.0
-prev_time = time.time()
+start_time = time.time()
+prev_time = start_time
 prev_stopped = False
 last_sonar = None
+prev_stop_reason = None
+prev_path = gui.path()
+prev_lane_state = None
+frame_index = -1
+warned_calibrating = False
 
 while gui.is_running():
     now = time.time()
@@ -88,11 +126,20 @@ while gui.is_running():
     if dt > 0:
         fps = 0.9 * fps + 0.1 / dt
 
+    for index in ps5.poll_button_presses():
+        logger.info(f"PS5 button {index} ({BUTTON_NAMES.get(index, '?')})")
+
     if ps5.poll_estop_toggle():
         gui.toggle_estop()
 
     if ps5.poll_mode_toggle():
         gui.toggle_mode()
+
+    # Path buttons are read before the stopped branch so the Detour can be
+    # armed while the car waits at the sign.
+    requested_path = ps5.poll_path_buttons()
+    if requested_path is not None:
+        gui.set_path(requested_path)
 
     sonar = arduino.read_sonar()
     if sonar is not None:
@@ -113,21 +160,60 @@ while gui.is_running():
 
     ret, frame = cap.read()
     if not ret:
+        logger.warning("Frame read failed (camera dropout or end of video), rewinding")
         cap.set(cv.CAP_PROP_POS_FRAMES, 0)
         tracker.reset()
         autonomous.reset()
         continue
 
-    params = gui.read_params()
+    if args.flip:
+        frame = cv.flip(frame, 1)
 
-    perc = tracker.process(frame, params)
+    # The recording is written frame for frame but tagged with the camera's
+    # fps, while the loop runs slower; the frame index is what lines the CSV
+    # up with the video, not `t`.
+    frame_index += 1
+    if recorder is not None:
+        recorder.write(frame)
+
+    params = gui.read_params()
+    path = gui.path()
+
+    perc = tracker.process(frame, params, anchor_for(path))
+
+    returned = detour_return.update(path, perc, dt)
+    if returned is not None:
+        logger.info(f"Detour entrance passed, returning to {returned.value} (lane {perc.lane_state})")
+        gui.set_path(returned)
+        path = returned
+
+    if path is not prev_path:
+        autonomous.seed_derivative()
+        logger.info(f"Path: {path.value} (lane {perc.lane_state})")
+        if path is Path.DETOUR:
+            gui.set_turn_signal("Right")
+        elif prev_path is Path.DETOUR:
+            gui.set_turn_signal(None)
+        prev_path = path
+        warned_calibrating = False
+    if path is not Path.NORMAL and not perc.profile_ready and not warned_calibrating:
+        logger.warning(f"Path {path.value} selected while the tracker is still {perc.lane_state}; steering on the two-edge scan until it has a lane width")
+        warned_calibrating = True
 
     if gui.is_autonomous():
-        steering, throttle = autonomous.step(perc.lane_offset, perc.lane_curvature, params, dt, last_sonar)
+        steering, throttle = autonomous.step(
+            perc.lane_offset, perc.lane_curvature, params, dt, last_sonar,
+            profile=detour_return.profile_for(path), provisional=perc.provisional,
+        )
+        detour_return.observe_hold(autonomous.holding, dt)
     else:
         autonomous.reset()
         steering, throttle = ps5.poll()
         throttle *= params.base_speed
+
+    if autonomous.stop_reason != prev_stop_reason:
+        logger.info(f"Stop reason: {autonomous.stop_reason or 'none'} (lane {perc.lane_state})")
+        prev_stop_reason = autonomous.stop_reason
 
     draw_steering_bar(perc.display_frame, steering)
     draw_throttle_bar(perc.display_frame, throttle)
@@ -138,12 +224,37 @@ while gui.is_running():
     arduino.send_lights(lights_output)
     arduino.send_motor(throttle, steering)
 
+    curvature = perc.lane_curvature if perc.lane_curvature is not None else 0.0
+    error = (perc.lane_offset or 0) + 60.0 * curvature
+
+    if log_writer is not None:
+        log_writer.writerow((
+            f"{now - start_time:.3f}", frame_index, path.value, perc.lane_state, perc.rows_found, perc.both_rows,
+            "" if perc.lane_offset is None else perc.lane_offset,
+            "" if perc.lane_curvature is None else f"{perc.lane_curvature:.4f}",
+            f"{error:.1f}", f"{steering:.4f}", f"{throttle:.4f}", f"{autonomous.holding:.2f}",
+            autonomous.profile_label, autonomous.stop_reason or "",
+            "" if last_sonar is None else f"{last_sonar.state}:{last_sonar.nearest_cm}",
+            "" if last_sonar is None else " ".join("-" if d is None else str(d) for d in last_sonar.distances),
+        ))
+
     gui.update_textures(perc)
-    gui.update_telemetry(fps, perc.lane_offset or 0, steering, throttle)
+    lane_text = perc.lane_state if perc.width_ratio is None else f"{perc.lane_state} w{perc.width_ratio:.2f}"
+    if detour_return.stage:
+        lane_text = f"{lane_text} | {detour_return.stage}"
+    stop_text = autonomous.stop_reason
+    if stop_text is None and autonomous.holding > 0:
+        stop_text = f"holding {autonomous.holding:.1f}s"
+    gui.update_telemetry(fps, int(round(error)), steering, throttle, lane_text, stop_text)
+    gui.update_path_status(path, perc.profile_ready, perc.lane_state)
     gui.update_sonar(last_sonar)
     gui.render_frame()
 
 cap.release()
+if recorder is not None:
+    recorder.release()
+if log_file is not None:
+    log_file.close()
 ps5.shutdown()
 arduino.close()
 gui.shutdown()
