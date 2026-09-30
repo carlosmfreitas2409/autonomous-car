@@ -45,6 +45,8 @@ Telemetry output is gated by a compile flag — uncomment `-DTELEMETRY_ENABLED=1
 | Steering pot wiper | A11 |
 | MCP2515 SPI (CS / MISO / MOSI / SCK) | 53 / 50 / 51 / 52 |
 | Reverse buzzer | 46 (T5) |
+| Battery divider | A10 |
+| Battery LED bar (bottom → top) | 43, 41, 39, 37, 35 (2 segments), 33 (2 segments) |
 | Status LED | 13 |
 
 `R_EN` and `L_EN` are driven by the firmware, not strapped to 5V — `motors::disable()` and
@@ -81,6 +83,14 @@ Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure 
 - **Drive slew**: up at 4 PWM/tick (200 Hz → 0→255 in ~320 ms); down at 32 PWM/tick (~40 ms).
 - **Steering**: 200 Hz P+D loop on the pot's 0–1023 ADC reading (derivative on measurement). Gains `Kp = 2.2`, `Kd = 0.12`, `±3` raw-unit deadband. Min-move PWM = 150 to break static friction, capped at 210. The reading is median-of-9 filtered to reject ADC spikes. Soft limits at the configured max angles (refuse to drive into a stop, allow recovery in the opposite direction).
 - **Steering-pot fault** (the pot reads a rail — 0 or ≥1023 — at boot, meaning a disconnected wiper or outer leg) → permanent FAULT state (`ERR STEER`), status LED blinks fast, all PWMs forced to 0.
+
+### Battery gauge
+
+The 12 V lead-acid battery (Heliar HE60DD) feeds a resistor divider into A10. `battery.cpp` samples it every 200 ms, converts the raw ADC count to battery volts with `BATT_VOLTS_PER_COUNT`, maps volts to charge through a resting-voltage lead-acid curve (11.80 V = 0 %, 12.70 V = 100 %), and smooths with a ~10 s moving average. The 8-segment bar is driven by 6 pins (35 and 33 each drive two segments) and lights at 15 / 30 / 50 / 65 / 80 / 97 %, with 3 % hysteresis so it can't flicker on a boundary. Below 15 % the bar is dark.
+
+Voltage sags under motor load, so the bar reads low while driving — the at-rest reading is the accurate one.
+
+**Calibration**: the ADC reference is the Mega's 5 V rail, which isn't exactly 5.00 V (≈ 5.17 V on the car), so calibrate against the raw count, not the A10 voltage. With the car powered as it normally runs and the motors stopped, read the battery with a multimeter and the raw A10 count (`analogRead(A10)`) at the same moment, then set `BATT_VOLTS_PER_COUNT = V_battery / count` in `config.h`. Shipped value: 12.56 V / 562.
 
 ### Obstacle avoidance
 
