@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include "battery.h"
 #include "buzzer.h"
 #include "can_bus.h"
 #include "command_parser.h"
@@ -46,6 +47,7 @@ void setup() {
 
   motors::init();
   buzzer::init();
+  battery::init();
 
   bool steer_ok = steering::init();
 
@@ -84,6 +86,7 @@ void loop() {
   const bool reversing =
       safety::state() == safety::State::RUN && motors::current_throttle() < 0;
   buzzer::update(reversing);
+  battery::update();
 
   telemetry::update();
 
