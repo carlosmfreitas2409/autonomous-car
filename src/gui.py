@@ -38,6 +38,7 @@ _STRIP_EFFECT_LABELS = {
     "Red Pulse": StripEffect.RED_PULSE,
     "Strobe": StripEffect.STROBE,
     "Rainbow": StripEffect.RAINBOW,
+    "Police": StripEffect.POLICE,
 }
 
 _SONAR_STATES = {

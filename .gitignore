@@ -18,3 +18,5 @@ __pycache__/
 
 firmware/**/compile_commands.json
 firmware/**/.cache
+
+.DS_Store

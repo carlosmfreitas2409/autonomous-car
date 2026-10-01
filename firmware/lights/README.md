@@ -54,7 +54,7 @@ MCP2515: CS=D10, MISO=D12, MOSI=D11, SCK=D13, INT=D2.
 
 Bitmask layout: bit 0 left, 1 right, 2 drl, 3 low beam, 4 brake, 5 reverse, 6 logo, 7 projector.
 
-Strip effect ids: `0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow, `6` cyan, `7` red pulse. Unknown ids are treated as off. A DLC-1 frame (from a master built before the strip existed) is still accepted, with the effect taken as off.
+Strip effect ids: `0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow, `6` cyan, `7` red pulse, `8` police. Unknown ids are treated as off. A DLC-1 frame (from a master built before the strip existed) is still accepted, with the effect taken as off.
 
 Turn-signal blink cadence is firmware-side: master sends a sticky boolean, the firmware toggles the relay every `BLINK_ON_MS` / `BLINK_OFF_MS` (`src/config.h`). Both sides share one state machine, so hazards stay in sync.
 
@@ -73,11 +73,13 @@ USB Serial @ 115200 baud is kept for debug logging only:
 
 `src/strip.cpp` drives A2. The strip's 12V is permanently connected, so the firmware only ever writes pixels — there is no power sequencing to do. `init()` blanks the strip at boot so it does not hold whatever its controller powered up with.
 
+Police (id `8`) paints **car sides**, not wire order. The strip starts on the left, runs across the front (`STRIP_FRONT_COUNT` pixels, currently 9), down the right side through the second-to-last LED, then the last trio is the rear — of which only the final pixel is rear-left. Police red is that front run plus the last LED (10 pixels); blue is 10 through the second-to-last (12 pixels).
+
 ### Why two timing constants
 
 They answer different questions and neither replaces the other.
 
-`STRIP_FRAME_MS` is the **animation tick** — the fastest strobe or rainbow may advance. It exists because `pixels.show()` bit-bangs the whole strip with interrupts disabled (~30 µs/LED, so ~0.8 ms at 27 LEDs). `loop()` runs thousands of times a second; redrawing on every pass would spend most of the CPU with interrupts off, starving CAN polling and dragging `millis()`. At 10 ms the strip is redrawn 100×/s and the interrupts-off duty is ~8%.
+`STRIP_FRAME_MS` is the **animation tick** — the fastest strobe or rainbow may advance. It exists because `pixels.show()` bit-bangs the whole strip with interrupts disabled (~30 µs/LED, so ~0.7 ms at 22 LEDs). `loop()` runs thousands of times a second; redrawing on every pass would spend most of the CPU with interrupts off, starving CAN polling and dragging `millis()`. At 10 ms the strip is redrawn 100×/s and the interrupts-off duty is ~7%.
 
 `STRIP_REFRESH_MS` covers the opposite case: a **static** colour has nothing to animate, so it would otherwise be transmitted exactly once and never again. One frame corrupted by relay or motor switching noise would then sit on the strip until the effect next changed. Resending every 250 ms bounds that to a quarter second, for one `show()` every 25 animation ticks.
 
@@ -87,13 +89,16 @@ Constants in `src/config.h`:
 
 | Constant | Default | Notes |
 |---|---|---|
-| `STRIP_LED_COUNT` | 27 | **Set this to the strip's real length.** Too low leaves the tail dark. |
+| `STRIP_LED_COUNT` | 22 | **Set this to the strip's real length.** Too low leaves the tail dark. |
 | `STRIP_BRIGHTNESS` | 150 | 0–255. Caps current draw and overall glare. |
 | `STRIP_FRAME_MS` | 10 | Animation tick — how often strobe/rainbow may advance (100 Hz cap). |
 | `STRIP_REFRESH_MS` | 250 | How often a *static* colour is resent, so a corrupted frame heals. |
 | `STROBE_ON_MS` / `STROBE_OFF_MS` | 40 / 60 | Strobe cadence. |
 | `RAINBOW_HUE_STEP` | 256 | Hue advance per frame, of 65536 → 256 frames ≈ 2.6 s per cycle. |
 | `PULSE_STEP` | 437 | Red-pulse breath rate → ~1.5 s per cycle. |
+| `STRIP_FRONT_COUNT` | 9 | Nose pixels (LEDs 1–9). Police red includes these plus the last LED. |
+| `STRIP_REAR_COUNT` | 3 | Last trio is the rear; only the final pixel is rear-left. |
+| `POLICE_FLASH_MS` / `GAP` / `PAUSE` | 50 / 50 / 180 | Double-flash wig-wag cadence. |
 
 ### Mode signature
 
@@ -126,6 +131,6 @@ All `L` commands below are sent over USB to the **master Mega**, not this board.
 3. Each relay individually: send (e.g.) `L 0 0 1 0 0 0 0 0` to the master → relay 3 clicks on; `L 0 0 0 0 0 0 0 0` → off. Repeat for each position.
 4. Rear independence: `L 0 0 1 0 0 0 0 0` (DRL only — rear dim, fronts on); `L 0 0 1 0 1 0 0 0` (DRL + brake — rear bright, fronts unchanged); `L 0 0 0 0 1 0 0 0` (brake only — rear bright, fronts dark).
 5. Turn signal blink: `L 1 0 0 0 0 0 0 0` → right relay clicks on/off at the configured cadence; rear lamp pulses, front sequential sweeps. Confirm sweep completes per cycle. Repeat for left and hazard (`L 1 1 0 0 0 0 0 0`).
-6. LED strip: `L 0 0 0 0 0 0 0 0 1` → strip goes solid red; step through `2` green, `3` blue, `4` strobe, `5` rainbow; `L 0 0 0 0 0 0 0 0 0` → strip clears. If nothing happens at all, the master is probably still running pre-strip firmware — it sends a DLC-1 frame, which the lights board reads as "off". Reflash it.
+6. LED strip: `L 0 0 0 0 0 0 0 0 1` → strip goes solid red; step through `2` green, `3` blue, `4` strobe, `5` rainbow, `8` police (left red / right blue, double-flash); `L 0 0 0 0 0 0 0 0 0` → strip clears. If nothing happens at all, the master is probably still running pre-strip firmware — it sends a DLC-1 frame, which the lights board reads as "off". Reflash it.
 7. Backwards compatibility: an 8-token `L 0 0 1 0 0 0 0 0` still works and leaves the strip off.
 8. Watchdog: with rainbow running and a light on, pull the CAN cable. All relays should drop and the strip go dark within 1 s. Reconnect → next frame restores the commanded state.
