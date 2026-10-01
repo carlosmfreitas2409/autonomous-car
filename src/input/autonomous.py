@@ -17,21 +17,6 @@ _CURVATURE_FULL = 0.5
 # On the very sharpest bends the car may slow to this fraction of min_speed.
 _SHARP_CURVE_FLOOR = 0.75
 
-_OBSTACLE_SLOW_CM = 150.0
-_OBSTACLE_STOP_CM = 60.0
-
-# Full-lock turning radius (m). The slow zone only counts echoes that lie on
-# the car's path: a sensor pointing along the chassis sees the wall or cones
-# on the outside of a bend well before the car would reach them, and on this
-# track every tight right turn read 97-143 cm at full lock and cut the
-# throttle by half for six seconds (day1_detour.csv 47-53 s, day0_normal.csv
-# 85-88 s). The path turning at radius R has swung 90 degrees away after R
-# metres, so an echo farther than R along the ray cannot be on it. The stop
-# zone is unchanged: anything under 60 cm on any sensor still stops the car.
-# PLACEHOLDER until measured with a chalk circle; the rule only ignores
-# echoes beyond R, so overestimating R is the conservative error.
-_R_LOCK_M = 0.6
-
 # DETOUR profile. A detour has stretches where no line is inside the ROI at
 # all: ~1.2 s at the entrance and 4-5.5 s through the merge into the U-turn
 # (detour_entry.mov, detour_exit.mov, driven by hand). The outer line is only
@@ -53,6 +38,15 @@ _DETOUR_STEER_RATE = 4.0
 # readings with no hold running: an L1 pressed a moment before the blind merge
 # must not hand a 0.2 s stop rule the blind stretch it was pressed for.
 _PROFILE_RELEASE_S = 2.0
+
+
+def _slowed(throttle: float, obstacle: float, params: Config) -> float:
+    """Throttle scaled by the sonar guard, but never below the slowest the
+    controller drives anywhere else (`min_speed` on the sharpest bend). The
+    heavy car stalls under that, and stalling short of the stop distance left
+    it standing in the slow zone without the stop, so without the hazards."""
+    crawl = params.min_speed * _SHARP_CURVE_FLOOR
+    return max(throttle * obstacle, min(throttle, crawl))
 
 
 class ControlProfile(Enum):
@@ -105,6 +99,7 @@ class Autonomous:
         self._release_time = 0.0
         self._releasing = False
         self._seed_next = False
+        self._resume_seed = False
 
         # Why the car is (or is about to be) held still, for the GUI and the log.
         self.stop_reason: Optional[str] = None
@@ -120,6 +115,7 @@ class Autonomous:
         self._release_time = 0.0
         self._releasing = False
         self._seed_next = False
+        self._resume_seed = False
         self.stop_reason = None
         self.holding = 0.0
 
@@ -138,48 +134,27 @@ class Autonomous:
         differencing against a stale error (used on a path change)."""
         self._seed_next = True
 
-    def obstacle_scale(self, sonar, steering: float = 0.0) -> float:
-        if sonar is None:
-            return 1.0
-        if sonar.blocked:
-            return 0.0
-        nearest = self._nearest_on_path(sonar, steering)
-        if nearest is None or nearest >= _OBSTACLE_SLOW_CM:
-            return 1.0
-        if nearest <= _OBSTACLE_STOP_CM:
-            return 0.0
-        span = _OBSTACLE_SLOW_CM - _OBSTACLE_STOP_CM
-        return (nearest - _OBSTACLE_STOP_CM) / span
-
-    @staticmethod
-    def _nearest_on_path(sonar, steering: float):
-        """Nearest echo that the car's current path can reach.
-
-        With the wheels at `steering` the path is an arc of radius about
-        `_R_LOCK_M / |steering|`; beyond that distance along the ray the
-        path has turned away. Echoes inside the stop zone always count.
-        """
-        distances = [d for d in getattr(sonar, "distances", ()) if d is not None]
-        if not distances:
-            distances = [] if sonar.nearest_cm is None else [sonar.nearest_cm]
-        if not distances:
-            return None
-        reach_cm = float("inf") if abs(steering) < 1e-3 else 100.0 * _R_LOCK_M / abs(steering)
-        on_path = [d for d in distances if d <= _OBSTACLE_STOP_CM or d <= reach_cm]
-        return min(on_path) if on_path else None
-
     def step(
         self,
         lane_offset: Optional[int],
         lane_curvature: Optional[float],
         params: Config,
         dt: float,
-        sonar=None,
+        obstacle: float = 1.0,
         profile: ControlProfile = ControlProfile.NORMAL,
         provisional: bool = False,
     ) -> tuple[float, float]:
-        obstacle = self.obstacle_scale(sonar, self._last_steering)
-        self.stop_reason = "obstacle" if obstacle == 0.0 and sonar is not None else None
+        """`obstacle` is the sonar guard's throttle scale; 0.0 means stopped."""
+        if obstacle == 0.0:
+            # Stopped for an obstacle: hold the wheels where they are. The
+            # lane reading of a car standing still is noise, and steering on
+            # it swung the wheels side to side while waiting. The lane-loss
+            # hold and the profile release are frozen too (`holding` keeps
+            # its value); the car is not moving.
+            self.stop_reason = "obstacle"
+            self._resume_seed = True
+            return self._last_steering, 0.0
+        self.stop_reason = None
 
         # Profile latch: DETOUR takes effect at once; NORMAL is deferred until
         # the lane has been steadily read for `_PROFILE_RELEASE_S` with no hold
@@ -201,7 +176,7 @@ class Autonomous:
             self._lost_time += dt
             if self._lost_time <= _LANE_LOSS_TIMEOUT:
                 self.holding = self._lost_time
-                return self._last_steering, self._last_throttle * obstacle
+                return self._last_steering, _slowed(self._last_throttle, obstacle, params)
             self._pid.reset()
             self._last_steering = 0.0
             self._last_throttle = 0.0
@@ -219,6 +194,10 @@ class Autonomous:
         # so the car turns earlier into the bend instead of reacting late.
         curvature = lane_curvature if lane_curvature is not None else 0.0
         error = lane_offset + _LOOKAHEAD_GAIN * curvature
+        if self._resume_seed:
+            # The last error is from before the obstacle stop.
+            self._pid._prev_error = error
+            self._resume_seed = False
         steering = self._pid.update(error, dt)
 
         # Adaptive curve speed: slow for the larger of the current steering and
@@ -237,7 +216,7 @@ class Autonomous:
         self._last_steering = steering
         self._last_throttle = throttle
 
-        return steering, throttle * obstacle
+        return steering, _slowed(throttle, obstacle, params)
 
     def _step_detour(self, lane_offset, lane_curvature, params, dt, obstacle, provisional) -> tuple[float, float]:
         holding = self._lost_time > 0.0
@@ -251,7 +230,7 @@ class Autonomous:
             self._release_time = 0.0
             if self._lost_time <= _DETOUR_HOLD_S:
                 self.holding = self._lost_time
-                return self._last_steering, self._last_throttle * obstacle
+                return self._last_steering, _slowed(self._last_throttle, obstacle, params)
             self._pid.reset()
             self._last_steering = 0.0
             self._last_throttle = 0.0
@@ -267,10 +246,11 @@ class Autonomous:
 
         curvature = lane_curvature if lane_curvature is not None else 0.0
         error = lane_offset + _LOOKAHEAD_GAIN * curvature
-        if holding or self._seed_next:
+        if holding or self._seed_next or self._resume_seed:
             # A seconds-old error must not feed the derivative.
             self._pid._prev_error = error
             self._seed_next = False
+            self._resume_seed = False
         steering = self._pid.update(error, dt)
         if dt > 0:
             max_step = _DETOUR_STEER_RATE * dt
@@ -288,7 +268,7 @@ class Autonomous:
         self._last_steering = steering
         self._last_throttle = throttle
 
-        return steering, throttle * obstacle
+        return steering, _slowed(throttle, obstacle, params)
 
     @staticmethod
     def _throttle_for(steering: float, curvature: float, params: Config) -> float:

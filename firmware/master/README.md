@@ -73,8 +73,8 @@ Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure 
 
 - `RDY car-master v1` — boot banner.
 - `ERR ...` — parse errors and fault notifications.
-- `T <angle_raw> <target_raw> <throttle> <steer_pwm> <state> <wd_ms>` — telemetry at 10 Hz, behind `TELEMETRY_ENABLED` compile flag. `state` ∈ `R W E F`.
-- `S <state> <nearest_cm> <d0..d2>` — obstacle state at 10 Hz, behind `TELEMETRY_ENABLED`. `state` ∈ `C` clear, `S` slowing, `B` blocked, `X` stale. Distances are cm, with `255` = nothing in range. The host uses `state` and `nearest_cm` to slow/stop in autonomous mode.
+- `T <angle_raw> <target_raw> <throttle> <steer_pwm> <state> <wd_ms>` — telemetry at 20 Hz, behind `TELEMETRY_ENABLED` compile flag. `state` ∈ `R W E F`.
+- `S <state> <nearest_cm> <d0..d2>` — obstacle state at 20 Hz (the sonar node's rate), behind `TELEMETRY_ENABLED`. `state` ∈ `C` clear, `S` slowing, `B` blocked, `X` stale. Distances are cm, with `255` = nothing in range. The host uses the three distances and `X` to slow/stop in autonomous mode.
 
 ## Behavior
 
@@ -96,11 +96,16 @@ Voltage sags under motor load, so the bar reads low while driving — the at-res
 
 Front distance data arrives over CAN from the sonar node (`firmware/sonar/`, ID `0x080` at 20 Hz).
 `obstacle.cpp` classifies the nearest reading into a state (`CLEAR`/`SLOWING`/`BLOCKED`/`STALE`) and
-reports it on the `S` telemetry line. It does **not** touch the motors.
+reports it on the `S` telemetry line together with the three per-sensor distances. It does **not**
+touch the motors.
 
-Obstacle avoidance is enforced by the host (`src/input/autonomous.py`) and runs in **autonomous mode
-only** — manual (PS5) driving is never governed by the sonar. The host zeroes throttle at or below
-30 cm and tapers up to full by 80 cm.
+Obstacle avoidance is enforced by the host (`src/obstacle.py`, applied by `src/input/autonomous.py`)
+and runs in **autonomous mode only** — manual (PS5) driving is never governed by the sonar. The host
+ignores the master's `B`/`S` states (they count every sensor, including echoes beside the lane) and
+works from the three distances: the centre sensor slows the car from 150 cm, the side sensors (which
+point outward and see things beside the track) from 100 cm; any sensor stops it at 60 cm, and it
+resumes only after every sensor reads farther than 75 cm for 0.5 s. While stopped the steering is held and the hazards flash.
+`TELEMETRY_ENABLED` must stay on: without `S` lines the host has no sonar data and does not gate.
 
 - **Fail-safe**: no frame for 300 ms means *blocked*, never *clear*.
 
@@ -142,8 +147,11 @@ The values stay correct until the pot or linkage are physically moved. Recalibra
 
 The firmware only reports; the host acts on it. These check the `S` line is correct.
 
-9. Hand at ~60 cm from the array → `S` state goes `S` (slowing); at ~30 cm → `B` (blocked). Withdraw
+9. Hand at ~80 cm from the array → `S` state goes `S` (slowing); at ~60 cm → `B` (blocked). Withdraw
    → back to `C`. `nearest_cm` tracks a tape measure to ±2 cm.
 10. Unplug the sonar node → `S` reports `X` (stale) within 300 ms. Reconnect → recovers.
-11. In the host GUI, switch to autonomous and confirm the car slows/stops as the reading closes in;
-    switch to manual (PS5) and confirm it does **not**.
+11. In the host GUI, switch to autonomous and confirm the car slows/stops as the reading closes in, the
+    wheels stay still and the hazards flash while it waits; switch to manual (PS5) and confirm it does
+    **not**.
+12. An obstacle in front of a front corner, seen only by a side sensor: the car slows from 100 cm and
+    stops at 60 cm like it does for the centre sensor.

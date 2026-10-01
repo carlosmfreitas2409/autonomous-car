@@ -14,10 +14,12 @@ Checks, in order:
 1. AUTO parity (wide and tuned sliders, default-argument and explicit-AUTO
    calls alternating): identical PID error on every frame of every clip.
 2. Controller parity: NORMAL profile identical to the baseline on random
-   offset/curvature sequences with None runs, random dt, sonar states, resets.
-   The obstacle slow zone is the one deliberate change (path-aware); it is
-   checked to equal the old rule with the wheels straight and never to slow
-   the car more than the old rule did.
+   offset/curvature sequences with None runs, random dt, resets, with the
+   throttle scaled by a random sonar-guard scale (floored at the crawl
+   throttle, so the car reaches the stop instead of stalling short of it). The sonar guard itself
+   (`src/obstacle.py`) is checked on scripted scenes: the old ramp dead ahead,
+   side sensors on a shorter ramp, stop latch hysteresis, one dropped or
+   ghost echo ignored, stale data stops; and an obstacle stop holds the wheels.
 3. Calibration: at `Config()` defaults the width profile is ready within 60
    frames (or 2 s) of every clip (the ROI alone never has two both-lines rows on this
    camera; the band above it does).
@@ -68,6 +70,8 @@ import cv2 as cv
 from config import Config
 from input import autonomous as autonomous_module
 from input.autonomous import _LOOKAHEAD_GAIN, Autonomous, ControlProfile
+import obstacle as obstacle_module
+from obstacle import ObstacleGuard
 from path import HOME_PATH, DetourReturn, Path, anchor_for, profile_for
 from perception.line_tracking import LaneAnchor, LineTracker
 
@@ -244,47 +248,130 @@ def run_auto_parity(clip: Clip, baseline_module, limit, maker=random_params) -> 
 
 # --- 2. controller parity -------------------------------------------------
 
+@dataclass
 class _Sonar:
-    def __init__(self, state: str, nearest_cm):
-        self.state = state
-        self.nearest_cm = nearest_cm
-
-    @property
-    def blocked(self) -> bool:
-        return self.state in ("B", "X")
+    state: str
+    nearest_cm: Optional[int]
+    distances: tuple = ()
 
 
-def _random_sonar(rng: random.Random):
-    # The obstacle slow zone is the one deliberate change to the working
-    # path: it is now path-aware (echoes beyond the turning radius do not
-    # slow the car). So the byte comparison feeds sonar states whose outcome
-    # the rule change cannot touch: none, blocked, clear-and-far, and near
-    # readings only while the wheels are straight (checked separately below).
+def _random_obstacle(rng: random.Random) -> float:
+    # The sonar guard's scale only multiplies the throttle; 0.0 (stopped) is
+    # a deliberate divergence, checked in `run_obstacle_guard_check`.
     roll = rng.random()
-    if roll < 0.5:
-        return None
     if roll < 0.6:
-        return _Sonar("B", rng.choice([None, 20, 55]))
-    return _Sonar("C", rng.choice([None, 200, 250]))
+        return 1.0
+    return rng.uniform(1e-3, 1.0)
 
 
-def run_obstacle_rule_check() -> bool:
-    """The path-aware slow zone equals the old rule with the wheels straight,
-    never slows more than the old rule, and keeps the stop zone everywhere."""
-    rng = random.Random(_SEED)
+def _feed(guard: ObstacleGuard, distances, dt: float = 0.1, state: str = "C", times: int = 1) -> float:
+    for _ in range(times):
+        guard.observe(_Sonar(state, None, tuple(distances)))
+        guard.update(dt)
+    return guard.scale
+
+
+def run_obstacle_guard_check() -> bool:
+    failures = []
+
+    def expect(name: str, ok: bool) -> None:
+        if not ok:
+            failures.append(name)
+
+    stop, slow = obstacle_module._STOP_CM, obstacle_module._SLOW_CM[1]
+    release = obstacle_module._RELEASE_CM
+
+    # Centre sensor: the old ramp, stop at the threshold.
+    for d in (200, 150, 149, 120, 97, 80, 61):
+        want = 1.0 if d >= slow else (d - stop) / (slow - stop)
+        expect(f"ramp {d} cm", abs(_feed(ObstacleGuard(), (None, d, None), times=3) - want) < 1e-12)
+    expect("stop at 60 cm", _feed(ObstacleGuard(), (None, 60, None), times=3) == 0.0)
+
+    # Side sensors: ignored past their own slow distance (a person beside the
+    # track), then the same ramp to the same stop, and they hold the stop.
+    for index in (0, 2):
+        side_slow = obstacle_module._SLOW_CM[index]
+        for d in (side_slow, side_slow + 20, 149):
+            distances = [None, None, None]
+            distances[index] = d
+            expect(f"side {index} at {d} cm does not slow", _feed(ObstacleGuard(), distances, times=3) == 1.0)
+        for d in (side_slow - 10, (side_slow + stop) / 2, stop + 1):
+            distances = [None, None, None]
+            distances[index] = d
+            want = (d - stop) / (side_slow - stop)
+            expect(f"side {index} ramp {d} cm", abs(_feed(ObstacleGuard(), distances, times=3) - want) < 1e-12)
+        for d in (30, 55, 60):
+            distances = [None, None, None]
+            distances[index] = d
+            expect(f"side {index} at {d} cm stops", _feed(ObstacleGuard(), distances, times=3) == 0.0)
+        guard = ObstacleGuard()
+        distances = [None, None, None]
+        distances[index] = 55
+        _feed(guard, distances, times=3)
+        distances[index] = 70
+        expect(f"side {index} holds the stop", _feed(guard, distances, times=10) == 0.0)
+    # The slowest-demanding sensor wins.
+    expect("nearest ramp wins", abs(_feed(ObstacleGuard(), (80, 140, None), times=3) - (80 - stop) / (100 - stop)) < 1e-12)
+
+    # Latch: a stationary obstacle wobbling around the threshold stays a stop.
+    guard = ObstacleGuard()
+    _feed(guard, (None, 58, None), times=3)
+    wobble = [58, 64, 70, 62, 73, 59, 66, 74, 61] * 5
+    expect("wobble stays stopped", all(_feed(guard, (None, d, None)) == 0.0 for d in wobble))
+    # Release only after `_RELEASE_S` clear past `_RELEASE_CM`.
+    dt = 0.1
+    frames_needed = math.ceil(obstacle_module._RELEASE_S / dt)
+    scales = [_feed(guard, (None, release + 5, None), dt=dt) for _ in range(frames_needed + 3)]
+    released_at = next((i for i, v in enumerate(scales) if v > 0.0), None)
+    # Two readings for the median to cross over, then the release time.
+    expect("release waits", released_at is not None and released_at >= frames_needed)
+    expect("release happens", released_at is not None and released_at <= frames_needed + 2)
+
+    # One dropped echo while stopped, one ghost while cruising: no change.
+    guard = ObstacleGuard()
+    _feed(guard, (None, 50, None), times=3)
+    expect("dropout ignored", _feed(guard, (None, None, None)) == 0.0 and _feed(guard, (None, 50, None)) == 0.0)
+    guard = ObstacleGuard()
+    _feed(guard, (None, 140, None), times=3)
+    expect("ghost ignored", _feed(guard, (None, 30, None)) > 0.0)
+
+    # An obstacle at the edge of a side beam echoes on some pings only: the
+    # measured distance is held through the gaps, then forgotten.
+    guard = ObstacleGuard()
+    _feed(guard, (80, None, None), times=3)
+    slowed = guard.scale
+    expect("gap in echoes keeps the slow-down",
+           slowed < 1.0 and all(_feed(guard, (None, None, None), dt=0.1) == slowed for _ in range(4)))
+    expect("long gap forgets it", _feed(guard, (None, None, None), dt=0.1, times=3) == 1.0)
+
+    # Stale data stops, and the release still waits.
+    guard = ObstacleGuard()
+    _feed(guard, (None, None, None), times=3)
+    expect("stale stops", _feed(guard, (None, None, None), state="X") == 0.0)
+    expect("stale release waits", _feed(guard, (None, None, None)) == 0.0)
+    # No master at all (a replay): nothing to guard with.
+    guard = ObstacleGuard()
+    expect("no data is not gated", guard.update(0.1) == 1.0)
+
+    # The controller holds the wheels while stopped, then resumes.
     auto = Autonomous()
-    failures = 0
-    for _ in range(5000):
-        nearest = rng.choice([None, 30, 59, 60, 61, 80, 97, 120, 149, 150, 200])
-        sonar = _Sonar(rng.choice(["C", "S"]), nearest)
-        steering = rng.uniform(-1.0, 1.0)
-        old = 1.0 if nearest is None or nearest >= 150 else 0.0 if nearest <= 60 else (nearest - 60) / 90
-        straight = auto.obstacle_scale(sonar, 0.0)
-        turning = auto.obstacle_scale(sonar, steering)
-        if straight != old or turning < old - 1e-12 or (nearest is not None and nearest <= 60 and turning != 0.0):
-            failures += 1
-    print(f"obstacle rule: straight wheels identical to the old rule, turning never slower, stop zone kept: {5000 - failures}/5000")
-    return failures == 0
+    params = Config()
+    held, _ = auto.step(120, 0.1, params, 0.05)
+    during = [auto.step(offset, 0.1, params, 0.05, 0.0) for offset in (-300, 250, -80, 400)]
+    expect("stop holds steering", all(s == held and t == 0.0 for s, t in during))
+    expect("stop reason", auto.stop_reason == "obstacle")
+    resumed, throttle = auto.step(120, 0.1, params, 0.05, 1.0)
+    expect("resume steers again", throttle > 0.0 and auto.stop_reason is None)
+    # Slowing never asks for less than the crawl the car moves at, so it
+    # reaches the stop distance (and the hazards) instead of stalling short.
+    crawl = params.min_speed * autonomous_module._SHARP_CURVE_FLOOR
+    _s, throttle = Autonomous().step(0, 0.0, params, 0.05, 0.01)
+    expect("slow zone keeps crawling", throttle == crawl)
+
+    for name in failures:
+        print(f"  obstacle guard: {name} failed")
+    print(f"obstacle guard: {'all scenes pass' if not failures else f'{len(failures)} failures'}")
+    return not failures
 
 
 def run_controller_parity(baseline_module, steps: int = 6000) -> bool:
@@ -307,16 +394,18 @@ def run_controller_parity(baseline_module, steps: int = 6000) -> bool:
             offset = rng.randint(-600, 600)
             curvature = None if rng.random() < 0.2 else rng.uniform(-3.0, 3.0)
         dt = rng.uniform(0.02, 0.08)
-        sonar = _random_sonar(rng)
+        obstacle = _random_obstacle(rng)
         if rng.random() < 0.005:
             baseline.reset()
             current.reset()
-        want = baseline.step(offset, curvature, params, dt, sonar)
+        steering, throttle = baseline.step(offset, curvature, params, dt, None)
+        crawl = params.min_speed * autonomous_module._SHARP_CURVE_FLOOR
+        want = (steering, max(throttle * obstacle, min(throttle, crawl)))
         # Alternate the bare call and the explicit defaults: both are Normal.
         if step % 2:
-            got = current.step(offset, curvature, params, dt, sonar)
+            got = current.step(offset, curvature, params, dt, obstacle)
         else:
-            got = current.step(offset, curvature, params, dt, sonar, profile=ControlProfile.NORMAL, provisional=rng.random() < 0.5)
+            got = current.step(offset, curvature, params, dt, obstacle, profile=ControlProfile.NORMAL, provisional=rng.random() < 0.5)
         if want != got:
             mismatches += 1
             if mismatches <= 5:
@@ -486,7 +575,7 @@ def _replay_script(clip: Clip, script: Script, dt: float, limit, judged: bool = 
         phase = path.value
         perc = tracker.process(frame, params, anchor_for(path))
         was_holding = auto.holding > 0
-        steering, throttle = auto.step(perc.lane_offset, perc.lane_curvature, params, dt, None,
+        steering, throttle = auto.step(perc.lane_offset, perc.lane_curvature, params, dt,
                                        profile=profile_for(path), provisional=perc.provisional)
         holding_now = auto.holding > 0
 
@@ -598,7 +687,7 @@ def run_auto_return(clip: Clip, limit) -> bool:
             gap_at = t
         if home is not None:
             returned_at, path = t, home
-        auto.step(perc.lane_offset, perc.lane_curvature, params, dt, None,
+        auto.step(perc.lane_offset, perc.lane_curvature, params, dt,
                   profile=watch.profile_for(path), provisional=perc.provisional)
         watch.observe_hold(auto.holding, dt)
         if auto.stop_reason and (not stops or t - stops[-1] > 1.0):
@@ -752,7 +841,7 @@ def main() -> int:
             ok = run_auto_parity(clip, baseline_tracker, args.limit, tuned_params) and ok
     if "controller" not in skip:
         ok = run_controller_parity(baseline_controller) and ok
-        ok = run_obstacle_rule_check() and ok
+        ok = run_obstacle_guard_check() and ok
     if "calibration" not in skip:
         for clip in clips:
             ok = run_calibration_check(clip, args.limit) and ok
