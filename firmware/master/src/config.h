@@ -117,6 +117,8 @@ constexpr uint16_t STEER_MAX_RIGHT_RAW = 155;
 // move the wrong way.
 constexpr bool STEER_INVERT_PWM = true;
 
-constexpr uint16_t TELEMETRY_PERIOD_MS = 100;
+// 20 Hz, the sonar node's CAN rate: at 10 Hz every other sonar frame was
+// dropped, and the host's obstacle filter needs every echo a side sensor gets.
+constexpr uint16_t TELEMETRY_PERIOD_MS = 50;
 
 }  // namespace config

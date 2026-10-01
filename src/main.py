@@ -11,6 +11,7 @@ logger = logging.getLogger("main")
 
 from config import Config
 from lights import LightsController
+from obstacle import ObstacleGuard
 from perception.line_tracking import LineTracker
 from input.autonomous import Autonomous
 from input.ps5 import BUTTON_NAMES, PS5Controller
@@ -52,7 +53,7 @@ def draw_throttle_bar(frame, throttle):
             cv.rectangle(frame, (bar_x - 5, bar_cy), (bar_x + 5, bar_cy + fill_h), color, -1)
 
 
-_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr")
+_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle")
 
 
 parser = argparse.ArgumentParser(description="Autonomous car tuner")
@@ -102,6 +103,7 @@ autonomous = Autonomous()
 detour_return = DetourReturn()
 ps5 = PS5Controller()
 lights = LightsController()
+obstacle_guard = ObstacleGuard()
 
 gui.set_pid_reset_callback(autonomous.reset)
 gui.set_master_port_callback(arduino.set_master_port)
@@ -144,12 +146,14 @@ while gui.is_running():
     sonar = arduino.read_sonar()
     if sonar is not None:
         last_sonar = sonar
+        obstacle_guard.observe(sonar)
+    obstacle_guard.update(dt)
 
     if gui.is_stopped():
         if not prev_stopped:
             arduino.send_estop()
         prev_stopped = True
-        gui.update_sonar(last_sonar)
+        gui.update_sonar(last_sonar, obstacle_guard)
         autonomous.reset()
         lights.update(0.0, estopped=True, autonomous=gui.is_autonomous())
         lights_output = lights.compute()
@@ -181,7 +185,10 @@ while gui.is_running():
 
     perc = tracker.process(frame, params, anchor_for(path))
 
-    returned = detour_return.update(path, perc, dt)
+    # Stopped for an obstacle the car is not moving: the detour's gap and
+    # steady-lane timers must not count a car standing in the gap.
+    obstacle_stopped = gui.is_autonomous() and obstacle_guard.stopped
+    returned = None if obstacle_stopped else detour_return.update(path, perc, dt)
     if returned is not None:
         logger.info(f"Detour entrance passed, returning to {returned.value} (lane {perc.lane_state})")
         gui.set_path(returned)
@@ -202,10 +209,11 @@ while gui.is_running():
 
     if gui.is_autonomous():
         steering, throttle = autonomous.step(
-            perc.lane_offset, perc.lane_curvature, params, dt, last_sonar,
+            perc.lane_offset, perc.lane_curvature, params, dt, obstacle_guard.scale,
             profile=detour_return.profile_for(path), provisional=perc.provisional,
         )
-        detour_return.observe_hold(autonomous.holding, dt)
+        if not obstacle_stopped:
+            detour_return.observe_hold(autonomous.holding, dt)
     else:
         autonomous.reset()
         steering, throttle = ps5.poll()
@@ -218,8 +226,7 @@ while gui.is_running():
     draw_steering_bar(perc.display_frame, steering)
     draw_throttle_bar(perc.display_frame, throttle)
 
-    obstacle_blocked = gui.is_autonomous() and last_sonar is not None and last_sonar.blocked
-    lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(), obstacle_blocked=obstacle_blocked)
+    lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(), obstacle_stopped=obstacle_stopped)
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
     arduino.send_motor(throttle, steering)
@@ -236,6 +243,7 @@ while gui.is_running():
             autonomous.profile_label, autonomous.stop_reason or "",
             "" if last_sonar is None else f"{last_sonar.state}:{last_sonar.nearest_cm}",
             "" if last_sonar is None else " ".join("-" if d is None else str(d) for d in last_sonar.distances),
+            obstacle_guard.label if obstacle_guard.nearest_cm is None else f"{obstacle_guard.label}:{obstacle_guard.nearest_cm}",
         ))
 
     gui.update_textures(perc)
@@ -247,7 +255,7 @@ while gui.is_running():
         stop_text = f"holding {autonomous.holding:.1f}s"
     gui.update_telemetry(fps, int(round(error)), steering, throttle, lane_text, stop_text)
     gui.update_path_status(path, perc.profile_ready, perc.lane_state)
-    gui.update_sonar(last_sonar)
+    gui.update_sonar(last_sonar, obstacle_guard)
     gui.render_frame()
 
 cap.release()
