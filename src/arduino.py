@@ -20,10 +20,6 @@ class SonarReading:
   # the master only sent the nearest value.
   distances: tuple[Optional[int], ...] = ()
 
-  @property
-  def blocked(self) -> bool:
-    return self.state in ("B", "X")
-
 
 class _SerialPort:
   def __init__(self, baudrate: int):

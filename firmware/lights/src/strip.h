@@ -13,6 +13,7 @@ enum class Effect : uint8_t {
   RAINBOW,
   CYAN,
   RED_PULSE,
+  POLICE,
 };
 
 void init();
