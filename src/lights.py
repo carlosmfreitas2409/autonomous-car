@@ -63,6 +63,7 @@ class LightsController:
 
     def __init__(self):
         self.turn_signal = TurnSignal.OFF
+        self.signal_override: TurnSignal | None = None
         self.drl = False
         self.low_beam = False
         self.logo = False
@@ -104,8 +105,9 @@ class LightsController:
         return StripEffect.CYAN if self._autonomous else StripEffect.GREEN
 
     def compute(self) -> LightsOutput:
-        left_active = self.turn_signal in (TurnSignal.LEFT, TurnSignal.HAZARD)
-        right_active = self.turn_signal in (TurnSignal.RIGHT, TurnSignal.HAZARD)
+        signal = self.turn_signal if self.signal_override is None else self.signal_override
+        left_active = signal in (TurnSignal.LEFT, TurnSignal.HAZARD)
+        right_active = signal in (TurnSignal.RIGHT, TurnSignal.HAZARD)
 
         return LightsOutput(
             front_left_signal=left_active,

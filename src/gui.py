@@ -10,6 +10,7 @@ from path import HOME_PATH, Path
 from perception.line_tracking import LineTrackingResult
 from perception.sign_worker import DEBUG_HEIGHT, DEBUG_WIDTH, SignSnapshot
 from input.sign_policy import PolicyState, SignConstraint
+from input.mission import LETTERS, Mission, MissionCommand, MissionState
 
 
 _PATH_LABELS = {
@@ -49,6 +50,17 @@ _SONAR_STATES = {
     "X": ("STALE", (255, 80, 80)),
 }
 
+_NO_LETTER = "-"
+
+_MISSION_COLOUR = {
+    MissionState.IDLE: (150, 150, 150),
+    MissionState.DRIVING: (0, 255, 0),
+    MissionState.SLOWING: (255, 200, 0),
+    MissionState.STOPPED: (255, 80, 80),
+    MissionState.LEAVING: (255, 200, 0),
+    MissionState.DONE: (130, 200, 255),
+}
+
 _POLICY_COLOUR = {
     PolicyState.CLEAR: (0, 255, 0),
     PolicyState.SLOWING: (255, 200, 0),
@@ -65,7 +77,9 @@ class TunerGUI:
         self._tags = {}
         self._signs_uploaded_at = -1.0
         self._lights: LightsController | None = None
-        self._turn_signal_before_detour: str | None = None
+        self._path_request: Path | None = None
+        self._mission_request: tuple[str | None, str | None] | None = None
+        self._shown_letters: tuple[str | None, str | None] = (None, None)
         self._build(config, frame_w, frame_h)
 
         self._refresh_ports()
@@ -153,6 +167,7 @@ class TunerGUI:
                             tuple(_path_item_label(label) for label in _PATH_LABELS),
                             horizontal=True,
                             default_value=_path_item_label(_PATH_NAMES[HOME_PATH]),
+                            callback=self._on_path,
                         )
                         dpg.add_spacer(width=8)
                         self._tags["mode"] = dpg.add_button(label="Autonomous Mode", callback=self._toggle_mode, width=120)
@@ -250,6 +265,20 @@ class TunerGUI:
                         self._tags["signs_policy"] = dpg.add_text("Policy: --", color=(150, 150, 150))
                         self._tags["signs_detail"] = dpg.add_text("", color=(200, 200, 200))
 
+                        dpg.add_spacer(height=8)
+                        dpg.add_text("Mission", color=(130, 200, 255))
+                        for key, label in (("pickup", "Pickup  "), ("delivery", "Delivery")):
+                            with dpg.group(horizontal=True):
+                                dpg.add_text(label)
+                                self._tags[key] = dpg.add_radio_button(
+                                    (_NO_LETTER,) + LETTERS,
+                                    horizontal=True,
+                                    default_value=_NO_LETTER,
+                                    callback=self._on_mission_letters,
+                                )
+                        self._tags["mission_status"] = dpg.add_text("Mission: idle", color=(150, 150, 150))
+                        self._tags["mission_route"] = dpg.add_text("", color=(200, 200, 200))
+
         dpg.set_primary_window("primary", True)
         dpg.setup_dearpygui()
         dpg.show_viewport()
@@ -335,15 +364,19 @@ class TunerGUI:
 
     # --- path ------------------------------------------------------------
 
-    def path(self) -> Path:
-        return _PATH_LABELS[_path_item_name(dpg.get_value(self._tags["path"]))]
+    def _on_path(self, _sender, value):
+        self._path_request = _PATH_LABELS[_path_item_name(value)]
 
-    def set_path(self, path: Path):
-        dpg.set_value(self._tags["path"], _path_item_label(_PATH_NAMES[path]))
+    def poll_path_request(self) -> Path | None:
+        """The path the operator clicked since the last call, if any."""
+        request, self._path_request = self._path_request, None
+        return request
 
     def update_path_status(self, path: Path, profile_ready: bool, lane_state: str):
-        """Colour the Path label: orange while the Detour is armed, red when an
-        anchored path was selected before the tracker has a lane width."""
+        """Show the loop's path on the radio. Colour the label: orange while
+        the Detour is armed, red when an anchored path was selected before the
+        tracker has a lane width."""
+        dpg.set_value(self._tags["path"], _path_item_label(_PATH_NAMES[path]))
         tag = self._tags["path_label"]
         if path is not Path.NORMAL and not profile_ready:
             dpg.set_value(tag, f"Path ({lane_state}):")
@@ -354,22 +387,6 @@ class TunerGUI:
         else:
             dpg.set_value(tag, "Path:")
             dpg.configure_item(tag, color=_PATH_COLOR_IDLE)
-
-    def set_turn_signal(self, label: str | None):
-        """Mirror the Detour latch on the right turn signal.
-
-        `dpg.set_value` does not fire the radio's callback, so the lights
-        controller is updated explicitly. Passing None restores the value the
-        operator had before the Detour was armed."""
-        tag = self._tags["turn_signal"]
-        if label is None:
-            if self._turn_signal_before_detour is None:
-                return
-            label, self._turn_signal_before_detour = self._turn_signal_before_detour, None
-        elif self._turn_signal_before_detour is None:
-            self._turn_signal_before_detour = dpg.get_value(tag)
-        dpg.set_value(tag, label)
-        self._on_turn_signal(tag, label)
 
     def update_sonar(self, reading):
         tag = self._tags["tel_sonar"]
@@ -420,6 +437,42 @@ class TunerGUI:
         for track in snapshot.tracks:
             lines.append(_detail(track))
         dpg.set_value(self._tags["signs_detail"], "\n".join(lines[:6]))
+
+    # --- mission ---------------------------------------------------------
+
+    def _on_mission_letters(self, sender, value):
+        # The clicked value, not dpg.get_value: callbacks run on DearPyGui's
+        # thread and `update_mission` may already have snapped the radio back.
+        letter = None if value == _NO_LETTER else value
+        pickup, delivery = self._shown_letters
+        if sender == self._tags["pickup"]:
+            pickup = letter
+        else:
+            delivery = letter
+        self._mission_request = (pickup, delivery)
+
+    def poll_mission_request(self) -> tuple[str | None, str | None] | None:
+        """The (pickup, delivery) letters the operator picked since the last
+        call, if any; None stands for "-"."""
+        request, self._mission_request = self._mission_request, None
+        return request
+
+    def update_mission(self, mission: Mission, command: MissionCommand, applied: bool):
+        """Show the mission's letters (a change it refused snaps back) and state."""
+        self._shown_letters = (mission.pickup, mission.delivery)
+        dpg.set_value(self._tags["pickup"], mission.pickup or _NO_LETTER)
+        dpg.set_value(self._tags["delivery"], mission.delivery or _NO_LETTER)
+
+        text = f"Mission: {mission.stage.value}"
+        if mission.target:
+            text += f" {mission.target} · next exit {mission.next_exit}"
+        if command.reason:
+            text += f" - {command.reason}"
+        if not applied and command.state is not MissionState.IDLE:
+            text += " (not applied - manual)"
+        dpg.set_value(self._tags["mission_status"], text)
+        dpg.configure_item(self._tags["mission_status"], color=_MISSION_COLOUR[command.state])
+        dpg.set_value(self._tags["mission_route"], " > ".join(mission.route))
 
     def is_running(self) -> bool:
         return dpg.is_dearpygui_running()
