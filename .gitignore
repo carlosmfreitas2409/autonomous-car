@@ -19,4 +19,15 @@ __pycache__/
 firmware/**/compile_commands.json
 firmware/**/.cache
 
+# Sign detection: generated data and weights stay on the machine that made
+# them. Everything under dataset/ is derived and can be rebuilt, so it is safe
+# to delete the whole directory. The photographs and the hand-drawn labels that
+# cannot be rebuilt live in assets/real/ and are versioned.
+dataset/
+runs/
+yolo*.pt
+clips/*.mov
+.pytest_cache/
+models/*.onnx
+
 .DS_Store

@@ -1,0 +1,7 @@
+# Training-box only (Ryzen + RTX 3060). Never installed on the Mac that runs
+# the car: torch and ultralytics are ~2.5 GB and the Mac only ever needs to
+# load the exported models/signs.onnx through onnxruntime.
+pytest
+ultralytics
+onnx
+matplotlib

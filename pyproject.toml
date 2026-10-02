@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+# src/ is on the path so the modules import flat (perception.traffic_light),
+# the same way src/main.py imports them at runtime.
+pythonpath = ["src"]
+testpaths = ["tests"]

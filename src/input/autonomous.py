@@ -119,6 +119,15 @@ class Autonomous:
         self.stop_reason = None
         self.holding = 0.0
 
+    @staticmethod
+    def crawl_speed(params: Config) -> float:
+        """The slowest throttle the car still moves at: the sharp-bend floor.
+
+        Anything a policy ramps the throttle down to has to stay at or above
+        this, or the car stalls short of where the policy wanted it to stop.
+        """
+        return params.min_speed * _SHARP_CURVE_FLOOR
+
     @property
     def profile(self) -> ControlProfile:
         return self._profile
@@ -279,5 +288,5 @@ class Autonomous:
         if demand <= 1.0:
             return params.base_speed - demand * (params.base_speed - params.min_speed)
         extra = min(1.0, demand - 1.0)
-        floor = params.min_speed * _SHARP_CURVE_FLOOR
+        floor = Autonomous.crawl_speed(params)
         return params.min_speed - extra * (params.min_speed - floor)

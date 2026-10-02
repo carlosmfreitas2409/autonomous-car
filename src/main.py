@@ -15,8 +15,19 @@ from obstacle import ObstacleGuard
 from perception.line_tracking import LineTracker
 from input.autonomous import Autonomous
 from input.ps5 import BUTTON_NAMES, PS5Controller
+from input.sign_policy import SignConstraint, SignPolicy
 from path import HOME_PATH, DetourReturn, Path, anchor_for, profile_for
+from perception.sign_worker import SignWorker
 from gui import TunerGUI
+
+
+# Sign perception runs on its own thread with its own camera: the worker takes
+# the first of these indices that opens, minus whichever one the drive camera
+# already holds. No model at SIGN_MODEL_PATH means no sign detection and an
+# unchanged car. Confidence is the value measured in sign-detection.md.
+SIGN_CAM_INDICES = (0, 1, 2, 3)
+SIGN_MODEL_PATH = "models/signs.onnx"
+SIGN_CONFIDENCE = 0.5
 
 
 def draw_steering_bar(frame, steering):
@@ -60,7 +71,7 @@ parser = argparse.ArgumentParser(description="Autonomous car tuner")
 parser.add_argument("--video", help="replay a recorded video instead of the camera")
 parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
 parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
-parser.add_argument("--camera", type=int, default=0, help="camera index when not replaying a video (default 0)")
+parser.add_argument("--camera", type=int, default=2, help="camera index when not replaying a video (default 0)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 args = parser.parse_args()
 
@@ -104,16 +115,21 @@ detour_return = DetourReturn()
 ps5 = PS5Controller()
 lights = LightsController()
 obstacle_guard = ObstacleGuard()
+sign_cam_indices = tuple(i for i in SIGN_CAM_INDICES if args.video or i != args.camera)
+sign_worker = SignWorker(sign_cam_indices, SIGN_MODEL_PATH, SIGN_CONFIDENCE)
+sign_policy = SignPolicy()
+sign_worker.start()
 
 gui.set_pid_reset_callback(autonomous.reset)
 gui.set_master_port_callback(arduino.set_master_port)
 gui.set_lights_controller(lights)
 
 fps = 0.0
-start_time = time.time()
+start_time = time.monotonic()
 prev_time = start_time
 prev_stopped = False
 last_sonar = None
+held_steering = None
 prev_stop_reason = None
 prev_path = gui.path()
 prev_lane_state = None
@@ -121,7 +137,7 @@ frame_index = -1
 warned_calibrating = False
 
 while gui.is_running():
-    now = time.time()
+    now = time.monotonic()
     dt = now - prev_time
     prev_time = now
 
@@ -155,9 +171,12 @@ while gui.is_running():
         prev_stopped = True
         gui.update_sonar(last_sonar, obstacle_guard)
         autonomous.reset()
+        sign_policy.reset()
+        held_steering = None
         lights.update(0.0, estopped=True, autonomous=gui.is_autonomous())
         lights_output = lights.compute()
         arduino.send_lights(lights_output)
+        gui.update_signs(sign_worker.get_snapshot(), SignConstraint(reason="e-stop"), applied=False)
         gui.render_frame()
         continue
     prev_stopped = False
@@ -223,10 +242,35 @@ while gui.is_running():
         logger.info(f"Stop reason: {autonomous.stop_reason or 'none'} (lane {perc.lane_state})")
         prev_stop_reason = autonomous.stop_reason
 
+    # One lock, then pure arithmetic: the control loop never waits on the
+    # sign camera or the model.
+    snapshot = sign_worker.get_snapshot()
+    constraint = sign_policy.update(snapshot, now)
+    if gui.is_autonomous():
+        if constraint.hold or throttle <= 0.0:
+            throttle *= constraint.scale
+        elif constraint.scale < 1.0:
+            # Slow down, but never below the speed the car still moves at:
+            # a ramp that bottoms out under the motors' minimum PWM parks
+            # the car above the stop line, where the policy never reaches
+            # its hold and so never releases.
+            throttle = max(throttle * constraint.scale, autonomous.crawl_speed(params))
+        if constraint.hold:
+            # Stopped: keep sending the same steering so the PID's chase of
+            # threshold jitter on a static frame cannot kick the wheel around.
+            # The PID keeps running with its output discarded; no reset on
+            # release, so there is no derivative spike.
+            if held_steering is None:
+                held_steering = steering
+            steering = held_steering
+        else:
+            held_steering = None
+
     draw_steering_bar(perc.display_frame, steering)
     draw_throttle_bar(perc.display_frame, throttle)
 
-    lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(), obstacle_stopped=obstacle_stopped)
+    sign_stopped = gui.is_autonomous() and constraint.hold
+    lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(), obstacle_stopped=obstacle_stopped or sign_stopped)
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
     arduino.send_motor(throttle, steering)
@@ -251,14 +295,20 @@ while gui.is_running():
     if detour_return.stage:
         lane_text = f"{lane_text} | {detour_return.stage}"
     stop_text = autonomous.stop_reason
+    if stop_text is None and constraint.hold:
+        # The sign policy stops the car without the controller knowing why, so
+        # the one red label still answers "why is it not moving".
+        stop_text = constraint.reason or constraint.state.value
     if stop_text is None and autonomous.holding > 0:
         stop_text = f"holding {autonomous.holding:.1f}s"
     gui.update_telemetry(fps, int(round(error)), steering, throttle, lane_text, stop_text)
     gui.update_path_status(path, perc.profile_ready, perc.lane_state)
     gui.update_sonar(last_sonar, obstacle_guard)
+    gui.update_signs(snapshot, constraint, applied=gui.is_autonomous())
     gui.render_frame()
 
 cap.release()
+sign_worker.close()
 if recorder is not None:
     recorder.release()
 if log_file is not None:

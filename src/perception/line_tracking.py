@@ -89,8 +89,7 @@ class LaneAnchor(Enum):
 @dataclass
 class LineTrackingResult:
     display_frame: np.ndarray
-    blur_frame: np.ndarray
-    binary_frame: np.ndarray
+    debug_frame: np.ndarray
     lane_offset: Optional[int]
     lane_curvature: Optional[float]
     lane_state: str = ""
@@ -187,16 +186,16 @@ class LineTracker:
         roi_y1 = round(height * min(1.0, params.roi_y1))
         roi_center_x = (roi_x0 + roi_x1) // 2
 
-        blur_display = cv.cvtColor(blur, cv.COLOR_GRAY2BGR)
-        cv.rectangle(blur_display, (roi_x0, roi_y0), (roi_x1, roi_y1), (0, 255, 0), 1)
-        cv.line(blur_display, (roi_center_x, roi_y0), (roi_center_x, roi_y1), (255, 255, 255), 1)
+        debug = cv.cvtColor(binary, cv.COLOR_GRAY2BGR)
+        cv.rectangle(debug, (roi_x0, roi_y0), (roi_x1, roi_y1), (0, 255, 0), 1)
+        cv.line(debug, (roi_center_x, roi_y0), (roi_center_x, roi_y1), (255, 255, 255), 1)
 
         scan_ys = np.linspace(roi_y0, roi_y1, max(1, params.scan_lines), dtype=int)
         scan_origin = self._prev_track_center if self._prev_track_center is not None else center_x
 
         if anchor is not self._anchor_side:
             self._begin_anchor(anchor)
-        scan_args = (binary, blur_display, scan_ys, scan_origin, roi_x0, roi_x1, height)
+        scan_args = (binary, debug, scan_ys, scan_origin, roi_x0, roi_x1, height)
 
         provisional = False
         width_ratios: tuple[float, ...] = ()
@@ -211,7 +210,7 @@ class LineTracker:
             self._learn_width(widths)
             both_rows = len(samples)
             roi_samples = [(y, right_x - left_x) for y, left_x, right_x in samples]
-            band_samples = self._scan_band(binary, blur_display, scan_origin, width, height, roi_y0)
+            band_samples = self._scan_band(binary, debug, scan_origin, width, height, roi_y0)
             if not self.profile_ready:
                 if self._learn_geometry(roi_samples, band_samples, roi_y0):
                     self._calibration += 1
@@ -225,7 +224,7 @@ class LineTracker:
                 lane_state = f"calibrating {self._calibration}/{_CALIBRATION_FRAMES}"
             row_centers = tuple((y, c, any(s[0] == y for s in samples)) for y, c in zip(center_ys, centers))
         else:
-            band_samples = self._scan_band(binary, blur_display, scan_origin, width, height, roi_y0)
+            band_samples = self._scan_band(binary, debug, scan_origin, width, height, roi_y0)
             centers, center_ys, lane_state, width_ratios, provisional, both_rows = self._anchored_frame(scan_args, band_samples, width)
             row_centers = tuple((y, c, False) for y, c in zip(center_ys, centers))
 
@@ -237,7 +236,7 @@ class LineTracker:
             # not let it move the smoothing, the scan origin or the curvature.
             raw_x = int(np.median(centers))
             lane_offset = raw_x - roi_center_x
-            cv.line(blur_display, (raw_x, roi_y0), (raw_x, roi_y1), (0, 128, 255), 1)
+            cv.line(debug, (raw_x, roi_y0), (raw_x, roi_y1), (0, 128, 255), 1)
         elif centers:
             track_center_x = int(np.median(centers))
             self._prev_track_center = track_center_x
@@ -257,7 +256,7 @@ class LineTracker:
             smoothed_x = int(self._smoothed_center)
             lane_offset = smoothed_x - roi_center_x
 
-            cv.line(blur_display, (smoothed_x, roi_y0), (smoothed_x, roi_y1), (0, 0, 255), 2)
+            cv.line(debug, (smoothed_x, roi_y0), (smoothed_x, roi_y1), (0, 0, 255), 2)
 
             # Curvature = lateral trend of the centerline across the ROI height,
             # expressed as the slope dx/dy (x-pixels per y-pixel). As a ratio it
@@ -279,12 +278,11 @@ class LineTracker:
                 far_y = min(center_ys)
                 near_x = int(np.polyval(fit, near_y))
                 far_x = int(np.polyval(fit, far_y))
-                cv.line(blur_display, (near_x, near_y), (far_x, far_y), (255, 0, 255), 1)
+                cv.line(debug, (near_x, near_y), (far_x, far_y), (255, 0, 255), 1)
 
         return LineTrackingResult(
             display_frame=frame,
-            blur_frame=blur_display,
-            binary_frame=cv.cvtColor(binary, cv.COLOR_GRAY2BGR),
+            debug_frame=debug,
             lane_offset=lane_offset,
             lane_curvature=lane_curvature,
             lane_state=lane_state,
@@ -463,7 +461,7 @@ class LineTracker:
 
     # --- scans -----------------------------------------------------------
 
-    def _scan_auto(self, binary, blur_display, scan_ys, scan_origin, roi_x0, roi_x1, height):
+    def _scan_auto(self, binary, debug, scan_ys, scan_origin, roi_x0, roi_x1, height):
         """Scan every row outward from the same origin and split the two lines.
 
         Returns the centers, their rows, the both-lines widths (what the scalar
@@ -502,7 +500,7 @@ class LineTracker:
                 widths.append(right_x - left_x)
                 samples.append((int(sy), left_x, right_x))
                 both += 1
-                cv.line(blur_display, (left_x, sy), (right_x, sy), (0, 255, 255), 1)
+                cv.line(debug, (left_x, sy), (right_x, sy), (0, 255, 255), 1)
             elif left_x != -1 and self._half_lane_width is not None:
                 center = int(left_x + self._half_lane_width)
                 left_only += 1
@@ -523,7 +521,7 @@ class LineTracker:
         )
         return centers, center_ys, widths, samples, f"{label} {count}/{rows}"
 
-    def _scan_band(self, binary, blur_display, scan_origin, width, height, roi_y0):
+    def _scan_band(self, binary, debug, scan_origin, width, height, roi_y0):
         """Measure the lane in the rows above the ROI. Returns (y, width) samples.
 
         Rows are chained upward from the scan origin: each row's midpoint is
@@ -551,11 +549,11 @@ class LineTracker:
                 continue
             samples.append((y, right_x - left_x))
             origin = max(1, min(width - 1, (left_x + right_x) // 2))
-            cv.circle(blur_display, (left_x, y), 1, _BAND_COLOR, -1)
-            cv.circle(blur_display, (right_x, y), 1, _BAND_COLOR, -1)
+            cv.circle(debug, (left_x, y), 1, _BAND_COLOR, -1)
+            cv.circle(debug, (right_x, y), 1, _BAND_COLOR, -1)
         return samples
 
-    def _scan_anchored(self, binary, blur_display, scan_ys, scan_origin, roi_x0, roi_x1, height, width):
+    def _scan_anchored(self, binary, debug, scan_ys, scan_origin, roi_x0, roi_x1, height, width):
         """Follow a single lane edge, placing the center one half-lane inside it.
 
         Rows are walked near-to-far and each one starts its scan from the
@@ -614,7 +612,7 @@ class LineTracker:
                     fallback_centers.append(center)
                     fallback_ys.append(row_y)
                     chain_x = center
-                    cv.circle(blur_display, (other_x, row_y), 3, (0, 255, 255), 1)
+                    cv.circle(debug, (other_x, row_y), 3, (0, 255, 255), 1)
                 continue
 
             found.append((row_y, edge_x, other_x))
@@ -635,9 +633,9 @@ class LineTracker:
                 measured = abs(other_x - edge_x)
                 ratios.append(measured / (2.0 * half))
                 samples.append((row_y, measured))
-                cv.line(blur_display, (edge_x, row_y), (other_x, row_y), (0, 255, 255), 1)
-            cv.line(blur_display, (edge_x, row_y), (center, row_y), _ANCHOR_COLOR, 1)
-            cv.circle(blur_display, (edge_x, row_y), 3, _ANCHOR_COLOR, -1)
+                cv.line(debug, (edge_x, row_y), (other_x, row_y), (0, 255, 255), 1)
+            cv.line(debug, (edge_x, row_y), (center, row_y), _ANCHOR_COLOR, 1)
+            cv.circle(debug, (edge_x, row_y), 3, _ANCHOR_COLOR, -1)
 
         return centers, center_ys, ratios, samples, rows
 

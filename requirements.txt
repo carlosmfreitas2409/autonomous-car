@@ -2,3 +2,5 @@ opencv-python
 dearpygui
 pygame
 pyserial
+numpy
+onnxruntime
