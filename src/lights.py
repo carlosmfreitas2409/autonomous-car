@@ -64,6 +64,7 @@ class LightsController:
 
     def __init__(self):
         self.turn_signal = TurnSignal.OFF
+        self.signal_override: TurnSignal | None = None
         self.drl = False
         self.low_beam = False
         self.logo = False
@@ -105,9 +106,14 @@ class LightsController:
         return StripEffect.CYAN if self._autonomous else StripEffect.GREEN
 
     def compute(self) -> LightsOutput:
-        # Stopped for an obstacle: hazards, over whatever the operator (or
-        # the Detour latch) selected; that selection returns once it clears.
-        signal = TurnSignal.HAZARD if self._obstacle_stopped else self.turn_signal
+        # Stopped for an obstacle: hazards, over the loop's override (Detour,
+        # mission) and the operator's choice; those return once it clears.
+        if self._obstacle_stopped:
+            signal = TurnSignal.HAZARD
+        elif self.signal_override is not None:
+            signal = self.signal_override
+        else:
+            signal = self.turn_signal
         left_active = signal in (TurnSignal.LEFT, TurnSignal.HAZARD)
         right_active = signal in (TurnSignal.RIGHT, TurnSignal.HAZARD)
 

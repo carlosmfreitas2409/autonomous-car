@@ -10,12 +10,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("main")
 
 from config import Config
-from lights import LightsController
+from lights import LightsController, TurnSignal
 from obstacle import ObstacleGuard
 from perception.line_tracking import LineTracker
 from input.autonomous import Autonomous
 from input.ps5 import BUTTON_NAMES, PS5Controller
 from input.sign_policy import SignConstraint, SignPolicy
+from input.mission import Mission, MissionCommand
 from path import HOME_PATH, DetourReturn, Path, anchor_for, profile_for
 from perception.sign_worker import SignWorker
 from gui import TunerGUI
@@ -64,14 +65,14 @@ def draw_throttle_bar(frame, throttle):
             cv.rectangle(frame, (bar_x - 5, bar_cy), (bar_x + 5, bar_cy + fill_h), color, -1)
 
 
-_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle")
+_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state")
 
 
 parser = argparse.ArgumentParser(description="Autonomous car tuner")
 parser.add_argument("--video", help="replay a recorded video instead of the camera")
 parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
 parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
-parser.add_argument("--camera", type=int, default=2, help="camera index when not replaying a video (default 0)")
+parser.add_argument("--camera", type=int, default=1, help="camera index when not replaying a video (default 0)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 args = parser.parse_args()
 
@@ -118,6 +119,7 @@ obstacle_guard = ObstacleGuard()
 sign_cam_indices = tuple(i for i in SIGN_CAM_INDICES if args.video or i != args.camera)
 sign_worker = SignWorker(sign_cam_indices, SIGN_MODEL_PATH, SIGN_CONFIDENCE)
 sign_policy = SignPolicy()
+mission = Mission()
 sign_worker.start()
 
 gui.set_pid_reset_callback(autonomous.reset)
@@ -131,7 +133,8 @@ prev_stopped = False
 last_sonar = None
 held_steering = None
 prev_stop_reason = None
-prev_path = gui.path()
+path = HOME_PATH
+prev_path = path
 prev_lane_state = None
 frame_index = -1
 warned_calibrating = False
@@ -155,9 +158,16 @@ while gui.is_running():
 
     # Path buttons are read before the stopped branch so the Detour can be
     # armed while the car waits at the sign.
-    requested_path = ps5.poll_path_buttons()
-    if requested_path is not None:
-        gui.set_path(requested_path)
+    for requested_path in (ps5.poll_path_buttons(), gui.poll_path_request()):
+        if requested_path is not None:
+            path = requested_path
+
+    letters = gui.poll_mission_request()
+    if letters is not None:
+        if gui.is_stopped():
+            mission.configure(*letters)
+        else:
+            logger.warning("Pickup/delivery can only be changed while e-stopped")
 
     sonar = arduino.read_sonar()
     if sonar is not None:
@@ -172,11 +182,15 @@ while gui.is_running():
         gui.update_sonar(last_sonar, obstacle_guard)
         autonomous.reset()
         sign_policy.reset()
+        mission.reset()
         held_steering = None
+        lights.signal_override = TurnSignal.RIGHT if path is Path.DETOUR else None
         lights.update(0.0, estopped=True, autonomous=gui.is_autonomous())
         lights_output = lights.compute()
         arduino.send_lights(lights_output)
         gui.update_signs(sign_worker.get_snapshot(), SignConstraint(reason="e-stop"), applied=False)
+        gui.update_mission(mission, MissionCommand(reason="e-stop"), applied=False)
+        gui.update_path_status(path, tracker.profile_ready, "e-stop")
         gui.render_frame()
         continue
     prev_stopped = False
@@ -200,7 +214,14 @@ while gui.is_running():
         recorder.write(frame)
 
     params = gui.read_params()
-    path = gui.path()
+
+    # One lock, then pure arithmetic: the control loop never waits on the
+    # sign camera or the model. The mission decides before the tracker runs,
+    # so a detour sign's decision anchors this very frame.
+    snapshot = sign_worker.get_snapshot()
+    mission_command = mission.update(snapshot, path, now)
+    if mission_command.path is not None:
+        path = mission_command.path
 
     perc = tracker.process(frame, params, anchor_for(path))
 
@@ -210,16 +231,11 @@ while gui.is_running():
     returned = None if obstacle_stopped else detour_return.update(path, perc, dt)
     if returned is not None:
         logger.info(f"Detour entrance passed, returning to {returned.value} (lane {perc.lane_state})")
-        gui.set_path(returned)
         path = returned
 
     if path is not prev_path:
         autonomous.seed_derivative()
         logger.info(f"Path: {path.value} (lane {perc.lane_state})")
-        if path is Path.DETOUR:
-            gui.set_turn_signal("Right")
-        elif prev_path is Path.DETOUR:
-            gui.set_turn_signal(None)
         prev_path = path
         warned_calibrating = False
     if path is not Path.NORMAL and not perc.profile_ready and not warned_calibrating:
@@ -242,20 +258,20 @@ while gui.is_running():
         logger.info(f"Stop reason: {autonomous.stop_reason or 'none'} (lane {perc.lane_state})")
         prev_stop_reason = autonomous.stop_reason
 
-    # One lock, then pure arithmetic: the control loop never waits on the
-    # sign camera or the model.
-    snapshot = sign_worker.get_snapshot()
+    # Stop signs, lights and the mission's stops: the most restrictive wins.
     constraint = sign_policy.update(snapshot, now)
+    scale = min(constraint.scale, mission_command.scale)
+    hold = constraint.hold or mission_command.hold
     if gui.is_autonomous():
-        if constraint.hold or throttle <= 0.0:
-            throttle *= constraint.scale
-        elif constraint.scale < 1.0:
+        if hold or throttle <= 0.0:
+            throttle *= scale
+        elif scale < 1.0:
             # Slow down, but never below the speed the car still moves at:
             # a ramp that bottoms out under the motors' minimum PWM parks
             # the car above the stop line, where the policy never reaches
             # its hold and so never releases.
-            throttle = max(throttle * constraint.scale, autonomous.crawl_speed(params))
-        if constraint.hold:
+            throttle = max(throttle * scale, autonomous.crawl_speed(params))
+        if hold:
             # Stopped: keep sending the same steering so the PID's chase of
             # threshold jitter on a static frame cannot kick the wheel around.
             # The PID keeps running with its output discarded; no reset on
@@ -269,6 +285,14 @@ while gui.is_running():
     draw_steering_bar(perc.display_frame, steering)
     draw_throttle_bar(perc.display_frame, throttle)
 
+    # The mission's signals only mean something when it is driving.
+    if gui.is_autonomous() and mission_command.turn_signal is not None:
+        lights.signal_override = mission_command.turn_signal
+    else:
+        lights.signal_override = TurnSignal.RIGHT if path is Path.DETOUR else None
+
+    # The mission's own stops are left out: `obstacle_stopped` forces hazards,
+    # and a pickup signals left while still stopped before it pulls away.
     sign_stopped = gui.is_autonomous() and constraint.hold
     lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(), obstacle_stopped=obstacle_stopped or sign_stopped)
     lights_output = lights.compute()
@@ -288,6 +312,7 @@ while gui.is_running():
             "" if last_sonar is None else f"{last_sonar.state}:{last_sonar.nearest_cm}",
             "" if last_sonar is None else " ".join("-" if d is None else str(d) for d in last_sonar.distances),
             obstacle_guard.label if obstacle_guard.nearest_cm is None else f"{obstacle_guard.label}:{obstacle_guard.nearest_cm}",
+            mission.stage.value, mission.target or "", mission.next_exit, mission_command.state.value,
         ))
 
     gui.update_textures(perc)
@@ -295,16 +320,20 @@ while gui.is_running():
     if detour_return.stage:
         lane_text = f"{lane_text} | {detour_return.stage}"
     stop_text = autonomous.stop_reason
-    if stop_text is None and constraint.hold:
-        # The sign policy stops the car without the controller knowing why, so
-        # the one red label still answers "why is it not moving".
-        stop_text = constraint.reason or constraint.state.value
+    if stop_text is None and hold:
+        # The sign policy and the mission stop the car without the controller
+        # knowing why, so the one red label still answers "why is it not moving".
+        if constraint.hold:
+            stop_text = constraint.reason or constraint.state.value
+        else:
+            stop_text = mission_command.reason or mission_command.state.value
     if stop_text is None and autonomous.holding > 0:
         stop_text = f"holding {autonomous.holding:.1f}s"
     gui.update_telemetry(fps, int(round(error)), steering, throttle, lane_text, stop_text)
     gui.update_path_status(path, perc.profile_ready, perc.lane_state)
     gui.update_sonar(last_sonar, obstacle_guard)
     gui.update_signs(snapshot, constraint, applied=gui.is_autonomous())
+    gui.update_mission(mission, mission_command, applied=gui.is_autonomous())
     gui.render_frame()
 
 cap.release()
