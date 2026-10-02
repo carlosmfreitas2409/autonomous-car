@@ -22,6 +22,8 @@ bool strobe_on = false;
 uint32_t strobe_phase_started_ms = 0;
 uint16_t rainbow_hue = 0;
 uint16_t pulse_phase = 0;
+uint8_t police_step = 0;
+uint32_t police_phase_started_ms = 0;
 
 uint32_t solid_color(Effect e) {
   switch (e) {
@@ -30,6 +32,46 @@ uint32_t solid_color(Effect e) {
     case Effect::BLUE:  return Adafruit_NeoPixel::Color(0, 0, 255);
     case Effect::CYAN:  return Adafruit_NeoPixel::Color(0, 255, 255);
     default:            return 0;
+  }
+}
+
+void fill_range(uint16_t start, uint16_t end, uint32_t color) {
+  for (uint16_t i = start; i < end; ++i) {
+    pixels.setPixelColor(i, color);
+  }
+}
+
+void fill_left(uint32_t color) {
+  const uint16_t count = pixels.numPixels();
+  uint16_t front = config::STRIP_FRONT_COUNT;
+  if (front > count) front = count;
+  fill_range(0, front, color);
+  // Last trio is the rear; only the final pixel sits on the left half.
+  if (count >= config::STRIP_REAR_COUNT && (count - 1) >= front) {
+    pixels.setPixelColor(count - 1, color);
+  }
+}
+
+void fill_right(uint32_t color) {
+  const uint16_t count = pixels.numPixels();
+  if (count < 2) return;
+  uint16_t start = config::STRIP_FRONT_COUNT;
+  if (start >= (uint16_t)(count - 1)) return;
+  fill_range(start, (uint16_t)(count - 1), color);
+}
+
+uint16_t police_step_ms(uint8_t step) {
+  switch (step) {
+    case 0:
+    case 2:
+    case 4:
+    case 6:
+      return config::POLICE_FLASH_MS;
+    case 1:
+    case 5:
+      return config::POLICE_GAP_MS;
+    default:
+      return config::POLICE_PAUSE_MS;
   }
 }
 
@@ -85,6 +127,28 @@ void render(uint32_t now_ms) {
       rainbow_hue += config::RAINBOW_HUE_STEP;
       break;
     }
+
+    case Effect::POLICE: {
+      if (rendered_effect != effect) {
+        police_step = 0;
+      } else if ((now_ms - police_phase_started_ms) < police_step_ms(police_step)) {
+        return;
+      } else {
+        police_step = (uint8_t)((police_step + 1) % 8);
+      }
+      police_phase_started_ms = now_ms;
+
+      pixels.clear();
+      const bool left_on = (police_step == 0 || police_step == 2);
+      const bool right_on = (police_step == 4 || police_step == 6);
+      if (left_on) {
+        fill_left(Adafruit_NeoPixel::Color(255, 0, 0));
+      }
+      if (right_on) {
+        fill_right(Adafruit_NeoPixel::Color(0, 0, 255));
+      }
+      break;
+    }
   }
 
   rendered_effect = effect;
@@ -105,8 +169,8 @@ void init() {
 }
 
 void set_effect(uint8_t id) {
-  effect = (id > (uint8_t)Effect::RED_PULSE) ? Effect::OFF
-                                             : static_cast<Effect>(id);
+  effect = (id > (uint8_t)Effect::POLICE) ? Effect::OFF
+                                          : static_cast<Effect>(id);
 }
 
 void off() {

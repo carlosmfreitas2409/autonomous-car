@@ -40,14 +40,16 @@ _STRIP_EFFECT_LABELS = {
     "Red Pulse": StripEffect.RED_PULSE,
     "Strobe": StripEffect.STROBE,
     "Rainbow": StripEffect.RAINBOW,
+    "Police": StripEffect.POLICE,
 }
 
 _SONAR_STATES = {
-    "C": ("clear", (0, 255, 0)),
-    "S": ("slowing", (255, 200, 0)),
-    "B": ("BLOCKED", (255, 80, 80)),
-    "X": ("STALE", (255, 80, 80)),
+    "clear": ("clear", (0, 255, 0)),
+    "slow": ("slowing", (255, 200, 0)),
+    "stop": ("STOP", (255, 80, 80)),
+    "stale": ("STALE", (255, 80, 80)),
 }
+_SONAR_SIDES = ("L", "C", "R")
 
 _POLICY_COLOUR = {
     PolicyState.CLEAR: (0, 255, 0),
@@ -371,16 +373,20 @@ class TunerGUI:
         dpg.set_value(tag, label)
         self._on_turn_signal(tag, label)
 
-    def update_sonar(self, reading):
+    def update_sonar(self, reading, guard):
+        """Show what the sonar guard decided and every sensor's echo."""
         tag = self._tags["tel_sonar"]
         if reading is None:
             dpg.set_value(tag, "Sonar: no data")
             dpg.configure_item(tag, color=(255, 80, 80))
             return
 
-        label, color = _SONAR_STATES.get(reading.state, ("?", (150, 150, 150)))
-        distance = f"{reading.nearest_cm} cm" if reading.nearest_cm is not None else "clear"
-        dpg.set_value(tag, f"Sonar: {distance} [{label}]")
+        label, color = _SONAR_STATES.get(guard.label, ("?", (150, 150, 150)))
+        distance = "clear" if guard.nearest_cm is None else f"{guard.nearest_cm:.0f} cm"
+        sensors = []
+        for side, d in zip(_SONAR_SIDES, guard.distances):
+            sensors.append(f"{side} {'--' if d is None else f'{d:.0f}'}")
+        dpg.set_value(tag, f"Sonar: {distance} [{label}]  {'  '.join(sensors)}")
         dpg.configure_item(tag, color=color)
 
     def update_signs(self, snapshot: SignSnapshot, constraint: SignConstraint, applied: bool):

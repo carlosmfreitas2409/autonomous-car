@@ -18,6 +18,7 @@ class StripEffect(Enum):
     RAINBOW = 5
     CYAN = 6
     RED_PULSE = 7
+    POLICE = 8
 
 
 @dataclass
@@ -71,7 +72,7 @@ class LightsController:
         self.strip_effect: StripEffect | None = None
         self._estopped = False
         self._autonomous = True
-        self._obstacle_blocked = False
+        self._obstacle_stopped = False
         self._braking = False
         self._prev_throttle = 0.0
 
@@ -81,7 +82,7 @@ class LightsController:
         *,
         estopped: bool,
         autonomous: bool,
-        obstacle_blocked: bool = False,
+        obstacle_stopped: bool = False,
     ) -> None:
         speed = abs(throttle)
         prev_speed = abs(self._prev_throttle)
@@ -92,20 +93,23 @@ class LightsController:
         self._prev_throttle = throttle
         self._estopped = estopped
         self._autonomous = autonomous
-        self._obstacle_blocked = obstacle_blocked
+        self._obstacle_stopped = obstacle_stopped
 
     def _resolve_strip(self) -> StripEffect:
         if self.strip_effect is not None:
             return self.strip_effect
         if self._estopped:
             return StripEffect.RED_PULSE
-        if self._obstacle_blocked:
+        if self._obstacle_stopped:
             return StripEffect.RED
         return StripEffect.CYAN if self._autonomous else StripEffect.GREEN
 
     def compute(self) -> LightsOutput:
-        left_active = self.turn_signal in (TurnSignal.LEFT, TurnSignal.HAZARD)
-        right_active = self.turn_signal in (TurnSignal.RIGHT, TurnSignal.HAZARD)
+        # Stopped for an obstacle: hazards, over whatever the operator (or
+        # the Detour latch) selected; that selection returns once it clears.
+        signal = TurnSignal.HAZARD if self._obstacle_stopped else self.turn_signal
+        left_active = signal in (TurnSignal.LEFT, TurnSignal.HAZARD)
+        right_active = signal in (TurnSignal.RIGHT, TurnSignal.HAZARD)
 
         return LightsOutput(
             front_left_signal=left_active,

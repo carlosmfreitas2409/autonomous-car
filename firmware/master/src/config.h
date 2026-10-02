@@ -43,6 +43,27 @@ constexpr uint16_t BUZZER_TONE_HZ = 2700;
 constexpr uint16_t BUZZER_BEEP_ON_MS = 350;
 constexpr uint16_t BUZZER_BEEP_OFF_MS = 350;
 
+constexpr uint8_t PIN_BATT_SENSE = A10;
+
+constexpr float BATT_VOLTS_PER_COUNT = 12.56f / 562.0f;
+
+constexpr uint8_t BATT_ADC_SAMPLES = 4;
+
+constexpr uint8_t BATT_CURVE_POINTS = 8;
+constexpr float BATT_CURVE_V[BATT_CURVE_POINTS] = {
+    11.80f, 11.96f, 12.10f, 12.24f, 12.36f, 12.46f, 12.58f, 12.70f};
+constexpr float BATT_CURVE_PCT[BATT_CURVE_POINTS] = {
+    0.0f, 20.0f, 40.0f, 60.0f, 70.0f, 80.0f, 90.0f, 100.0f};
+
+constexpr uint16_t BATT_SAMPLE_PERIOD_MS = 200;
+constexpr float BATT_FILTER_ALPHA = 0.02f;
+
+constexpr uint8_t BATT_LED_COUNT = 6;
+constexpr uint8_t BATT_LED_PINS[BATT_LED_COUNT] = {43, 41, 39, 37, 35, 33};
+constexpr float BATT_LED_THRESHOLD_PCT[BATT_LED_COUNT] = {
+    15.0f, 30.0f, 50.0f, 65.0f, 80.0f, 97.0f};
+constexpr float BATT_LED_HYSTERESIS_PCT = 3.0f;
+
 constexpr uint16_t CAN_LIGHTS_ID = 0x100;
 
 constexpr uint16_t CAN_SONAR_ID = 0x080;
@@ -96,6 +117,8 @@ constexpr uint16_t STEER_MAX_RIGHT_RAW = 155;
 // move the wrong way.
 constexpr bool STEER_INVERT_PWM = true;
 
-constexpr uint16_t TELEMETRY_PERIOD_MS = 100;
+// 20 Hz, the sonar node's CAN rate: at 10 Hz every other sonar frame was
+// dropped, and the host's obstacle filter needs every echo a side sensor gets.
+constexpr uint16_t TELEMETRY_PERIOD_MS = 50;
 
 }  // namespace config

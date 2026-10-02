@@ -45,6 +45,8 @@ Telemetry output is gated by a compile flag — uncomment `-DTELEMETRY_ENABLED=1
 | Steering pot wiper | A11 |
 | MCP2515 SPI (CS / MISO / MOSI / SCK) | 53 / 50 / 51 / 52 |
 | Reverse buzzer | 46 (T5) |
+| Battery divider | A10 |
+| Battery LED bar (bottom → top) | 43, 41, 39, 37, 35 (2 segments), 33 (2 segments) |
 | Status LED | 13 |
 
 `R_EN` and `L_EN` are driven by the firmware, not strapped to 5V — `motors::disable()` and
@@ -63,7 +65,7 @@ USB Serial @ 115200 baud, newline-terminated ASCII.
 | `M` | `<throttle 0..255> <steering -255..+255>` | Set drive throttle and steering target. Resets watchdog. First non-zero `M` clears latched estop. |
 | `E` | — | Emergency stop. Latched. All PWMs forced to 0. Cleared only by a subsequent non-zero `M`. |
 | `H` | — | Heartbeat — resets watchdog without changing setpoints. |
-| `L` | `<left> <right> <drl> <low> <brake> <reverse> <logo> <projector> [strip]` | Pack the 8 booleans into a bitmask and transmit as CAN ID `0x100` to the lights Nano. `strip` is the optional LED strip effect id (`0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow); omitted or out of range means off. Does **not** affect the drive watchdog. |
+| `L` | `<left> <right> <drl> <low> <brake> <reverse> <logo> <projector> [strip]` | Pack the 8 booleans into a bitmask and transmit as CAN ID `0x100` to the lights Nano. `strip` is the optional LED strip effect id (`0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow, `6` cyan, `7` red pulse, `8` police); omitted or out of range means off. Does **not** affect the drive watchdog. |
 
 Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure (no MCP2515 / bus off) produces `ERR CAN`.
 
@@ -71,8 +73,8 @@ Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure 
 
 - `RDY car-master v1` — boot banner.
 - `ERR ...` — parse errors and fault notifications.
-- `T <angle_raw> <target_raw> <throttle> <steer_pwm> <state> <wd_ms>` — telemetry at 10 Hz, behind `TELEMETRY_ENABLED` compile flag. `state` ∈ `R W E F`.
-- `S <state> <nearest_cm> <d0..d2>` — obstacle state at 10 Hz, behind `TELEMETRY_ENABLED`. `state` ∈ `C` clear, `S` slowing, `B` blocked, `X` stale. Distances are cm, with `255` = nothing in range. The host uses `state` and `nearest_cm` to slow/stop in autonomous mode.
+- `T <angle_raw> <target_raw> <throttle> <steer_pwm> <state> <wd_ms>` — telemetry at 20 Hz, behind `TELEMETRY_ENABLED` compile flag. `state` ∈ `R W E F`.
+- `S <state> <nearest_cm> <d0..d2>` — obstacle state at 20 Hz (the sonar node's rate), behind `TELEMETRY_ENABLED`. `state` ∈ `C` clear, `S` slowing, `B` blocked, `X` stale. Distances are cm, with `255` = nothing in range. The host uses the three distances and `X` to slow/stop in autonomous mode.
 
 ## Behavior
 
@@ -82,15 +84,28 @@ Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure 
 - **Steering**: 200 Hz P+D loop on the pot's 0–1023 ADC reading (derivative on measurement). Gains `Kp = 2.2`, `Kd = 0.12`, `±3` raw-unit deadband. Min-move PWM = 150 to break static friction, capped at 210. The reading is median-of-9 filtered to reject ADC spikes. Soft limits at the configured max angles (refuse to drive into a stop, allow recovery in the opposite direction).
 - **Steering-pot fault** (the pot reads a rail — 0 or ≥1023 — at boot, meaning a disconnected wiper or outer leg) → permanent FAULT state (`ERR STEER`), status LED blinks fast, all PWMs forced to 0.
 
+### Battery gauge
+
+The 12 V lead-acid battery (Heliar HE60DD) feeds a resistor divider into A10. `battery.cpp` samples it every 200 ms, converts the raw ADC count to battery volts with `BATT_VOLTS_PER_COUNT`, maps volts to charge through a resting-voltage lead-acid curve (11.80 V = 0 %, 12.70 V = 100 %), and smooths with a ~10 s moving average. The 8-segment bar is driven by 6 pins (35 and 33 each drive two segments) and lights at 15 / 30 / 50 / 65 / 80 / 97 %, with 3 % hysteresis so it can't flicker on a boundary. Below 15 % the bar is dark.
+
+Voltage sags under motor load, so the bar reads low while driving — the at-rest reading is the accurate one.
+
+**Calibration**: the ADC reference is the Mega's 5 V rail, which isn't exactly 5.00 V (≈ 5.17 V on the car), so calibrate against the raw count, not the A10 voltage. With the car powered as it normally runs and the motors stopped, read the battery with a multimeter and the raw A10 count (`analogRead(A10)`) at the same moment, then set `BATT_VOLTS_PER_COUNT = V_battery / count` in `config.h`. Shipped value: 12.56 V / 562.
+
 ### Obstacle avoidance
 
 Front distance data arrives over CAN from the sonar node (`firmware/sonar/`, ID `0x080` at 20 Hz).
 `obstacle.cpp` classifies the nearest reading into a state (`CLEAR`/`SLOWING`/`BLOCKED`/`STALE`) and
-reports it on the `S` telemetry line. It does **not** touch the motors.
+reports it on the `S` telemetry line together with the three per-sensor distances. It does **not**
+touch the motors.
 
-Obstacle avoidance is enforced by the host (`src/input/autonomous.py`) and runs in **autonomous mode
-only** — manual (PS5) driving is never governed by the sonar. The host zeroes throttle at or below
-30 cm and tapers up to full by 80 cm.
+Obstacle avoidance is enforced by the host (`src/obstacle.py`, applied by `src/input/autonomous.py`)
+and runs in **autonomous mode only** — manual (PS5) driving is never governed by the sonar. The host
+ignores the master's `B`/`S` states (they count every sensor, including echoes beside the lane) and
+works from the three distances: the centre sensor slows the car from 150 cm, the side sensors (which
+point outward and see things beside the track) from 100 cm; any sensor stops it at 60 cm, and it
+resumes only after every sensor reads farther than 75 cm for 0.5 s. While stopped the steering is held and the hazards flash.
+`TELEMETRY_ENABLED` must stay on: without `S` lines the host has no sonar data and does not gate.
 
 - **Fail-safe**: no frame for 300 ms means *blocked*, never *clear*.
 
@@ -132,8 +147,11 @@ The values stay correct until the pot or linkage are physically moved. Recalibra
 
 The firmware only reports; the host acts on it. These check the `S` line is correct.
 
-9. Hand at ~60 cm from the array → `S` state goes `S` (slowing); at ~30 cm → `B` (blocked). Withdraw
+9. Hand at ~80 cm from the array → `S` state goes `S` (slowing); at ~60 cm → `B` (blocked). Withdraw
    → back to `C`. `nearest_cm` tracks a tape measure to ±2 cm.
 10. Unplug the sonar node → `S` reports `X` (stale) within 300 ms. Reconnect → recovers.
-11. In the host GUI, switch to autonomous and confirm the car slows/stops as the reading closes in;
-    switch to manual (PS5) and confirm it does **not**.
+11. In the host GUI, switch to autonomous and confirm the car slows/stops as the reading closes in, the
+    wheels stay still and the hazards flash while it waits; switch to manual (PS5) and confirm it does
+    **not**.
+12. An obstacle in front of a front corner, seen only by a side sensor: the car slows from 100 cm and
+    stops at 60 cm like it does for the centre sensor.
