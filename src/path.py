@@ -56,11 +56,17 @@ def profile_for(path: Path) -> ControlProfile:
 _RETURN_GAP_S = 0.3        # entrance gap: this long without the lane measured
 _RETURN_STEADY_S = 2.0     # then this long with both lines on two or more rows
 
-# After the return the car is still inside the detour and the blind merge is
-# ahead: Straight's 0.2 s grace would stop it there (1.4 s blind on the day-1
-# recording). So the DETOUR control profile stays latched until one hold has
-# run and the lane came back, or this long has passed.
-_CARRY_HOLD_S = 30.0
+# After the return (automatic, or L1 pressed inside the detour) the car is
+# still inside the detour and the blind merge is ahead: Straight's 0.2 s grace
+# would stop it there (1.4 s blind on the day-1 recording; day-4 stopped
+# exactly so after an early L1). So the DETOUR control profile stays carried
+# until a hold of at least `_CARRY_HOLD_MIN_S` has run and, after it, the
+# lane has been whole (both lines) for `_RETURN_STEADY_S`: the merge is
+# followed by the U-turn on the outer line alone, which needs the same
+# rules (day-7 went back to the 0.2 s grace mid-U-turn). Or this long has
+# passed. No carry when that already happened while armed.
+_CARRY_HOLD_S = 20.0
+_CARRY_HOLD_MIN_S = 0.3
 
 
 class DetourReturn:
@@ -77,7 +83,12 @@ class DetourReturn:
         self._gap_seen = False
         self._steady_time = 0.0
         self._carry_time: Optional[float] = None
-        self._carry_held = False
+        self._hold_run = 0.0
+        self._hold_done = False
+        self._inside_seen = False
+        self._merge_seen = False
+        self._after_merge = 0.0
+        self._whole_lane = False
 
     @property
     def stage(self) -> str:
@@ -95,31 +106,54 @@ class DetourReturn:
         return profile_for(path)
 
     def observe_hold(self, holding: float, dt: float) -> None:
-        """Feed the controller's hold time every frame so the carried
-        profile is released once the merge has been crossed."""
+        """Feed the controller's hold time every frame: a completed hold of
+        `_CARRY_HOLD_MIN_S` or more is the merge, after which no carry is
+        owed and a running carry is released."""
+        if holding > 0:
+            self._hold_run = holding
+            self._after_merge = 0.0
+        else:
+            # Only a hold that ends once the car has been inside the detour
+            # is the merge; the entrance hold ends before the first whole
+            # lane inside, and a weak frame on arming is not a hold at all.
+            if self._hold_run >= _CARRY_HOLD_MIN_S and self._inside_seen:
+                self._merge_seen = True
+            self._hold_run = 0.0
         if self._carry_time is None:
             return
         self._carry_time += dt
-        if holding > 0:
-            self._carry_held = True
-        elif self._carry_held or self._carry_time >= _CARRY_HOLD_S:
+        if self._merge_seen and self._whole_lane:
+            self._after_merge += dt
+        if (self._merge_seen and self._after_merge >= _RETURN_STEADY_S) or self._carry_time >= _CARRY_HOLD_S:
             self._carry_time = None
-            self._carry_held = False
+            self._hold_done = True
+
+    def _leave(self):
+        self._armed = False
+        if not self._hold_done:
+            self._carry_time = 0.0
+            self._after_merge = 0.0
 
     def update(self, path: Path, perc, dt: float):
+        self._whole_lane = perc.lane_offset is not None and not perc.provisional and perc.both_rows >= 2
         if path is not Path.DETOUR:
-            self._armed = False
+            if self._armed:
+                # L1 or the radio: home by hand, with the merge possibly ahead.
+                self._leave()
             return None
-        if self._carry_time is not None:
-            # Re-armed by hand while the carry was still running: the
-            # explicit Detour owns the profile now.
-            self._carry_time = None
-            self._carry_held = False
         if not self._armed:
+            # Armed (again): the explicit Detour owns the profile, and the
+            # merge has not been crossed on this arming yet.
             self._armed = True
             self._gap_time = 0.0
             self._gap_seen = False
             self._steady_time = 0.0
+            self._carry_time = None
+            self._hold_run = 0.0
+            self._hold_done = False
+            self._inside_seen = False
+            self._merge_seen = False
+            self._after_merge = 0.0
 
         measured = perc.both_rows > 0 or perc.band_rows >= 2
         in_gap = perc.lane_offset is None or not measured
@@ -130,11 +164,11 @@ class DetourReturn:
                 self._gap_seen = True
             return None
 
-        whole_lane = perc.lane_offset is not None and not perc.provisional and perc.both_rows >= 2
+        whole_lane = self._whole_lane
+        if whole_lane:
+            self._inside_seen = True
         self._steady_time = self._steady_time + dt if whole_lane else 0.0
         if self._steady_time >= _RETURN_STEADY_S:
-            self._armed = False
-            self._carry_time = 0.0
-            self._carry_held = False
+            self._leave()
             return HOME_PATH
         return None

@@ -143,7 +143,7 @@ The merge cannot be detected reliably, but the entrance can, and Straight handle
 2. the **entrance gap**: 0.3 s with no lane measured (no both-lines ROI row, fewer than two band rows, or no lane at all); the peeling right line produces exactly this;
 3. **steady inside**: 2 s of two or more both-lines rows on non-provisional frames; then the path drops to `HOME_PATH` and the turn signal goes off.
 
-The car is then still inside the detour with the blind merge ahead, and Straight's 0.2 s grace would stop it there (1.4 s blind on the day-1 recording). So the DETOUR control profile stays **carried** until one hold has run and the lane came back, or 30 s have passed. Re-arming by hand cancels the carry. `Lane:` shows `waiting for the entrance`, `inside 1.2s`, `hold carried 4s`.
+The car is then still inside the detour with the blind merge ahead, and Straight's 0.2 s grace would stop it there (1.4 s blind on the day-1 recording; the day-4 run stopped exactly so after an L1 pressed early). So on **any** return home from Detour, automatic or L1, the DETOUR control profile stays **carried** until a hold of at least 0.3 s has run after the car was inside and the lane came back, or 20 s have passed. No carry if such a hold already ran while armed (the merge is behind the car). Re-arming by hand cancels the carry. `Lane:` shows `waiting for the entrance`, `inside 1.2s`, `hold carried 4s`.
 
 Measured offline on the day-1 recording (armed at the sign): gap 1 s later, home 5 s after that, 8 s before the merge; the carried hold crosses the merge with no stop. On the entry clip: home at 14 s, inside. Armed on a plain lap it returns after the first spurious lane loss, which is harmless there. The one failure mode: a spurious gap *between* the sign and the entrance returns the car early and it passes the fork straight; re-arm with R1. `parity_check.py` asserts the timings on both recordings.
 
@@ -176,6 +176,35 @@ Dropped from the September attempt, and why: gap counting, RIGHT-to-LEFT hand-ba
 | Merge from inside | Detour | island line via the other-edge fallback (+46..+90, full right), island ends, hold full right at curve-floor throttle for up to 8 s (clip: 4.2-5.5 s at hand speed), one-row frames ignored, two-row frames accepted slew-bounded, then the U-turn on the outer line + `half(y)`, curvature ≈ +0.9 |
 
 Whether held full lock over-rotates before the outer line re-enters the ROI (`v·t / R_lock`) is invisible to perception; it is decided in the closed-loop simulator with measured car parameters and on track day 2, not here.
+
+### Blind stretches at speed (2026-09-29/30)
+
+With `base_speed` raised to 0.75 and 0.83 the car passed both forks straight (`day2_detour`, `day3_detour`). The logs showed why: the peeling right line leaves the frame row by row, so the last two or three frames before the blind stretch read one or two rows, near zero or the wrong sign (the other-edge fallback re-centres on the main road), and the slew let the wheel decay from 0.8 to 0.30 (day 2) and to -0.64 (day 3) before the hold latched it. At 0.63 the same frames exist; the car simply had more frames at full lock and the last one happened to be positive. Two DETOUR-profile rules, no new knob:
+
+- **Weak frames are not readings.** A one-row bearing, a minority of the scan rows, or a frame without curvature when the scan has rows to fit one, starts or continues a hold instead of steering (manila's majority rule, restored for DETOUR only; on this camera anchored rows are 4-5 of 5 on the main road and inside the detour).
+- **The hold latches the strongest recent right turn.** When the lane is lost, the held steering is the largest right-turn command of the last 0.5 s of accepted readings, not the last frame's; throttle follows the curve rule for it. Every blind stretch of a right-hand detour is a right turn (entrance, merge, U-turn), so a left excursion in the window is a correction on the way in, not the turn. If nothing in the window turned right the last command is held as before (a hallucinated loss on a straight holds ~0).
+
+Replayed offline, all four recordings now latch +1.00 at the first hold after arming and day 4 crosses the merge without a stop; day 1 (the run that worked) is unchanged in outcome. `parity_check.py` asserts these on the recordings, with the sliders they were driven with (ROI x 0.01-0.99). Whether the car actually enters at 0.83 is a track-day question: at some speed the fillet is tighter than the car's full-lock radius.
+
+### The U-turn at speed (2026-09-30, runs 5-7)
+
+With `min_speed` raised to 0.70 and 0.79 the car crossed onto the outer line in the U-turn and sat at full lock for 3-4 s before recovering (`day6`, `day7`). Two things in the logs, one of them fixable:
+
+- **Garbage from the lens streak.** Deep in the U-turn the outer line is above the ROI entirely (visible only in the band rows). The only "edge" the ROI rows found was a bright streak 6-11 px wide along the last 20 px of the frame's right edge, taken by the other-edge fallback as the inner line: full right from garbage, then a hard left (-0.82) the moment the real line clipped the far row. That is the "turns right, then straight for a moment" the driver saw. Fixed in the anchored scan: a fallback hit that is both thinner than 2 % of the lane width and within 3 % of the frame width from the edge is dropped, so those frames become a hold at the latched right turn. Thinness alone would reject real lines (13-40 px here), position alone a line leaving the frame. The anchored edge is exempt so the peeling line's last remnant still drives the wheel to full lock at the fork. AUTO is untouched.
+- **Speed.** The curve-speed rule can only slow to `min_speed`, so `min_speed` *is* the U-turn speed: 0.50-0.53 (run 1) took it inside the lane, 0.70 and 0.79 ran wide at full lock for seconds, which no steering rule can fix. `base_speed` can stay high: the curvature lookahead slows the car to `min_speed` before the bend.
+
+Also: the carried DETOUR profile now lasts until the lane has been whole for 2 s after the merge hold, not until the hold ends, because the U-turn on the outer line follows the merge immediately and run 7 went back to the 0.2 s grace in the middle of it.
+
+### The weave on straights (2026-10-01, run 10)
+
+A full Straight lap at Kp 0.0231 and Kd 0.0008 weaves. It is not jitter: the error swings smoothly from -80 to +76 px with a 2.5-3 s period, the steering follows it with 0.95 frame-to-frame autocorrelation and sits at full lock 52 % of the time, and the error changes sign 1.6 times a second. That is the limit cycle of a bang-bang controller (full lock at 43 px, 5 % of the lane) with too much delay in the loop. Run 1 at the same Kp did not weave; it ran at 23.5 fps and 0.59 throttle, run 10 at 17.7 fps (59 ms per loop) and 0.68.
+
+Two delay sources sit in the loop, and neither is a gain:
+
+- **Stale frames.** The camera delivers 30 fps and the loop is slower, so `cap.read()` in the loop returns the oldest frame in the driver's buffer, several frames (100-170 ms) old. `main.py` now reads the camera on a thread (`FrameSource`) and hands the loop the newest frame; video replay stays sequential. This also takes the read's own cost out of the loop (the tracker costs 11.5 ms and the GUI 8 ms on the dev machine; the rest of the car's 59 ms is the read).
+- **The EMA** (`alpha` 0.4) adds about 1.5 frames of lag; it is an existing slider, raise it before lowering gains.
+
+Kp itself is the right lever against a limit cycle, and lowering it is now safe for the detour: the DETOUR hold is **full right lock** whenever the car was turning right into the blind stretch, whatever the PID had reached. Every recording that held 1.0 came out inside the lane (runs 1, 5, 6) and every one that held less came out wide (0.78 run 7, 0.73 run 8) or missed the fork (runs 2, 3), so the rule is both the driver's answer and the data's. The detour no longer depends on Kp.
 
 ### Clip provenance
 
