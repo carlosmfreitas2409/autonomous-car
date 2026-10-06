@@ -1,0 +1,13 @@
+# Which lamp is lit in each close-range photo, read off the photo by eye.
+# The rest of assets/new_traffic/ carries its state in the filename; this
+# folder came off the camera with timestamps, so the ground truth lives here.
+1789077717813.jpg red
+1789077724701.jpg green
+1789077731433.jpg yellow
+1789077774860.jpg green
+1789077779977.jpg yellow
+1789077781761.jpg red
+1789077793473.jpg green
+1789077795780.jpg yellow
+1789077797796.jpg red
+1789077819511.jpg off

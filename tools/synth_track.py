@@ -787,7 +787,7 @@ def run_closed_loop(scenario: str, camera: CameraModel, car: CarModel, track: Tr
         cmd = queue.popleft()
 
         if writer is not None:
-            writer.write(np.hstack([res.display_frame, res.blur_frame]))
+            writer.write(np.hstack([res.display_frame, res.debug_frame]))
 
         # metrics
         rec = phases.setdefault(phase, PhaseMetrics())

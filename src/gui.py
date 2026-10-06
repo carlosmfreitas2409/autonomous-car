@@ -8,6 +8,9 @@ from lights import LightsController, StripEffect, TurnSignal
 
 from path import HOME_PATH, Path
 from perception.line_tracking import LineTrackingResult
+from perception.sign_worker import DEBUG_HEIGHT, DEBUG_WIDTH, SignSnapshot
+from input.sign_policy import PolicyState, SignConstraint
+from input.mission import LETTERS, Mission, MissionCommand, MissionState
 
 
 _PATH_LABELS = {
@@ -38,6 +41,7 @@ _STRIP_EFFECT_LABELS = {
     "Red Pulse": StripEffect.RED_PULSE,
     "Strobe": StripEffect.STROBE,
     "Rainbow": StripEffect.RAINBOW,
+    "Police": StripEffect.POLICE,
 }
 
 _SONAR_STATES = {
@@ -48,13 +52,36 @@ _SONAR_STATES = {
 }
 _SONAR_SIDES = ("L", "C", "R")
 
+_NO_LETTER = "-"
+
+_MISSION_COLOUR = {
+    MissionState.IDLE: (150, 150, 150),
+    MissionState.DRIVING: (0, 255, 0),
+    MissionState.SLOWING: (255, 200, 0),
+    MissionState.STOPPED: (255, 80, 80),
+    MissionState.LEAVING: (255, 200, 0),
+    MissionState.DONE: (130, 200, 255),
+}
+
+_POLICY_COLOUR = {
+    PolicyState.CLEAR: (0, 255, 0),
+    PolicyState.SLOWING: (255, 200, 0),
+    PolicyState.HOLDING: (255, 80, 80),
+    PolicyState.DWELLING: (255, 80, 80),
+    PolicyState.WAITING_GREEN: (255, 80, 80),
+}
+
+
 class TunerGUI:
     def __init__(self, config: Config, frame_w: int, frame_h: int):
         self._autonomous = True
         self._stopped = True
         self._tags = {}
+        self._signs_uploaded_at = -1.0
         self._lights: LightsController | None = None
-        self._turn_signal_before_detour: str | None = None
+        self._path_request: Path | None = None
+        self._mission_request: tuple[str | None, str | None] | None = None
+        self._shown_letters: tuple[str | None, str | None] = (None, None)
         self._build(config, frame_w, frame_h)
 
         self._refresh_ports()
@@ -99,7 +126,8 @@ class TunerGUI:
             self._tags["logo_tex"] = dpg.add_static_texture(logo_width, logo_height, logo_data)
             self._tags["tex_main"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
             self._tags["tex_blur"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
-            self._tags["tex_threshold"] = dpg.add_raw_texture(frame_w, frame_h, blank.copy(), format=dpg.mvFormat_Float_rgba)
+            blank_signs = np.ones(DEBUG_WIDTH * DEBUG_HEIGHT * 4, dtype=np.float32)
+            self._tags["tex_signs"] = dpg.add_raw_texture(DEBUG_WIDTH, DEBUG_HEIGHT, blank_signs, format=dpg.mvFormat_Float_rgba)
 
         grid_w = frame_w // 2
         grid_h = frame_h // 2
@@ -133,12 +161,15 @@ class TunerGUI:
                         self._tags["tel_lane"] = dpg.add_text("Lane: --", color=(150, 150, 150))
                         dpg.add_spacer(width=4)
                         self._tags["tel_stop"] = dpg.add_text("Stop: --", color=(150, 150, 150))
+                        dpg.add_spacer(width=4)
+                        self._tags["tel_signs"] = dpg.add_text("Signs: --", color=(150, 150, 150))
                     with dpg.group(horizontal=True, height=24):
                         self._tags["path_label"] = dpg.add_text("Path:", color=_PATH_COLOR_IDLE)
                         self._tags["path"] = dpg.add_radio_button(
                             tuple(_path_item_label(label) for label in _PATH_LABELS),
                             horizontal=True,
                             default_value=_path_item_label(_PATH_NAMES[HOME_PATH]),
+                            callback=self._on_path,
                         )
                         dpg.add_spacer(width=8)
                         self._tags["mode"] = dpg.add_button(label="Autonomous Mode", callback=self._toggle_mode, width=120)
@@ -158,11 +189,11 @@ class TunerGUI:
                         dpg.add_text("Camera")
                         dpg.add_image(self._tags["tex_main"], width=grid_w, height=grid_h)
                     with dpg.group():
-                        dpg.add_text("Blur + ROI")
+                        dpg.add_text("Threshold + ROI")
                         dpg.add_image(self._tags["tex_blur"], width=grid_w, height=grid_h)
                     with dpg.group():
-                        dpg.add_text("Threshold")
-                        dpg.add_image(self._tags["tex_threshold"], width=grid_w, height=grid_h)
+                        dpg.add_text("Signs")
+                        dpg.add_image(self._tags["tex_signs"], width=grid_w, height=grid_w * 9 // 16)
 
                 with dpg.table_row():
                     with dpg.group():
@@ -230,6 +261,25 @@ class TunerGUI:
                             width=form_w,
                             callback=self._on_strip_effect,
                         )
+
+                        dpg.add_spacer(height=8)
+                        dpg.add_text("Signs", color=(130, 200, 255))
+                        self._tags["signs_policy"] = dpg.add_text("Policy: --", color=(150, 150, 150))
+                        self._tags["signs_detail"] = dpg.add_text("", color=(200, 200, 200))
+
+                        dpg.add_spacer(height=8)
+                        dpg.add_text("Mission", color=(130, 200, 255))
+                        for key, label in (("pickup", "Pickup  "), ("delivery", "Delivery")):
+                            with dpg.group(horizontal=True):
+                                dpg.add_text(label)
+                                self._tags[key] = dpg.add_radio_button(
+                                    (_NO_LETTER,) + LETTERS,
+                                    horizontal=True,
+                                    default_value=_NO_LETTER,
+                                    callback=self._on_mission_letters,
+                                )
+                        self._tags["mission_status"] = dpg.add_text("Mission: idle", color=(150, 150, 150))
+                        self._tags["mission_route"] = dpg.add_text("", color=(200, 200, 200))
 
         dpg.set_primary_window("primary", True)
         dpg.setup_dearpygui()
@@ -303,8 +353,7 @@ class TunerGUI:
 
     def update_textures(self, result: LineTrackingResult):
         dpg.set_value(self._tags["tex_main"], _frame_to_texture(result.display_frame))
-        dpg.set_value(self._tags["tex_blur"], _frame_to_texture(result.blur_frame))
-        dpg.set_value(self._tags["tex_threshold"], _frame_to_texture(result.binary_frame))
+        dpg.set_value(self._tags["tex_blur"], _frame_to_texture(result.debug_frame))
 
     def update_telemetry(self, fps: float, error: int, steering: float, throttle: float, lane_state: str = "--", stop_reason: str | None = None):
         dpg.set_value(self._tags["tel_fps"], f"FPS: {fps:.1f}")
@@ -317,15 +366,19 @@ class TunerGUI:
 
     # --- path ------------------------------------------------------------
 
-    def path(self) -> Path:
-        return _PATH_LABELS[_path_item_name(dpg.get_value(self._tags["path"]))]
+    def _on_path(self, _sender, value):
+        self._path_request = _PATH_LABELS[_path_item_name(value)]
 
-    def set_path(self, path: Path):
-        dpg.set_value(self._tags["path"], _path_item_label(_PATH_NAMES[path]))
+    def poll_path_request(self) -> Path | None:
+        """The path the operator clicked since the last call, if any."""
+        request, self._path_request = self._path_request, None
+        return request
 
     def update_path_status(self, path: Path, profile_ready: bool, lane_state: str):
-        """Colour the Path label: orange while the Detour is armed, red when an
-        anchored path was selected before the tracker has a lane width."""
+        """Show the loop's path on the radio. Colour the label: orange while
+        the Detour is armed, red when an anchored path was selected before the
+        tracker has a lane width."""
+        dpg.set_value(self._tags["path"], _path_item_label(_PATH_NAMES[path]))
         tag = self._tags["path_label"]
         if path is not Path.NORMAL and not profile_ready:
             dpg.set_value(tag, f"Path ({lane_state}):")
@@ -336,22 +389,6 @@ class TunerGUI:
         else:
             dpg.set_value(tag, "Path:")
             dpg.configure_item(tag, color=_PATH_COLOR_IDLE)
-
-    def set_turn_signal(self, label: str | None):
-        """Mirror the Detour latch on the right turn signal.
-
-        `dpg.set_value` does not fire the radio's callback, so the lights
-        controller is updated explicitly. Passing None restores the value the
-        operator had before the Detour was armed."""
-        tag = self._tags["turn_signal"]
-        if label is None:
-            if self._turn_signal_before_detour is None:
-                return
-            label, self._turn_signal_before_detour = self._turn_signal_before_detour, None
-        elif self._turn_signal_before_detour is None:
-            self._turn_signal_before_detour = dpg.get_value(tag)
-        dpg.set_value(tag, label)
-        self._on_turn_signal(tag, label)
 
     def update_sonar(self, reading, guard):
         """Show what the sonar guard decided and every sensor's echo."""
@@ -368,6 +405,80 @@ class TunerGUI:
             sensors.append(f"{side} {'--' if d is None else f'{d:.0f}'}")
         dpg.set_value(tag, f"Sonar: {distance} [{label}]  {'  '.join(sensors)}")
         dpg.configure_item(tag, color=color)
+
+    def update_signs(self, snapshot: SignSnapshot, constraint: SignConstraint, applied: bool):
+        # The worker publishes at ~10 fps and this loop runs at ~30: only
+        # upload a frame once.
+        if snapshot.frame is not None and snapshot.timestamp != self._signs_uploaded_at:
+            dpg.set_value(self._tags["tex_signs"], _frame_to_texture(snapshot.frame))
+            self._signs_uploaded_at = snapshot.timestamp
+
+        chip = self._tags["tel_signs"]
+        if not snapshot.camera_open:
+            dpg.set_value(chip, f"Signs: {snapshot.status or 'NO CAMERA'}")
+            dpg.configure_item(chip, color=(255, 80, 80))
+        elif not snapshot.detector_available:
+            dpg.set_value(chip, f"Signs: {snapshot.status or 'no model'}")
+            dpg.configure_item(chip, color=(255, 200, 0))
+        elif constraint.stale:
+            dpg.set_value(chip, f"Signs: STALE {snapshot.age(_monotonic()):.1f}s")
+            dpg.configure_item(chip, color=(255, 80, 80))
+        else:
+            seen = [_short(track) for track in snapshot.tracks if track.actionable
+                    and track.label in ("stop", "traffic_light")]
+            dpg.set_value(chip, "Signs: " + (", ".join(seen) if seen else "clear"))
+            dpg.configure_item(chip, color=(0, 255, 0) if not seen else (255, 200, 0))
+
+        cap = constraint.scale * dpg.get_value(self._tags["base_speed"])
+        text = f"Policy: {constraint.state.value}"
+        if constraint.reason:
+            text += f" - {constraint.reason}"
+        text += f" · cap {cap:.2f}"
+        if not applied:
+            text += " (not applied - manual)"
+        dpg.set_value(self._tags["signs_policy"], text)
+        dpg.configure_item(self._tags["signs_policy"], color=_POLICY_COLOUR[constraint.state])
+
+        lines = []
+        for track in snapshot.tracks:
+            lines.append(_detail(track))
+        dpg.set_value(self._tags["signs_detail"], "\n".join(lines[:6]))
+
+    # --- mission ---------------------------------------------------------
+
+    def _on_mission_letters(self, sender, value):
+        # The clicked value, not dpg.get_value: callbacks run on DearPyGui's
+        # thread and `update_mission` may already have snapped the radio back.
+        letter = None if value == _NO_LETTER else value
+        pickup, delivery = self._shown_letters
+        if sender == self._tags["pickup"]:
+            pickup = letter
+        else:
+            delivery = letter
+        self._mission_request = (pickup, delivery)
+
+    def poll_mission_request(self) -> tuple[str | None, str | None] | None:
+        """The (pickup, delivery) letters the operator picked since the last
+        call, if any; None stands for "-"."""
+        request, self._mission_request = self._mission_request, None
+        return request
+
+    def update_mission(self, mission: Mission, command: MissionCommand, applied: bool):
+        """Show the mission's letters (a change it refused snaps back) and state."""
+        self._shown_letters = (mission.pickup, mission.delivery)
+        dpg.set_value(self._tags["pickup"], mission.pickup or _NO_LETTER)
+        dpg.set_value(self._tags["delivery"], mission.delivery or _NO_LETTER)
+
+        text = f"Mission: {mission.stage.value}"
+        if mission.target:
+            text += f" {mission.target} · next exit {mission.next_exit}"
+        if command.reason:
+            text += f" - {command.reason}"
+        if not applied and command.state is not MissionState.IDLE:
+            text += " (not applied - manual)"
+        dpg.set_value(self._tags["mission_status"], text)
+        dpg.configure_item(self._tags["mission_status"], color=_MISSION_COLOUR[command.state])
+        dpg.set_value(self._tags["mission_route"], " > ".join(mission.route))
 
     def is_running(self) -> bool:
         return dpg.is_dearpygui_running()
@@ -392,6 +503,34 @@ def _path_item_label(name: str) -> str:
 
 def _path_item_name(label: str) -> str:
     return label.replace(" (home)", "")
+
+
+def _monotonic() -> float:
+    import time
+    return time.monotonic()
+
+
+def _distance(track) -> str:
+    return f"≈{track.distance_m:.1f} m" if track.distance_m is not None else "? m"
+
+
+def _short(track) -> str:
+    if track.label == "traffic_light":
+        return f"light {track.light_state.value} {_distance(track)}"
+    return f"{track.label} {_distance(track)}"
+
+
+def _detail(track) -> str:
+    text = f"#{track.id} {track.label}"
+    if track.rejected:
+        return f"{text} {track.light_reason}"
+    if not track.confirmed:
+        return f"{text} unconfirmed"
+    if track.label == "traffic_light":
+        text += f" {track.light_state.value}"
+    elif track.label == "delivery_sign" and track.variant:
+        text += f" {track.variant}"
+    return f"{text} {_distance(track)}"
 
 
 def _frame_to_texture(frame: np.ndarray) -> np.ndarray:

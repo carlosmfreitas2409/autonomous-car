@@ -1,0 +1,21 @@
+# Which lamp is lit, read off each frame by eye. Frames 330-520 of the second
+# car-camera light shoot, held out of training: the rest of that shoot is in
+# assets/real_train/images/lighting2/.
+cam0_000330.jpg green
+cam0_000340.jpg yellow
+cam0_000350.jpg yellow
+cam0_000360.jpg red
+cam0_000370.jpg red
+cam0_000380.jpg red
+cam0_000390.jpg red
+cam0_000400.jpg red
+cam0_000430.jpg green
+cam0_000440.jpg green
+cam0_000450.jpg green
+cam0_000460.jpg green
+cam0_000470.jpg green
+cam0_000480.jpg green
+cam0_000490.jpg green
+cam0_000500.jpg green
+cam0_000510.jpg green
+cam0_000520.jpg green

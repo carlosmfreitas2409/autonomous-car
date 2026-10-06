@@ -123,7 +123,7 @@ So: **follow the left edge on the main road, the right edge through a detour.** 
 
 ### Operator model: `Path`
 
-`src/path.py`: `Path.NORMAL | STRAIGHT | DETOUR`, a radio in the GUI header beside Mode/E-stop, PS5 **R1 = Detour**, **L1 = home**. The choice is latched: no automatic return, and neither the e-stop nor a lane-lost timeout changes it.
+`src/path.py`: `Path.NORMAL | STRAIGHT | DETOUR`, held by the main loop (`path` in `src/main.py`) and written by PS5 **R1 = Detour** / **L1 = home**, the GUI header radio, the pickup/delivery mission and the automatic return. The GUI only shows it. The choice is latched: no automatic return, and neither the e-stop nor a lane-lost timeout changes it.
 
 | Path | Tracker | Controller | Use |
 |---|---|---|---|
@@ -233,6 +233,35 @@ Live, in this order: Normal lap; Straight lap A/B (`--record --log`); straight t
 | Loop fps of `src/main.py` against `bb5853e` | the hold/release constants are in seconds; the chained scan and band cost CPU |
 
 Replay: `python src/main.py --video clips/detour_exit.mov` (add `--flip` for the mirrored entry clip), `--record out.mp4 --log run.csv` to capture a run, `--camera N` to pick the camera.
+
+---
+
+## Pickup and Delivery
+
+`src/input/mission.py`. The operator picks a pickup and a delivery letter (A, B or C) in the GUI's Mission block while e-stopped; picking both starts a run from before exit 1, "-" turns the mission off and the car drives exactly as without it.
+
+**Track model.** From the start: exit 1 (A inside its detour), exit 2 (B inside), C on the main road, round again. Both detour signs look alike and nothing marks a lap, so the mission counts: `next_exit` starts at 1 and advances once per detour sign through one table, `_AFTER = {1: 2, 2: 1}` (after exit 1, detour or not, comes exit 2; after exit 2, C and then exit 1).
+
+**At a detour sign** (confirmed, within 3 m, decided once): enter only if the current target - pickup until collected, then delivery - is the letter inside this exit; otherwise go straight. On a fixed cycle that is already the shortest route. The decision is a one-shot request on the loop's `path` (Detour, or Straight if not already), so R1/L1 still override; the return home is `DetourReturn`'s. After a decision no further detour sign counts until none has been in view for 3 s and the path is off Detour, so a flickering sign under a new track id is counted once.
+
+**Position fixes.** A letter read within 3 m is an absolute fix, once per track id: A sets `next_exit = 2`, B and C set it to 1. A detection failure costs a detour or a lap, never the mission:
+
+| Failure | What happens |
+|---|---|
+| Needs B, counter one ahead, enters exit 1 and reads A | fixed to 2, no stop, enters exit 2 for B |
+| Needs A, exit 1's sign missed | exit 2 is taken for exit 1 and entered; B fixes the count; A one lap later |
+| Target letter unreadable | nothing changes; the same exit is taken again next lap |
+| Phantom or double-counted sign | the next letter read corrects it; C does every lap |
+
+The price: a letter readable within 3 m from the neighbouring road would give a false fix. Check on the floor.
+
+**Only confirmed, only close.** Tracks count after 3 of the last 5 frames, letters after 3 of the last 5 readings (`sign_tracker.py`), and nothing further than 3 m acts; a box clipped by the frame edge has no distance and never acts. A snapshot older than 0.4 s decides nothing.
+
+**At the target letter.** Same ramp as the stop sign (full speed at 3 m, stopped at 2 m), right signal on the approach, hazards while stopped. Pickup: 0.5 s settle + 3 s dwell, then the left signal for 2 s while still stopped, and for 2 s more while pulling away. Delivery: stopped for good, hazards on, until a new pair of letters is picked. An approach whose track is lost for 1 s is abandoned (the letter comes round again); one that never reaches 2 m within 8 s stops where it is. E-stop repeats an interrupted pickup stop and keeps the count. The loop takes the lower of the sign policy's and the mission's scale and either one's hold; signals go through `LightsController.signal_override`, which beats the operator's radio while set (Right while Detour is armed, the mission's while it drives).
+
+Not done: pulling over toward the right line at a stop. Any useful bias is a full-right swerve inside the metre between 3 m and 2 m at this near-bang-bang gain, and a swerve back on leaving; it needs `tools/synth_track.py` and a track day first.
+
+Proof: `python -m pytest tests/test_mission.py` drives every ordered pair and each failure above on a scripted lap that follows the mission's own path requests; the `--log` CSV carries `mission_stage`, `target`, `next_exit`, `mission_state`.
 
 ---
 
