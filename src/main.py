@@ -2,6 +2,7 @@ import argparse
 import csv
 import cv2 as cv
 import logging
+import threading
 import time
 
 from arduino import Arduino
@@ -65,6 +66,63 @@ def draw_throttle_bar(frame, throttle):
             cv.rectangle(frame, (bar_x - 5, bar_cy), (bar_x + 5, bar_cy + fill_h), color, -1)
 
 
+class FrameSource:
+    """The newest camera frame, read on its own thread.
+
+    The camera delivers 30 fps and the control loop runs slower, so a frame
+    read in the loop is the oldest one in the driver's buffer: several frames
+    (100-170 ms) stale, on top of the loop period itself. On the straight-lap
+    recording of 2026-10-01 the car weaved with a 2.5-3 s period and the
+    wheel at full lock half the time, the signature of a bang-bang loop with
+    too much delay. Reading on a thread keeps the loop fed with the latest
+    frame and takes the read's own cost out of the loop. Video replay stays
+    sequential so a recording replays frame for frame.
+    """
+
+    def __init__(self, cap, live: bool):
+        self._cap = cap
+        self._live = live
+        self._lock = threading.Condition()
+        self._frame = None
+        self._seq = 0
+        self._failed = False
+        self._thread = None
+        if live:
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+
+    def _run(self):
+        while True:
+            ok, frame = self._cap.read()
+            with self._lock:
+                if ok:
+                    self._frame = frame
+                    self._seq += 1
+                    self._failed = False
+                else:
+                    self._failed = True
+                self._lock.notify_all()
+            if not ok:
+                time.sleep(0.01)
+
+    def read(self, timeout: float = 0.5):
+        """(ok, frame): the newest frame not yet handed out."""
+        if not self._live:
+            return self._cap.read()
+        with self._lock:
+            seen = getattr(self, "_handed", 0)
+            deadline = time.monotonic() + timeout
+            while self._seq == seen and not self._failed:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False, None
+                self._lock.wait(remaining)
+            if self._seq == seen:
+                return False, None
+            self._handed = self._seq
+            return True, self._frame
+
+
 _LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state")
 
 
@@ -72,7 +130,7 @@ parser = argparse.ArgumentParser(description="Autonomous car tuner")
 parser.add_argument("--video", help="replay a recorded video instead of the camera")
 parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
 parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
-parser.add_argument("--camera", type=int, default=0, help="camera index when not replaying a video (default 0)")
+parser.add_argument("--camera", type=int, default=2, help="camera index when not replaying a video (default 0)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 args = parser.parse_args()
 
@@ -107,6 +165,7 @@ ratio = config.downscale_ratio
 frame_w = round(first_frame.shape[1] / ratio)
 frame_h = round(first_frame.shape[0] / ratio)
 cap.set(cv.CAP_PROP_POS_FRAMES, 0)
+source = FrameSource(cap, live=not args.video)
 
 gui = TunerGUI(config, frame_w, frame_h)
 arduino = Arduino()
@@ -195,12 +254,15 @@ while gui.is_running():
         continue
     prev_stopped = False
 
-    ret, frame = cap.read()
+    ret, frame = source.read()
     if not ret:
-        logger.warning("Frame read failed (camera dropout or end of video), rewinding")
-        cap.set(cv.CAP_PROP_POS_FRAMES, 0)
-        tracker.reset()
-        autonomous.reset()
+        if args.video:
+            logger.warning("End of video, rewinding")
+            cap.set(cv.CAP_PROP_POS_FRAMES, 0)
+            tracker.reset()
+            autonomous.reset()
+        else:
+            logger.warning("No camera frame for 0.5 s")
         continue
 
     if args.flip:
@@ -245,7 +307,7 @@ while gui.is_running():
     if gui.is_autonomous():
         steering, throttle = autonomous.step(
             perc.lane_offset, perc.lane_curvature, params, dt, obstacle_guard.scale,
-            profile=detour_return.profile_for(path), provisional=perc.provisional,
+            profile=detour_return.profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found,
         )
         if not obstacle_stopped:
             detour_return.observe_hold(autonomous.holding, dt)

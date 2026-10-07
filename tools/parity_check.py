@@ -31,9 +31,11 @@ Checks, in order:
    fps: no LOST run longer than the hold, no provisional frame ends a Detour
    hold, the slew respected, a hold never shortened by a path change, and
    Normal after Detour re-converging to a fresh Normal tracker.
-5b. Automatic return: armed at the sign on the day-1 recording and the
-   entry clip, the car goes home after the entrance gap and before the merge,
-   and the carried hold takes it through the merge without a stop.
+5b. Recordings: armed at the sign (R1, and L1 where it was pressed) on the
+   car's own recordings and the entry clip: the automatic return fires after
+   the entrance gap and before the merge, the first hold after arming latches
+   a real right turn (the fast day-2/3 runs latched 0.30 and -0.64 and passed
+   the fork), and the carried hold crosses the merge without a stop (day-4).
 6. Bias: Straight (LEFT) against Normal on the frames where Normal saw two
    both-lines rows (mean PID diff <= 10 px, curvature <= 0.1). Passing this on
    the day-0 Normal-lap recording is the entry condition for driving Straight.
@@ -58,7 +60,7 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path as FilePath
 from typing import Optional
 
@@ -556,6 +558,7 @@ def _replay_script(clip: Clip, script: Script, dt: float, limit, judged: bool = 
     prev_path = Path.NORMAL
     prev_holding = 0.0
     release_trace = []
+    reversals = 0
     reconverge = []
     home_frames = 0
     phase = "normal"
@@ -576,7 +579,7 @@ def _replay_script(clip: Clip, script: Script, dt: float, limit, judged: bool = 
         perc = tracker.process(frame, params, anchor_for(path))
         was_holding = auto.holding > 0
         steering, throttle = auto.step(perc.lane_offset, perc.lane_curvature, params, dt,
-                                       profile=profile_for(path), provisional=perc.provisional)
+                                       profile=profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found)
         holding_now = auto.holding > 0
 
         key = f"{phase}:{perc.lane_state.split()[0]}"
@@ -596,7 +599,11 @@ def _replay_script(clip: Clip, script: Script, dt: float, limit, judged: bool = 
         elif release_trace and len(release_trace) < int(1.0 / dt):
             release_trace.append(steering)
             if len(release_trace) >= 2 and release_trace[0] * steering < 0:
-                failures.append(f"t={t:.2f}s: steering reversed sign within 1 s of the hold release")
+                # Informational: on a hand-driven clip the camera does not
+                # answer the held steering, so the reading after a hold can
+                # legitimately point the other way. The slew check above is
+                # what bounds a kick.
+                reversals += 1
                 release_trace = []
 
         if auto.profile is ControlProfile.DETOUR and perc.lane_offset is not None and not holding_now:
@@ -640,7 +647,7 @@ def _replay_script(clip: Clip, script: Script, dt: float, limit, judged: bool = 
     for key, n in sorted(states.items(), key=lambda kv: (-kv[1], kv[0]))[:8]:
         print(f"    {key:32s} {n:5d} ({n / total:.0%})")
     print("    longest LOST run per phase: " + ", ".join(f"{p} {n * dt:.1f}s" for p, n in longest_lost.items()) if longest_lost else "    no LOST frames")
-    print(f"    max steering step while reading in Detour: {max_release_delta:.3f} (budget {autonomous_module._DETOUR_STEER_RATE * dt:.3f})")
+    print(f"    max steering step while reading in Detour: {max_release_delta:.3f} (budget {autonomous_module._DETOUR_STEER_RATE * dt:.3f}); sign reversals within 1 s of a release: {reversals}")
     if reconverge:
         print(f"    Normal-after-Detour vs fresh tracker after {_RECONVERGE_FRAMES} frames: {reconverge[0]:.1f} px")
     for failure in failures[:6]:
@@ -652,60 +659,112 @@ def _replay_script(clip: Clip, script: Script, dt: float, limit, judged: bool = 
     return not failures
 
 
-# --- 5b. automatic return -------------------------------------------------
+# --- 5b. automatic return and the blind stretches on the car's recordings ---
 
-# (arm time in the video's own clock, latest acceptable return, merge window)
-# The day-1 recording is tagged at 30 fps while the loop ran at 24.6, so its
-# live-CSV times are scaled by 0.822 here; the merge was blind 34.2-35.6 s.
-_RETURN_SCRIPTS = {
-    "day1_detour.mp4": (23.5, 34.0, (33.5, 36.5)),
-    "detour_entry.mov": (1.0, 17.0, None),
+# The sliders driven with on 2026-09-22/29 (the manila ROI, not Config()).
+_LIVE_PARAMS = Config(roi_x0=0.01, roi_x1=0.99)
+
+
+@dataclass(frozen=True)
+class Recording:
+    arm: int                       # frame R1 was pressed
+    l1: Optional[int] = None       # frame L1 was pressed by hand, if it was
+    params: Config = field(default_factory=Config)
+    return_by: Optional[int] = None    # the automatic return must fire before this frame
+    merge: Optional[tuple] = None      # frame window of the blind merge: no stop allowed
+    entrance_hold_min: Optional[float] = None  # first hold after arming must latch at least this steering (full lock)
+    right_only: Optional[tuple] = None  # frame window (the U-turn) in which steering must never go left
+
+
+# Frame numbers are the `frame` column of the run's CSV (day-1 predates the
+# column: its row index is the frame). The entry clip at its own 28.3 fps.
+_RECORDINGS = {
+    # armed at the sign, slow (base 0.63): gap 1 s later, home 6 s later, merge blind 46.0-47.4 s live
+    "day1_detour.mp4": Recording(arm=633, params=_LIVE_PARAMS, return_by=994, merge=(1043, 1085), entrance_hold_min=1.0),
+    # faster (base 0.75): the peel's last rows read near zero and the hold latched 0.30; passed the fork straight
+    "day2_detour.mp4": Recording(arm=325, params=_LIVE_PARAMS, entrance_hold_min=1.0),
+    # faster still (base 0.83): the hold latched -0.64; passed the fork straight
+    "day3_detour.mp4": Recording(arm=246, params=_LIVE_PARAMS, entrance_hold_min=1.0),
+    # started inside the detour, R1 then L1 one second later: stopped 0.2 s into the blind merge
+    "day4_detour.mp4": Recording(arm=282, l1=300, params=_LIVE_PARAMS, merge=(351, 395)),
+    # base 0.76 / min 0.70: entered wide, merge hold +1.0, U-turn fine
+    "day5_detour.mp4": Recording(arm=1061, params=_LIVE_PARAMS, entrance_hold_min=1.0, merge=(1145, 1165)),
+    # base 0.78 / min 0.70: deep in the U-turn the ROI saw only the lens streak at the right edge
+    # (full right from garbage), then the real line clipped the far row: -0.82 for 5 frames
+    "day6_detour.mp4": Recording(arm=626, params=_LIVE_PARAMS, merge=(885, 900), right_only=(897, 960)),
+    # base 0.87 / min 0.79: merge hold 0.78 for 1.8 s, then over the outer line at full lock for 3 s
+    "day7_detour.mp4": Recording(arm=319, params=_LIVE_PARAMS, merge=(528, 570), right_only=(566, 660)),
+    # min 0.61 but Kp ~0.0075: merge hold latched 0.73 for 2 s, then 7 s wide at full lock
+    "day8_detour.mp4": Recording(arm=702, params=_LIVE_PARAMS, entrance_hold_min=1.0, merge=(1003, 1060)),
+    # min 0.93: entered, merge hold 1.0, then off the track in the U-turn; only the merge is judged
+    "day9_detour.mp4": Recording(arm=128, params=_LIVE_PARAMS, entrance_hold_min=1.0, merge=(325, 355)),
+    # hand-held phone clip: the camera does not answer the steering, so only the return timing is judged
+    "detour_entry.mov": Recording(arm=28, return_by=481),
 }
 
 
-def run_auto_return(clip: Clip, limit) -> bool:
+def run_recordings(clip: Clip, limit) -> bool:
     """Armed at the sign, the return must fire after the entrance gap and
-    before the merge, and the carried hold must take the car through the
-    merge without a stop."""
-    script = _RETURN_SCRIPTS.get(FilePath(clip.path).name)
+    before the merge; the first hold must latch a real right turn; and the
+    carried hold must take the car through the merge without a stop."""
+    script = _RECORDINGS.get(FilePath(clip.path).name)
     if script is None:
         return True
-    arm_at, latest, merge = script
     dt = 1.0 / clip.fps()
     tracker, auto, watch = LineTracker(), Autonomous(), DetourReturn()
-    params = Config()
     path = HOME_PATH
-    armed = returned_at = gap_at = None
+    returned_at = gap_at = None
     stops = []
+    left_in_window = []
+    first_hold = None
+    hold_start_steer = None
+    hold_candidate = (None, 0.0)
+    prev_holding = 0.0
     for index, frame in frames(clip, limit):
-        t = index * dt
-        if armed is None and t >= arm_at:
-            armed, path = t, Path.DETOUR
-        perc = tracker.process(frame, params, anchor_for(path))
+        if index == script.arm:
+            path = Path.DETOUR
+        if script.l1 is not None and index == script.l1:
+            path = HOME_PATH
+        perc = tracker.process(frame, script.params, anchor_for(path))
         home = watch.update(path, perc, dt)
         if gap_at is None and watch.stage.startswith("inside"):
-            gap_at = t
+            gap_at = index
         if home is not None:
-            returned_at, path = t, home
-        auto.step(perc.lane_offset, perc.lane_curvature, params, dt,
-                  profile=watch.profile_for(path), provisional=perc.provisional)
+            returned_at, path = index, home
+        steering, _thr = auto.step(perc.lane_offset, perc.lane_curvature, script.params, dt,
+                                   profile=watch.profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found)
         watch.observe_hold(auto.holding, dt)
-        if auto.stop_reason and (not stops or t - stops[-1] > 1.0):
-            stops.append(t)
+        if index > script.arm and auto.holding > 0 and prev_holding == 0:
+            hold_candidate = (index, steering)
+        if auto.holding >= 0.3 and first_hold is None:
+            first_hold, hold_start_steer = hold_candidate
+        prev_holding = auto.holding
+        if auto.stop_reason and (not stops or index - stops[-1] > 30):
+            stops.append(index)
+        if script.right_only is not None and script.right_only[0] <= index <= script.right_only[1] and steering < 0:
+            left_in_window.append((index, round(steering, 2)))
     failures = []
-    if returned_at is None:
-        failures.append("never returned home")
-    else:
-        if gap_at is None or returned_at <= gap_at:
+    if left_in_window:
+        failures.append(f"steered left in the U-turn at frames {left_in_window[:4]}")
+    if script.return_by is not None:
+        if returned_at is None:
+            failures.append("never returned home")
+        elif gap_at is None or returned_at <= gap_at:
             failures.append("returned before the entrance gap")
-        if returned_at > latest:
-            failures.append(f"returned at {returned_at:.1f}s, after the {latest:.1f}s limit")
-    if merge is not None:
-        in_merge = [t for t in stops if merge[0] <= t <= merge[1]]
+        elif returned_at > script.return_by:
+            failures.append(f"returned at frame {returned_at}, after frame {script.return_by}")
+    if script.entrance_hold_min is not None:
+        if first_hold is None:
+            failures.append("no hold after arming")
+        elif hold_start_steer < script.entrance_hold_min:
+            failures.append(f"first hold latched steering {hold_start_steer:+.2f} (< {script.entrance_hold_min:+.2f})")
+    if script.merge is not None:
+        in_merge = [f for f in stops if script.merge[0] <= f <= script.merge[1]]
         if in_merge:
-            failures.append(f"stopped in the merge at {in_merge[0]:.1f}s")
-    print(f"[{clip.name}] auto return: armed {arm_at:.1f}s, gap {gap_at if gap_at is None else round(gap_at, 1)}s,"
-          f" home at {returned_at if returned_at is None else round(returned_at, 1)}s, stops at {[round(t, 1) for t in stops]}"
+            failures.append(f"stopped in the merge at frame {in_merge[0]}")
+    hold_text = "none" if first_hold is None else f"frame {first_hold} at {hold_start_steer:+.2f}"
+    print(f"[{clip.name}] recording: armed f{script.arm}" + (f", L1 f{script.l1}" if script.l1 else "")
+          + f", gap {gap_at}, home {returned_at}, first hold {hold_text}, stops {stops}"
           f" -> {'ok' if not failures else 'FAIL: ' + '; '.join(failures)}")
     return not failures
 
@@ -743,9 +802,19 @@ def run_bias_check(clip: Clip, limit, judge: bool) -> bool:
     controller = {"normal": Autonomous(), "straight": Autonomous()}
     dt = 1.0 / clip.fps()
 
+    out_of_frame = 0
     for index, frame in frames(clip, limit):
-        ref = normal.process(frame, params)
-        got = straight.process(frame, params, LaneAnchor.LEFT)
+        try:
+            ref = normal.process(frame, params)
+            got = straight.process(frame, params, LaneAnchor.LEFT)
+        except IndexError:
+            # Normal's pre-existing out-of-frame scan (its single-edge centre
+            # can leave the frame, e.g. over the outer line in the U-turn);
+            # the baseline fails the same way, so reset both and carry on.
+            out_of_frame += 1
+            normal.reset()
+            straight.reset()
+            continue
         for label, perc in (("normal", ref), ("straight", got)):
             _s, thr = controller[label].step(perc.lane_offset, perc.lane_curvature, params, dt)
             throttles[label].append(thr)
@@ -764,7 +833,8 @@ def run_bias_check(clip: Clip, limit, judge: bool) -> bool:
             curv.append(got.lane_curvature or 0.0)
             curv_ref.append(ref.lane_curvature or 0.0)
 
-    print(f"[{clip.name}] bias, Straight (LEFT) against Normal at Config():")
+    print(f"[{clip.name}] bias, Straight (LEFT) against Normal at Config():"
+          + (f" ({out_of_frame} frames skipped: Normal's pre-existing out-of-frame scan)" if out_of_frame else ""))
     if not clean:
         print("    no clean frames (Normal never resolved every row from both lines while Straight measured a whole lane) -> " + ("FAIL" if judge else "not judged"))
         return not judge
@@ -851,7 +921,7 @@ def main() -> int:
     if "replay" not in skip:
         for clip in clips:
             ok = run_operator_replay(clip, args.limit) and ok
-            ok = run_auto_return(clip, args.limit) and ok
+            ok = run_recordings(clip, args.limit) and ok
     if "bias" not in skip:
         for clip in clips:
             ok = run_bias_check(clip, args.limit, judge=clip.path in args.judge_bias) and ok

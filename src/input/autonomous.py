@@ -34,6 +34,28 @@ _DETOUR_HOLD_S = 8.0
 # the derivative term on those swung the wheels lock to lock in one frame.
 _DETOUR_STEER_RATE = 4.0
 
+# When the lane is lost the DETOUR hold latches the largest steering commanded
+# in this many seconds before the loss, not the last frame's. The readings
+# just before a blind stretch are the flaky ones: at the entrance the peeling
+# line leaves the frame row by row and the last two or three frames read one
+# or two rows, near zero or the wrong sign, and the slew let the wheel decay
+# from 0.8 to 0.1 before the hold latched it (day2/day3 recordings, 2026-09-29,
+# at higher speed; the car passed the fork straight). The driver's answer is
+# to keep turning at the rate they were turning. Every blind stretch a
+# right-hand detour has (entrance, merge, U-turn) is a right turn, and the
+# driver's answer to all of them is full lock until a line returns. So when
+# the recent window shows the car was turning right into the blind stretch,
+# the hold is full right lock, whatever the PID had reached: every recording
+# that held 1.0 came out inside the lane (runs 1, 5, 6) and every one that
+# held less came out wide (0.78 run 7, 0.73 run 8) or missed the fork (0.30
+# run 2, -0.64 run 3). This also makes the detour independent of Kp, which
+# the straights want lower than the detour would. A left excursion in the
+# window is a correction on the way in, not the turn; with no right command
+# in the window at all (a hallucinated loss on a straight) the last command
+# is held as before.
+_DETOUR_HOLD_LOOKBACK_S = 0.5
+_DETOUR_TURN_SIGN = 1.0
+
 # Leaving DETOUR for NORMAL waits for this many seconds of consecutive accepted
 # readings with no hold running: an L1 pressed a moment before the blind merge
 # must not hand a 0.2 s stop rule the blind stretch it was pressed for.
@@ -100,6 +122,9 @@ class Autonomous:
         self._releasing = False
         self._seed_next = False
         self._resume_seed = False
+        # (time, steering) of recent accepted DETOUR readings, for the hold.
+        self._recent: list[tuple[float, float]] = []
+        self._clock = 0.0
 
         # Why the car is (or is about to be) held still, for the GUI and the log.
         self.stop_reason: Optional[str] = None
@@ -116,6 +141,7 @@ class Autonomous:
         self._releasing = False
         self._seed_next = False
         self._resume_seed = False
+        self._recent = []
         self.stop_reason = None
         self.holding = 0.0
 
@@ -152,6 +178,7 @@ class Autonomous:
         obstacle: float = 1.0,
         profile: ControlProfile = ControlProfile.NORMAL,
         provisional: bool = False,
+        rows_found: Optional[int] = None,
     ) -> tuple[float, float]:
         """`obstacle` is the sonar guard's throttle scale; 0.0 means stopped."""
         if obstacle == 0.0:
@@ -176,7 +203,7 @@ class Autonomous:
             self._releasing = True
 
         if self._profile is ControlProfile.DETOUR:
-            return self._step_detour(lane_offset, lane_curvature, params, dt, obstacle, provisional)
+            return self._step_detour(lane_offset, lane_curvature, params, dt, obstacle, provisional, rows_found)
 
         if lane_offset is None:
             # Lane lost: hold the last command for a short grace period (in case
@@ -227,14 +254,25 @@ class Autonomous:
 
         return steering, _slowed(throttle, obstacle, params)
 
-    def _step_detour(self, lane_offset, lane_curvature, params, dt, obstacle, provisional) -> tuple[float, float]:
+    def _step_detour(self, lane_offset, lane_curvature, params, dt, obstacle, provisional, rows_found) -> tuple[float, float]:
+        self._clock += dt
         holding = self._lost_time > 0.0
-        # While a hold is running, a one-row bearing (or a frame with no
-        # curvature when the scan has rows to fit one) is not a reading: the
-        # line clipping a corner of the ROI on the way out of the blind merge
-        # must not end the hold with a full-left kick.
-        weak = provisional or (lane_curvature is None and params.scan_lines >= 2)
-        if lane_offset is None or (holding and weak):
+        # A weak frame is not a reading in DETOUR: a one-row bearing, a
+        # minority of the scan rows, or no curvature when the scan has rows to
+        # fit one. On the way out of the blind merge the first thing the ROI
+        # meets is a line clipping one corner of it (full-left readings); on
+        # the way into a blind stretch the last frames are the peeling line's
+        # last one or two rows (near-zero readings). Either would end or
+        # weaken the hold the blind stretch needs.
+        rows = max(1, params.scan_lines)
+        weak = (
+            provisional
+            or (rows_found is not None and rows_found <= rows // 2)
+            or (lane_curvature is None and rows >= 2)
+        )
+        if lane_offset is None or weak:
+            if not holding:
+                self._latch_hold(params)
             self._lost_time += dt
             self._release_time = 0.0
             if self._lost_time <= _DETOUR_HOLD_S:
@@ -267,6 +305,9 @@ class Autonomous:
 
         throttle = self._throttle_for(steering, curvature, params)
 
+        self._recent.append((self._clock, steering))
+        self._recent = [(t, s) for t, s in self._recent if self._clock - t <= _DETOUR_HOLD_LOOKBACK_S]
+
         if self._releasing:
             self._release_time += dt
             if self._release_time >= _PROFILE_RELEASE_S:
@@ -278,6 +319,25 @@ class Autonomous:
         self._last_throttle = throttle
 
         return steering, _slowed(throttle, obstacle, params)
+
+    def _latch_hold(self, params: Config) -> None:
+        """Start a hold on the strongest recent command, not the last one."""
+        recent = [s * _DETOUR_TURN_SIGN for t, s in self._recent if self._clock - t <= _DETOUR_HOLD_LOOKBACK_S]
+        if not recent or max(recent) <= 0:
+            return
+        lock = _DETOUR_TURN_SIGN * self._pid.output_limits[1]
+        self._last_steering = lock
+        self._last_throttle = self._throttle_for(lock, 0.0, params)
+
+    def _latch_hold(self, params: Config) -> None:
+        """Start a hold on the strongest recent command, not the last one."""
+        recent = [s * _DETOUR_TURN_SIGN for t, s in self._recent if self._clock - t <= _DETOUR_HOLD_LOOKBACK_S]
+        if not recent or max(recent) <= 0:
+            return
+        peak = max(recent) * _DETOUR_TURN_SIGN
+        if peak * _DETOUR_TURN_SIGN > self._last_steering * _DETOUR_TURN_SIGN:
+            self._last_steering = peak
+            self._last_throttle = self._throttle_for(peak, 0.0, params)
 
     @staticmethod
     def _throttle_for(steering: float, curvature: float, params: Config) -> float:

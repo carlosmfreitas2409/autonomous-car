@@ -39,6 +39,23 @@ _ROW_AGREEMENT = 0.10
 _BAND_TOP = 0.35
 _BAND_STEP = 12
 
+# Anchored modes, other-edge fallback only: a thin white run hugging the
+# frame edge is the lens, not tape. The lens puts a bright streak 6-11 px
+# wide along the last ~20 px of the frame's right edge; deep in the U-turn,
+# with the outer line above the ROI, it was the only "edge" the fallback
+# found: full right from garbage, then a hard left the moment the real line
+# clipped the far row (day6_detour f921-929). Rejected, those frames are a
+# hold instead. Thinness alone is not enough (a tape line measures 13-40 px
+# across a 710-960 px lane here, down to 1.5 % of it far away), nor is the
+# position alone (a line leaving the frame sits there too), so a fallback
+# hit is dropped only when it is both narrower than `_MIN_LINE_RUN_RATIO` of
+# the lane width and within `_FRAME_EDGE_RATIO` of the frame width from the
+# edge. The anchored edge itself is exempt: at the fork the peeling line's
+# last thin remnant keeps the wheel climbing to full lock before the hold
+# starts. AUTO is untouched.
+_MIN_LINE_RUN_RATIO = 0.02
+_FRAME_EDGE_RATIO = 0.03
+
 # Colour of the single edge followed in an anchored mode (BGR).
 _ANCHOR_COLOR = (255, 128, 0)
 _BAND_COLOR = (90, 90, 160)
@@ -594,12 +611,15 @@ class LineTracker:
             origin = max(roi_x0, min(roi_x1 - 1, chain_x))
             half = self._half_width_at(row_y)
 
+            min_run = _MIN_LINE_RUN_RATIO * 2.0 * half
             if left:
                 edge_x = self._first_white_left(binary, row_y, origin, -1)
                 other_x = self._first_white_right(binary, row_y, origin, roi_x1)
+                other_x = self._line_or_none(binary, row_y, other_x, 1, min_run)
             else:
                 edge_x = self._first_white_right(binary, row_y, origin, width)
                 other_x = self._first_white_left(binary, row_y, origin, roi_x0)
+                other_x = self._line_or_none(binary, row_y, other_x, -1, min_run)
 
             if edge_x != -1 and prev_edge_x is not None:
                 inward = (edge_x - prev_edge_x) if left else (prev_edge_x - edge_x)
@@ -638,6 +658,26 @@ class LineTracker:
             cv.circle(debug, (edge_x, row_y), 3, _ANCHOR_COLOR, -1)
 
         return centers, center_ys, ratios, samples, rows
+
+    @staticmethod
+    def _line_or_none(binary, row_y: int, x: int, step: int, min_run: float) -> int:
+        """`x`, or -1 when the white run starting there (extending in `step`,
+        measured to the frame edge past any ROI bound) is both shorter than
+        `min_run` and inside the frame-edge margin: the lens streak."""
+        if x == -1:
+            return -1
+        row = binary[row_y]
+        width = row.shape[0]
+        margin = _FRAME_EDGE_RATIO * width
+        near_edge = (x >= width - margin) if step > 0 else (x <= margin)
+        if not near_edge:
+            return x
+        n = 0
+        while 0 <= x + n * step < width and row[x + n * step] == 255:
+            n += 1
+            if n >= min_run:
+                return x
+        return -1
 
     @staticmethod
     def _first_white_left(binary, row_y: int, origin: int, bound: int) -> int:
