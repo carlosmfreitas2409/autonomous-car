@@ -72,7 +72,7 @@ parser = argparse.ArgumentParser(description="Autonomous car tuner")
 parser.add_argument("--video", help="replay a recorded video instead of the camera")
 parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
 parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
-parser.add_argument("--camera", type=int, default=1, help="camera index when not replaying a video (default 0)")
+parser.add_argument("--camera", type=int, default=0, help="camera index when not replaying a video (default 0)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 args = parser.parse_args()
 
@@ -291,10 +291,12 @@ while gui.is_running():
     else:
         lights.signal_override = TurnSignal.RIGHT if path is Path.DETOUR else None
 
-    # The mission's own stops are left out: `obstacle_stopped` forces hazards,
-    # and a pickup signals left while still stopped before it pulls away.
+    # Only an obstacle forces hazards; a sign/light stop just turns the strip
+    # red. The mission's own stops are left out: a pickup signals left while
+    # still stopped before it pulls away.
     sign_stopped = gui.is_autonomous() and constraint.hold
-    lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(), obstacle_stopped=obstacle_stopped or sign_stopped)
+    lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(),
+                  obstacle_stopped=obstacle_stopped, sign_stopped=sign_stopped)
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
     arduino.send_motor(throttle, steering)

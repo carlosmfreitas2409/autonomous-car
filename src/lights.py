@@ -74,6 +74,7 @@ class LightsController:
         self._estopped = False
         self._autonomous = True
         self._obstacle_stopped = False
+        self._sign_stopped = False
         self._braking = False
         self._prev_throttle = 0.0
 
@@ -84,6 +85,7 @@ class LightsController:
         estopped: bool,
         autonomous: bool,
         obstacle_stopped: bool = False,
+        sign_stopped: bool = False,
     ) -> None:
         speed = abs(throttle)
         prev_speed = abs(self._prev_throttle)
@@ -95,19 +97,21 @@ class LightsController:
         self._estopped = estopped
         self._autonomous = autonomous
         self._obstacle_stopped = obstacle_stopped
+        self._sign_stopped = sign_stopped
 
     def _resolve_strip(self) -> StripEffect:
         if self.strip_effect is not None:
             return self.strip_effect
         if self._estopped:
             return StripEffect.RED_PULSE
-        if self._obstacle_stopped:
+        if self._obstacle_stopped or self._sign_stopped:
             return StripEffect.RED
         return StripEffect.CYAN if self._autonomous else StripEffect.GREEN
 
     def compute(self) -> LightsOutput:
         # Stopped for an obstacle: hazards, over the loop's override (Detour,
         # mission) and the operator's choice; those return once it clears.
+        # A stop sign or red light is a normal stop, so no hazards there.
         if self._obstacle_stopped:
             signal = TurnSignal.HAZARD
         elif self.signal_override is not None:
