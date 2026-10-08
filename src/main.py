@@ -1,7 +1,9 @@
 import argparse
+import atexit
 import csv
 import cv2 as cv
 import logging
+import signal
 import threading
 import time
 
@@ -130,7 +132,7 @@ parser = argparse.ArgumentParser(description="Autonomous car tuner")
 parser.add_argument("--video", help="replay a recorded video instead of the camera")
 parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
 parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
-parser.add_argument("--camera", type=int, default=3, help="camera index when not replaying a video (default 0)")
+parser.add_argument("--camera", type=int, default=1, help="camera index when not replaying a video (default 0)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 args = parser.parse_args()
 
@@ -156,9 +158,35 @@ if args.record:
 log_file = None
 log_writer = None
 if args.log:
-    log_file = open(args.log, "w", newline="")
+    # Line-buffered: a run that ends in a crash or a kill keeps its last rows.
+    log_file = open(args.log, "w", newline="", buffering=1)
     log_writer = csv.writer(log_file)
     log_writer.writerow(_LOG_FIELDS)
+
+
+def _close_recording():
+    """Finish the video and the log before anything else shuts down.
+
+    An mp4 is unreadable until `release()` writes its index; day11/day12
+    (2026-10-06) lost theirs when the run ended without reaching it. Runs at
+    normal exit, on an exception, on Ctrl+C and on SIGTERM/SIGHUP.
+    """
+    global recorder, log_file
+    if recorder is not None:
+        recorder.release()
+        recorder = None
+    if log_file is not None:
+        log_file.close()
+        log_file = None
+
+
+def _exit_on_signal(signum, _frame):
+    raise SystemExit(128 + signum)
+
+
+atexit.register(_close_recording)
+for _signum in (signal.SIGTERM, signal.SIGHUP):
+    signal.signal(_signum, _exit_on_signal)
 
 config = Config()
 ratio = config.downscale_ratio
@@ -405,12 +433,9 @@ while gui.is_running():
     gui.update_mission(mission, mission_command, applied=gui.is_autonomous())
     gui.render_frame()
 
+_close_recording()
 cap.release()
 sign_worker.close()
-if recorder is not None:
-    recorder.release()
-if log_file is not None:
-    log_file.close()
 ps5.shutdown()
 arduino.close()
 gui.shutdown()
