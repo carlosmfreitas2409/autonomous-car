@@ -1,10 +1,12 @@
 """Pickup and delivery: which way to go at each detour sign, and where to stop.
 
-The track is a loop with two exits. Seen from the start the order is exit 1
-(A inside its detour), exit 2 (B inside its detour), then C on the main road,
-and round again. Both detour signs look alike and nothing marks a new lap, so
-the mission counts: `next_exit` starts at 1 (the car starts before exit 1) and
-advances once per detour sign.
+The track is a loop with two exits a few metres apart: exit 1 (A inside its
+detour), then exit 2 (B inside its detour), then C on the main road, and round
+again. Exit 2's mouth sits just past exit 1's, so detour 1 rejoins the road
+beyond it: exit 2 is only reached by going straight at exit 1, and every other
+way leads round to exit 1 again. Both detour signs look alike and nothing
+marks a new lap, so the mission counts: `next_exit` starts at 1 (the car starts
+before exit 1) and moves on at every detour sign by `_exit_after`.
 
 At a detour sign the rule is local: enter only if the current target - the
 pickup until it has been collected, then the delivery - is the letter inside
@@ -12,9 +14,10 @@ this exit. On a fixed cycle, taking the first chance at each target in order
 is already the shortest route, so there is no route table.
 
 A letter read up close is the one absolute position fix there is: A means
-detour 1, B means detour 2, C means the main road after exit 2. Each letter
-sign resets `next_exit` once, so a missed or double-counted detour sign costs
-one wrong detour or one extra lap, never a mission that is lost for good.
+detour 1, B means detour 2, C means the main road after exit 2 - and from all
+three the next exit is exit 1. Each letter sign resets `next_exit` once, so a
+missed or double-counted detour sign costs one wrong detour or one extra lap,
+never a mission that is lost for good.
 
 Nothing here acts on a single frame or on a far sign: only confirmed tracks
 (3 of the last 5 frames, sign_tracker.py) with a committed letter (3 of the
@@ -42,16 +45,20 @@ logger = logging.getLogger(__name__)
 LETTERS = ("A", "B", "C")
 
 # Which exit's detour holds each letter; C is on the main road.
-LETTER_EXIT = {"A": 1, "B": None, "C": None}
+LETTER_EXIT = {"A": 1, "B": 2, "C": None}
 
-# The exit met after passing this one, detour or not. The task's examples fix
-# 1 -> 2 ("A then C: take the first detour, then skip the second"). If detour 1
-# ever rejoins the road after exit 2, this is the one entry to change.
-_AFTER = {1: 2, 2: 1}
 
-# The next exit implied by reading a letter: inside detour 1 the next exit is
-# 2; inside detour 2, or at C, it is 1.
-_EXIT_AFTER_LETTER = {"A": _AFTER[1], "B": _AFTER[2], "C": 1}
+
+def _exit_after(exit_number: int, entered: bool) -> int:
+    """The exit met next. Detour 1 rejoins the road past exit 2's mouth
+    (live 2026-10-07: after A the next sign was exit 1's again), so only
+    going straight at exit 1 reaches exit 2."""
+    return 2 if exit_number == 1 and not entered else 1
+
+
+# The next exit implied by reading a letter: inside detour 1, inside detour 2
+# and at C alike, the road leads round to exit 1.
+_EXIT_AFTER_LETTER = {"A": _exit_after(1, True), "B": _exit_after(2, True), "C": 1}
 
 # Same distances as the stop sign: nothing further than this is acted on, and
 # the approach ramps from here down to a stop at _STOP_DISTANCE_M.
@@ -62,7 +69,12 @@ _DWELL_S = 3.0              # pickup only: the delivery stop never ends
 _LOST_S = 1.0               # a committed approach whose track vanishes this long is abandoned
 _MAX_APPROACH_S = 8.0       # an approach that never reaches the line stops where it is
 _STALE_S = 0.4              # a snapshot older than this decides nothing
-_REARM_S = 3.0              # after a decision, no detour sign in view this long before the next
+# A detour sign that turns up under a new track id is the one already decided
+# - the tracker lost it and found it again - if that one was seen this
+# recently and the new one is no farther than it was. Two exits can sit a few
+# metres apart, with both signs in view at once: the second is farther away.
+_SAME_SIGN_S = 2.0
+_SAME_SIGN_M = 0.5
 _SIGNAL_BEFORE_LEAVING_S = 2.0  # pickup: left signal on, still stopped, before pulling away
 _LEAVING_S = 2.0            # ...and kept on this long after pulling away
 
@@ -126,7 +138,9 @@ def plan_route(pickup: str, delivery: str) -> list[str]:
             exit_number = next_exit
             enter = LETTER_EXIT[target] == exit_number
             steps.append(f"exit {exit_number}: {'detour' if enter else 'straight'}")
-            next_exit, c_ahead = _AFTER[exit_number], exit_number == 2
+            # Every way back round to exit 1 passes C.
+            next_exit = _exit_after(exit_number, enter)
+            c_ahead = next_exit == 1
             if enter:
                 steps.append(f"{target}: {role}")
                 break
@@ -147,8 +161,14 @@ class Mission:
         self._consumed: set[int] = set()
         self._fixed: set[int] = set()
         self._decided: set[int] = set()
-        self._armed = True
-        self._last_detour_seen = float("-inf")
+        # The last decided detour sign: its ids, nearest distance, last seen.
+        self._sign_ids: set[int] = set()
+        self._sign_distance = float("inf")
+        self._sign_seen = float("-inf")
+        # Exits decided straight whose mouth the lane camera has not shown
+        # yet, and a Detour decided while one of them is still ahead.
+        self._forks_ahead = 0
+        self._pending_exit: Optional[int] = None
         self._leaving_until: Optional[float] = None
 
     @property
@@ -188,7 +208,10 @@ class Mission:
         self._approach = None
         self._leaving_until = None
 
-    def update(self, snapshot: SignSnapshot, path: Path, now: float) -> MissionCommand:
+    def update(self, snapshot: SignSnapshot, path: Path, now: float,
+               fork_passed: bool = False) -> MissionCommand:
+        """`fork_passed`: `path.ForkWatch` saw the car drive past a detour's
+        mouth on the main road since the last call."""
         if self.stage is Stage.IDLE:
             return MissionCommand()
         if self.stage is Stage.DONE:
@@ -199,9 +222,11 @@ class Mission:
 
         self._consumed &= {t.id for t in snapshot.tracks}
         self._fix_position(tracks)
-        request = self._decide_detour(snapshot, tracks, stale, path, now)
+        self._follow_sign(snapshot, stale, now)
+        request = self._follow_forks(fork_passed, now)
+        decided = self._decide_detour(tracks, path, now)
         command = self._update_approach(tracks, now)
-        command.path = request
+        command.path = decided or request
         return command
 
     # ------------------------------------------------------------------
@@ -214,35 +239,86 @@ class Mission:
                     or track.id in self._fixed or not _within(track, _ACT_DISTANCE_M)):
                 continue
             self._fixed.add(track.id)
+            # Every letter stands past the mouths behind it.
+            self._forks_ahead = 0
             fixed = _EXIT_AFTER_LETTER[track.variant]
             if fixed != self.next_exit:
                 logger.warning("mission: read %s at %.1f m - next exit %d -> %d",
                                track.variant, track.distance_m, self.next_exit, fixed)
                 self.next_exit = fixed
 
-    def _decide_detour(self, snapshot, tracks, stale, path, now) -> Optional[Path]:
-        # A stale snapshot counts as a sign still in view: re-arming on it
-        # would decide the same sign twice once the snapshot is fresh again.
-        if stale or any(t.label == "detour" for t in snapshot.tracks):
-            self._last_detour_seen = now
-        if not self._armed:
-            if path is not Path.DETOUR and now - self._last_detour_seen >= _REARM_S:
-                self._armed = True
+    def _follow_sign(self, snapshot, stale, now) -> None:
+        """Keep up with the last decided sign. A stale snapshot counts as it
+        still being in view: letting it expire there would decide it twice."""
+        for track in snapshot.tracks:
+            if track.id in self._sign_ids:
+                self._sign_seen = now
+                if track.distance_m is not None:
+                    self._sign_distance = min(self._sign_distance, track.distance_m)
+        if stale:
+            self._sign_seen = now
+
+    def _follow_forks(self, fork_passed, now) -> Optional[Path]:
+        """Arm a waiting Detour once the mouth before it is behind the car.
+
+        Exits a few metres apart: the second sign is decided while the car is
+        still level with the first exit's mouth. Right-edge anchoring there
+        would follow the first detour's line, and DetourReturn would take that
+        mouth for the entrance and send the path home before the second one.
+        """
+        if fork_passed and self._forks_ahead:
+            self._forks_ahead -= 1
+            logger.info("mission: a mouth passed on the main road, %d still ahead", self._forks_ahead)
+            if self._pending_exit is not None and self._forks_ahead == 0:
+                logger.info("mission: exit %d -> detour (armed)", self._pending_exit)
+                self._pending_exit = None
+                return Path.DETOUR
+        if self._pending_exit is not None and now - self._sign_seen > _LOST_S:
+            # Its sign is behind the car and the mouth before it never showed:
+            # arming now would come after this exit's own mouth.
+            logger.warning("mission: exit %d's sign passed before the mouth before it was seen - "
+                           "straight on, next lap", self._pending_exit)
+            self._pending_exit = None
+            self._forks_ahead = 0
+        return None
+
+    def _decide_detour(self, tracks, path, now) -> Optional[Path]:
+        # Inside a detour until DetourReturn sends the path home: no sign
+        # out here belongs to the next exit yet.
+        if path is Path.DETOUR:
             return None
 
         candidates = [t for t in tracks if t.label == "detour" and t.id not in self._decided
                       and _within(t, _ACT_DISTANCE_M)]
         if not candidates:
             return None
-
         sign = min(candidates, key=lambda t: t.distance_m)
+        self._decided.add(sign.id)
+
+        if (now - self._sign_seen <= _SAME_SIGN_S
+                and sign.distance_m <= self._sign_distance + _SAME_SIGN_M):
+            logger.info("mission: detour sign #%d at %.1f m is the one already decided (%.1f m)",
+                        sign.id, sign.distance_m, self._sign_distance)
+            self._sign_ids.add(sign.id)
+            return None
+
         exit_number = self.next_exit
         wanted = Path.DETOUR if LETTER_EXIT[self.target] == exit_number else Path.STRAIGHT
         logger.info("mission: exit %d sign #%d at %.1f m, target %s -> %s",
                     exit_number, sign.id, sign.distance_m, self.target, wanted.value)
-        self._decided.add(sign.id)
-        self._armed = False
-        self.next_exit = _AFTER[exit_number]
+        self._sign_ids = {sign.id}
+        self._sign_distance = sign.distance_m
+        self._sign_seen = now
+        self.next_exit = _exit_after(exit_number, wanted is Path.DETOUR)
+        self._pending_exit = None
+
+        if wanted is Path.STRAIGHT:
+            self._forks_ahead += 1
+        elif self._forks_ahead:
+            logger.info("mission: exit %d -> detour once the mouth before it is behind (%d ahead)",
+                        exit_number, self._forks_ahead)
+            self._pending_exit = exit_number
+            return None
         return None if path is wanted else wanted
 
     def _update_approach(self, tracks: list[Track], now: float) -> MissionCommand:

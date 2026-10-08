@@ -172,3 +172,41 @@ class DetourReturn:
             self._leave()
             return HOME_PATH
         return None
+
+
+class ForkWatch:
+    """Says when the car, outside Detour, has driven past a detour's mouth.
+
+    The same picture DetourReturn waits for, seen from the main road: the
+    right line peels away and for `_RETURN_GAP_S` the lane is not measured,
+    then the line beyond the island is back and the lane is measured again
+    for as long. `update` returns True on that frame. Two exits can sit a few
+    metres apart; the mission uses this to arm the second one's Detour only
+    once the first one's mouth is behind the car.
+    """
+
+    def __init__(self):
+        self._reset()
+
+    def _reset(self) -> None:
+        self._gap_time = 0.0
+        self._gap_seen = False
+        self._back_time = 0.0
+
+    def update(self, path: Path, perc, dt: float) -> bool:
+        if path is Path.DETOUR:
+            self._reset()
+            return False
+
+        measured = perc.lane_offset is not None and (perc.both_rows > 0 or perc.band_rows >= 2)
+        if not self._gap_seen:
+            self._gap_time = 0.0 if measured else self._gap_time + dt
+            self._gap_seen = self._gap_time >= _RETURN_GAP_S
+            self._back_time = 0.0
+            return False
+
+        self._back_time = self._back_time + dt if measured else 0.0
+        if self._back_time >= _RETURN_GAP_S:
+            self._reset()
+            return True
+        return False
