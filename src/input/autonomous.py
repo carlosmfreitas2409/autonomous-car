@@ -321,23 +321,14 @@ class Autonomous:
         return steering, _slowed(throttle, obstacle, params)
 
     def _latch_hold(self, params: Config) -> None:
-        """Start a hold on the strongest recent command, not the last one."""
+        """Start a hold at full right lock when the car was turning right in
+        the last `_DETOUR_HOLD_LOOKBACK_S`, whatever the last frame said."""
         recent = [s * _DETOUR_TURN_SIGN for t, s in self._recent if self._clock - t <= _DETOUR_HOLD_LOOKBACK_S]
         if not recent or max(recent) <= 0:
             return
         lock = _DETOUR_TURN_SIGN * self._pid.output_limits[1]
         self._last_steering = lock
         self._last_throttle = self._throttle_for(lock, 0.0, params)
-
-    def _latch_hold(self, params: Config) -> None:
-        """Start a hold on the strongest recent command, not the last one."""
-        recent = [s * _DETOUR_TURN_SIGN for t, s in self._recent if self._clock - t <= _DETOUR_HOLD_LOOKBACK_S]
-        if not recent or max(recent) <= 0:
-            return
-        peak = max(recent) * _DETOUR_TURN_SIGN
-        if peak * _DETOUR_TURN_SIGN > self._last_steering * _DETOUR_TURN_SIGN:
-            self._last_steering = peak
-            self._last_throttle = self._throttle_for(peak, 0.0, params)
 
     @staticmethod
     def _throttle_for(steering: float, curvature: float, params: Config) -> float:

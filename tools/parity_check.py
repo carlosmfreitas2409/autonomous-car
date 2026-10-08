@@ -719,6 +719,7 @@ def run_recordings(clip: Clip, limit) -> bool:
     first_hold = None
     hold_start_steer = None
     hold_candidate = (None, 0.0)
+    holds = []          # (start frame, latched steering, seconds) of every hold >= 0.3 s after arming
     prev_holding = 0.0
     for index, frame in frames(clip, limit):
         if index == script.arm:
@@ -738,6 +739,8 @@ def run_recordings(clip: Clip, limit) -> bool:
             hold_candidate = (index, steering)
         if auto.holding >= 0.3 and first_hold is None:
             first_hold, hold_start_steer = hold_candidate
+        if prev_holding >= 0.3 and auto.holding == 0 and hold_candidate[0] is not None:
+            holds.append((hold_candidate[0], round(hold_candidate[1], 2), round(prev_holding, 1)))
         prev_holding = auto.holding
         if auto.stop_reason and (not stops or index - stops[-1] > 30):
             stops.append(index)
@@ -762,7 +765,13 @@ def run_recordings(clip: Clip, limit) -> bool:
         in_merge = [f for f in stops if script.merge[0] <= f <= script.merge[1]]
         if in_merge:
             failures.append(f"stopped in the merge at frame {in_merge[0]}")
+    # Every hold after a right turn is full lock (the merge as much as the
+    # entrance); one at a partial right turn is the latch losing the lock.
+    partial = [h for h in holds if 0 < h[1] < 1.0]
+    if partial:
+        failures.append(f"hold latched a partial right turn {partial[:3]}")
     hold_text = "none" if first_hold is None else f"frame {first_hold} at {hold_start_steer:+.2f}"
+    hold_text += f", holds {holds}"
     print(f"[{clip.name}] recording: armed f{script.arm}" + (f", L1 f{script.l1}" if script.l1 else "")
           + f", gap {gap_at}, home {returned_at}, first hold {hold_text}, stops {stops}"
           f" -> {'ok' if not failures else 'FAIL: ' + '; '.join(failures)}")
