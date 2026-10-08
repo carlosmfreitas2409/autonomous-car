@@ -18,7 +18,7 @@ from input.autonomous import Autonomous
 from input.ps5 import BUTTON_NAMES, PS5Controller
 from input.sign_policy import SignConstraint, SignPolicy
 from input.mission import Mission, MissionCommand
-from path import HOME_PATH, DetourReturn, Path, anchor_for, profile_for
+from path import HOME_PATH, DetourReturn, ForkWatch, Path, anchor_for, profile_for
 from perception.sign_worker import SignWorker
 from gui import TunerGUI
 
@@ -123,14 +123,14 @@ class FrameSource:
             return True, self._frame
 
 
-_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state")
+_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state", "fork")
 
 
 parser = argparse.ArgumentParser(description="Autonomous car tuner")
 parser.add_argument("--video", help="replay a recorded video instead of the camera")
 parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
 parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
-parser.add_argument("--camera", type=int, default=2, help="camera index when not replaying a video (default 0)")
+parser.add_argument("--camera", type=int, default=3, help="camera index when not replaying a video (default 0)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 args = parser.parse_args()
 
@@ -172,6 +172,7 @@ arduino = Arduino()
 tracker = LineTracker()
 autonomous = Autonomous()
 detour_return = DetourReturn()
+fork_watch = ForkWatch()
 ps5 = PS5Controller()
 lights = LightsController()
 obstacle_guard = ObstacleGuard()
@@ -197,6 +198,9 @@ prev_path = path
 prev_lane_state = None
 frame_index = -1
 warned_calibrating = False
+# Set by ForkWatch on the frame it sees a detour's mouth go by; the mission
+# reads it on the next frame (it decides before the tracker runs).
+fork_passed = False
 
 while gui.is_running():
     now = time.monotonic()
@@ -281,7 +285,7 @@ while gui.is_running():
     # sign camera or the model. The mission decides before the tracker runs,
     # so a detour sign's decision anchors this very frame.
     snapshot = sign_worker.get_snapshot()
-    mission_command = mission.update(snapshot, path, now)
+    mission_command = mission.update(snapshot, path, now, fork_passed=fork_passed)
     if mission_command.path is not None:
         path = mission_command.path
 
@@ -291,6 +295,7 @@ while gui.is_running():
     # steady-lane timers must not count a car standing in the gap.
     obstacle_stopped = gui.is_autonomous() and obstacle_guard.stopped
     returned = None if obstacle_stopped else detour_return.update(path, perc, dt)
+    fork_passed = not obstacle_stopped and fork_watch.update(path, perc, dt)
     if returned is not None:
         logger.info(f"Detour entrance passed, returning to {returned.value} (lane {perc.lane_state})")
         path = returned
@@ -376,7 +381,7 @@ while gui.is_running():
             "" if last_sonar is None else f"{last_sonar.state}:{last_sonar.nearest_cm}",
             "" if last_sonar is None else " ".join("-" if d is None else str(d) for d in last_sonar.distances),
             obstacle_guard.label if obstacle_guard.nearest_cm is None else f"{obstacle_guard.label}:{obstacle_guard.nearest_cm}",
-            mission.stage.value, mission.target or "", mission.next_exit, mission_command.state.value,
+            mission.stage.value, mission.target or "", mission.next_exit, mission_command.state.value, int(fork_passed),
         ))
 
     gui.update_textures(perc)
