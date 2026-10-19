@@ -11,18 +11,18 @@ class Config:
     threshold_constant: float = -26
 
     # ROI
-    roi_x0: float = 0.03
-    roi_x1: float = 0.98
-    roi_y0: float = 0.67
-    roi_y1: float = 0.94
-    ema_alpha: float = 0.4
+    roi_x0: float = 0.01
+    roi_x1: float = 0.99
+    roi_y0: float = 0.55
+    roi_y1: float = 0.85
+    ema_alpha: float = 0.7
     scan_lines: int = 5
 
     # PID
-    kp: float = 0.0231
+    kp: float = 0.0140
     ki: float = 0.0
     kd: float = 0.0027
 
     # Speed
-    base_speed: float = 0.63
-    min_speed: float = 0.50
+    base_speed: float = 0.80
+    min_speed: float = 0.67

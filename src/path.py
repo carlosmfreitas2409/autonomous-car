@@ -61,10 +61,13 @@ _RETURN_STEADY_S = 2.0     # then this long with both lines on two or more rows
 # would stop it there (1.4 s blind on the day-1 recording; day-4 stopped
 # exactly so after an early L1). So the DETOUR control profile stays carried
 # until a hold of at least `_CARRY_HOLD_MIN_S` has run and, after it, the
-# lane has been whole (both lines) for `_RETURN_STEADY_S`: the merge is
-# followed by the U-turn on the outer line alone, which needs the same
-# rules (day-7 went back to the 0.2 s grace mid-U-turn). Or this long has
-# passed. No carry when that already happened while armed.
+# lane has been measured (both lines, in the ROI or the band above it) for
+# `_RETURN_STEADY_S`: the merge is followed by the U-turn on the outer line
+# alone, which needs the same rules (day-7 went back to the 0.2 s grace
+# mid-U-turn). Or this long has passed. No carry when that already happened
+# while armed. Both lines on two ROI rows was the first rule; with the ROI at
+# 0.60-0.85 that is 16-27 % of frames and the carry ran to its 20 s cap,
+# through the S-curve after the 90-degree exit (lap_a5/a6, 2026-10-13).
 _CARRY_HOLD_S = 20.0
 _CARRY_HOLD_MIN_S = 0.3
 
@@ -89,6 +92,7 @@ class DetourReturn:
         self._merge_seen = False
         self._after_merge = 0.0
         self._whole_lane = False
+        self._lane_measured = False
 
     @property
     def stage(self) -> str:
@@ -111,7 +115,10 @@ class DetourReturn:
         owed and a running carry is released."""
         if holding > 0:
             self._hold_run = holding
-            self._after_merge = 0.0
+            # A blind stretch starts the count again; a few weak frames in the
+            # S-curve after the exit (0.16-0.23 s on lap_a6) are not one.
+            if holding >= _CARRY_HOLD_MIN_S:
+                self._after_merge = 0.0
         else:
             # Only a hold that ends once the car has been inside the detour
             # is the merge; the entrance hold ends before the first whole
@@ -122,7 +129,7 @@ class DetourReturn:
         if self._carry_time is None:
             return
         self._carry_time += dt
-        if self._merge_seen and self._whole_lane:
+        if self._merge_seen and self._lane_measured:
             self._after_merge += dt
         if (self._merge_seen and self._after_merge >= _RETURN_STEADY_S) or self._carry_time >= _CARRY_HOLD_S:
             self._carry_time = None
@@ -136,6 +143,8 @@ class DetourReturn:
 
     def update(self, path: Path, perc, dt: float):
         self._whole_lane = perc.lane_offset is not None and not perc.provisional and perc.both_rows >= 2
+        self._lane_measured = (perc.lane_offset is not None and not perc.provisional
+                               and (perc.both_rows > 0 or perc.band_rows >= 2))
         if path is not Path.DETOUR:
             if self._armed:
                 # L1 or the radio: home by hand, with the merge possibly ahead.
