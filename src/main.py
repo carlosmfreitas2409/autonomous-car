@@ -125,7 +125,7 @@ class FrameSource:
             return True, self._frame
 
 
-_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state", "fork")
+_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state", "fork", "kp", "kd", "ema", "roi", "base_speed", "min_speed", "far_offset", "far_curvature")
 
 
 parser = argparse.ArgumentParser(description="Autonomous car tuner")
@@ -220,6 +220,9 @@ prev_time = start_time
 prev_stopped = False
 last_sonar = None
 held_steering = None
+# The car was held still last frame by a sign or the mission (the tracker
+# learns nothing from a car standing still).
+prev_hold = False
 prev_stop_reason = None
 path = HOME_PATH
 prev_path = path
@@ -317,7 +320,8 @@ while gui.is_running():
     if mission_command.path is not None:
         path = mission_command.path
 
-    perc = tracker.process(frame, params, anchor_for(path))
+    standing = gui.is_autonomous() and (obstacle_guard.stopped or prev_hold)
+    perc = tracker.process(frame, params, anchor_for(path), learn=not standing)
 
     # Stopped for an obstacle the car is not moving: the detour's gap and
     # steady-lane timers must not count a car standing in the gap.
@@ -341,6 +345,7 @@ while gui.is_running():
         steering, throttle = autonomous.step(
             perc.lane_offset, perc.lane_curvature, params, dt, obstacle_guard.scale,
             profile=detour_return.profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found,
+            far_offset=perc.far_offset, far_curvature=perc.far_curvature,
         )
         if not obstacle_stopped:
             detour_return.observe_hold(autonomous.holding, dt)
@@ -357,6 +362,7 @@ while gui.is_running():
     constraint = sign_policy.update(snapshot, now)
     scale = min(constraint.scale, mission_command.scale)
     hold = constraint.hold or mission_command.hold
+    prev_hold = hold
     if gui.is_autonomous():
         if hold or throttle <= 0.0:
             throttle *= scale
@@ -410,6 +416,12 @@ while gui.is_running():
             "" if last_sonar is None else " ".join("-" if d is None else str(d) for d in last_sonar.distances),
             obstacle_guard.label if obstacle_guard.nearest_cm is None else f"{obstacle_guard.label}:{obstacle_guard.nearest_cm}",
             mission.stage.value, mission.target or "", mission.next_exit, mission_command.state.value, int(fork_passed),
+            # The sliders change between laps; a lap is only comparable with what it was driven with.
+            f"{params.kp:.4f}", f"{params.kd:.4f}", f"{params.ema_alpha:.2f}",
+            f"{params.roi_x0:.2f} {params.roi_x1:.2f} {params.roi_y0:.2f} {params.roi_y1:.2f}",
+            f"{params.base_speed:.2f}", f"{params.min_speed:.2f}",
+            "" if perc.far_offset is None else perc.far_offset,
+            "" if perc.far_curvature is None else f"{perc.far_curvature:.4f}",
         ))
 
     gui.update_textures(perc)

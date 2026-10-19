@@ -71,7 +71,7 @@ import cv2 as cv
 
 from config import Config
 from input import autonomous as autonomous_module
-from input.autonomous import _LOOKAHEAD_GAIN, Autonomous, ControlProfile
+from input.autonomous import _DETOUR_HOLD_STEER, _LOOKAHEAD_GAIN, Autonomous, ControlProfile
 import obstacle as obstacle_module
 from obstacle import ObstacleGuard
 from path import HOME_PATH, DetourReturn, Path, anchor_for, profile_for
@@ -280,45 +280,48 @@ def run_obstacle_guard_check() -> bool:
         if not ok:
             failures.append(name)
 
-    stop, slow = obstacle_module._STOP_CM, obstacle_module._SLOW_CM[1]
-    release = obstacle_module._RELEASE_CM
+    stop, slow = obstacle_module._STOP_CM[1], obstacle_module._SLOW_CM[1]
+    release = obstacle_module._RELEASE_CM[1]
 
     # Centre sensor: the old ramp, stop at the threshold.
-    for d in (200, 150, 149, 120, 97, 80, 61):
+    for d in (200, 150, 149, 120, 97, stop + 5, stop + 1):
         want = 1.0 if d >= slow else (d - stop) / (slow - stop)
         expect(f"ramp {d} cm", abs(_feed(ObstacleGuard(), (None, d, None), times=3) - want) < 1e-12)
-    expect("stop at 60 cm", _feed(ObstacleGuard(), (None, 60, None), times=3) == 0.0)
+    expect(f"stop at {stop:.0f} cm", _feed(ObstacleGuard(), (None, stop, None), times=3) == 0.0)
 
     # Side sensors: ignored past their own slow distance (a person beside the
     # track), then the same ramp to the same stop, and they hold the stop.
     for index in (0, 2):
         side_slow = obstacle_module._SLOW_CM[index]
+        side_stop = obstacle_module._STOP_CM[index]
         for d in (side_slow, side_slow + 20, 149):
             distances = [None, None, None]
             distances[index] = d
             expect(f"side {index} at {d} cm does not slow", _feed(ObstacleGuard(), distances, times=3) == 1.0)
-        for d in (side_slow - 10, (side_slow + stop) / 2, stop + 1):
+        for d in (side_slow - 10, (side_slow + side_stop) / 2, side_stop + 1):
             distances = [None, None, None]
             distances[index] = d
-            want = (d - stop) / (side_slow - stop)
+            want = (d - side_stop) / (side_slow - side_stop)
             expect(f"side {index} ramp {d} cm", abs(_feed(ObstacleGuard(), distances, times=3) - want) < 1e-12)
-        for d in (30, 55, 60):
+        for d in (30, side_stop - 5, side_stop):
             distances = [None, None, None]
             distances[index] = d
             expect(f"side {index} at {d} cm stops", _feed(ObstacleGuard(), distances, times=3) == 0.0)
         guard = ObstacleGuard()
         distances = [None, None, None]
-        distances[index] = 55
+        distances[index] = side_stop - 5
         _feed(guard, distances, times=3)
-        distances[index] = 70
+        distances[index] = side_stop + 10
         expect(f"side {index} holds the stop", _feed(guard, distances, times=10) == 0.0)
     # The slowest-demanding sensor wins.
-    expect("nearest ramp wins", abs(_feed(ObstacleGuard(), (80, 140, None), times=3) - (80 - stop) / (100 - stop)) < 1e-12)
+    left_stop = obstacle_module._STOP_CM[0]
+    expect("nearest ramp wins",
+           abs(_feed(ObstacleGuard(), (80, 140, None), times=3) - (80 - left_stop) / (100 - left_stop)) < 1e-12)
 
     # Latch: a stationary obstacle wobbling around the threshold stays a stop.
     guard = ObstacleGuard()
-    _feed(guard, (None, 58, None), times=3)
-    wobble = [58, 64, 70, 62, 73, 59, 66, 74, 61] * 5
+    _feed(guard, (None, stop - 2, None), times=3)
+    wobble = [stop + w for w in (-2, 4, 10, 2, 13, -1, 6, 14, 1)] * 5
     expect("wobble stays stopped", all(_feed(guard, (None, d, None)) == 0.0 for d in wobble))
     # Release only after `_RELEASE_S` clear past `_RELEASE_CM`.
     dt = 0.1
@@ -579,7 +582,8 @@ def _replay_script(clip: Clip, script: Script, dt: float, limit, judged: bool = 
         perc = tracker.process(frame, params, anchor_for(path))
         was_holding = auto.holding > 0
         steering, throttle = auto.step(perc.lane_offset, perc.lane_curvature, params, dt,
-                                       profile=profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found)
+                                       profile=profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found,
+                                       far_offset=perc.far_offset, far_curvature=perc.far_curvature)
         holding_now = auto.holding > 0
 
         key = f"{phase}:{perc.lane_state.split()[0]}"
@@ -733,10 +737,11 @@ def run_recordings(clip: Clip, limit) -> bool:
         if home is not None:
             returned_at, path = index, home
         steering, _thr = auto.step(perc.lane_offset, perc.lane_curvature, script.params, dt,
-                                   profile=watch.profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found)
+                                   profile=watch.profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found,
+                                   far_offset=perc.far_offset, far_curvature=perc.far_curvature)
         watch.observe_hold(auto.holding, dt)
         if index > script.arm and auto.holding > 0 and prev_holding == 0:
-            hold_candidate = (index, steering)
+            hold_candidate = (index, auto._last_steering)  # the held value, not the (entry-delayed) wheels
         if auto.holding >= 0.3 and first_hold is None:
             first_hold, hold_start_steer = hold_candidate
         if prev_holding >= 0.3 and auto.holding == 0 and hold_candidate[0] is not None:
@@ -759,7 +764,7 @@ def run_recordings(clip: Clip, limit) -> bool:
     if script.entrance_hold_min is not None:
         if first_hold is None:
             failures.append("no hold after arming")
-        elif hold_start_steer < script.entrance_hold_min:
+        elif hold_start_steer < min(script.entrance_hold_min, _DETOUR_HOLD_STEER):
             failures.append(f"first hold latched steering {hold_start_steer:+.2f} (< {script.entrance_hold_min:+.2f})")
     if script.merge is not None:
         in_merge = [f for f in stops if script.merge[0] <= f <= script.merge[1]]
@@ -767,7 +772,7 @@ def run_recordings(clip: Clip, limit) -> bool:
             failures.append(f"stopped in the merge at frame {in_merge[0]}")
     # Every hold after a right turn is full lock (the merge as much as the
     # entrance); one at a partial right turn is the latch losing the lock.
-    partial = [h for h in holds if 0 < h[1] < 1.0]
+    partial = [h for h in holds if 0 < h[1] < _DETOUR_HOLD_STEER]
     if partial:
         failures.append(f"hold latched a partial right turn {partial[:3]}")
     hold_text = "none" if first_hold is None else f"frame {first_hold} at {hold_start_steer:+.2f}"

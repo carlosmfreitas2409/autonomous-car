@@ -103,8 +103,8 @@ Obstacle avoidance is enforced by the host (`src/obstacle.py`, applied by `src/i
 and runs in **autonomous mode only** — manual (PS5) driving is never governed by the sonar. The host
 ignores the master's `B`/`S` states (they count every sensor, including echoes beside the lane) and
 works from the three distances: the centre sensor slows the car from 150 cm, the side sensors (which
-point outward and see things beside the track) from 100 cm; any sensor stops it at 60 cm, and it
-resumes only after every sensor reads farther than 75 cm for 0.5 s. While stopped the steering is held and the hazards flash.
+point outward and see things beside the track) from 100 cm; the centre sensor stops it at 75 cm and the side sensors at 60 cm (they point outward at the poles beside
+the track), and it resumes only after every sensor reads 15 cm past its stop distance for 0.5 s. While stopped the steering is held and the hazards flash.
 `TELEMETRY_ENABLED` must stay on: without `S` lines the host has no sonar data and does not gate.
 
 - **Fail-safe**: no frame for 300 ms means *blocked*, never *clear*.
@@ -154,4 +154,4 @@ The firmware only reports; the host acts on it. These check the `S` line is corr
     wheels stay still and the hazards flash while it waits; switch to manual (PS5) and confirm it does
     **not**.
 12. An obstacle in front of a front corner, seen only by a side sensor: the car slows from 100 cm and
-    stops at 60 cm like it does for the centre sensor.
+    stops at 60 cm (the centre sensor stops at 75 cm).
