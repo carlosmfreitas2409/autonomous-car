@@ -12,7 +12,8 @@ from arduino import Arduino
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("main")
 
-from config import Config
+from challenge import Challenge
+from config import SPEED_TEST, Config
 from lights import LightsController, TurnSignal
 from obstacle import ObstacleGuard
 from perception.line_tracking import LineTracker
@@ -125,14 +126,14 @@ class FrameSource:
             return True, self._frame
 
 
-_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state", "fork", "kp", "kd", "ema", "roi", "base_speed", "min_speed", "far_offset", "far_curvature")
+_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state", "fork", "kp", "kd", "ema", "roi", "base_speed", "min_speed", "far_offset", "far_curvature", "challenge")
 
 
 parser = argparse.ArgumentParser(description="Autonomous car tuner")
 parser.add_argument("--video", help="replay a recorded video instead of the camera")
 parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
 parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
-parser.add_argument("--camera", type=int, default=1, help="camera index when not replaying a video (default 0)")
+parser.add_argument("--camera", type=int, default=2, help="camera index when not replaying a video (default 0)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 args = parser.parse_args()
 
@@ -214,6 +215,9 @@ gui.set_pid_reset_callback(autonomous.reset)
 gui.set_master_port_callback(arduino.set_master_port)
 gui.set_lights_controller(lights)
 
+challenge = Challenge.DELIVERY
+tuning = {Challenge.DELIVERY: config, Challenge.SPEED: SPEED_TEST}
+
 fps = 0.0
 start_time = time.monotonic()
 prev_time = start_time
@@ -250,10 +254,26 @@ while gui.is_running():
     if ps5.poll_mode_toggle():
         gui.toggle_mode()
 
+    requested_challenge = gui.poll_challenge_request()
+    if requested_challenge is not None and requested_challenge is not challenge:
+        if gui.is_stopped():
+            tuning[challenge] = gui.read_params()
+            challenge = requested_challenge
+            gui.load_tuning(tuning[challenge])
+            path = HOME_PATH
+            detour_return = DetourReturn()
+            fork_watch = ForkWatch()
+            fork_passed = False
+            sign_worker.set_paused(challenge is Challenge.SPEED)
+            logger.info(f"Stage: {challenge.value}")
+        else:
+            logger.warning("The stage can only be changed while e-stopped")
+    speed_test = challenge is Challenge.SPEED
+
     # Path buttons are read before the stopped branch so the Detour can be
     # armed while the car waits at the sign.
     for requested_path in (ps5.poll_path_buttons(), gui.poll_path_request()):
-        if requested_path is not None:
+        if requested_path is not None and not speed_test:
             path = requested_path
 
     letters = gui.poll_mission_request()
@@ -279,9 +299,10 @@ while gui.is_running():
         mission.reset()
         held_steering = None
         lights.signal_override = TurnSignal.RIGHT if path is Path.DETOUR else None
-        lights.update(0.0, estopped=True, autonomous=gui.is_autonomous())
+        lights.update(0.0, estopped=True, autonomous=gui.is_autonomous(), speed_test=speed_test)
         lights_output = lights.compute()
         arduino.send_lights(lights_output)
+        gui.update_challenge(challenge)
         gui.update_signs(sign_worker.get_snapshot(), SignConstraint(reason="e-stop"), applied=False)
         gui.update_mission(mission, MissionCommand(reason="e-stop"), applied=False)
         gui.update_path_status(path, tracker.profile_ready, "e-stop")
@@ -316,16 +337,24 @@ while gui.is_running():
     # sign camera or the model. The mission decides before the tracker runs,
     # so a detour sign's decision anchors this very frame.
     snapshot = sign_worker.get_snapshot()
-    mission_command = mission.update(snapshot, path, now, fork_passed=fork_passed)
+    if speed_test:
+        mission_command = MissionCommand(reason="speed test")
+    else:
+        mission_command = mission.update(snapshot, path, now, fork_passed=fork_passed)
     if mission_command.path is not None:
         path = mission_command.path
 
-    standing = gui.is_autonomous() and (obstacle_guard.stopped or prev_hold)
+    # The speed test runs without the sonar guard: it still observes, for
+    # the GUI, but never slows or stops the car.
+    guard_stopped = obstacle_guard.stopped and not speed_test
+    guard_scale = 1.0 if speed_test else obstacle_guard.scale
+
+    standing = gui.is_autonomous() and (guard_stopped or prev_hold)
     perc = tracker.process(frame, params, anchor_for(path), learn=not standing)
 
     # Stopped for an obstacle the car is not moving: the detour's gap and
     # steady-lane timers must not count a car standing in the gap.
-    obstacle_stopped = gui.is_autonomous() and obstacle_guard.stopped
+    obstacle_stopped = gui.is_autonomous() and guard_stopped
     returned = None if obstacle_stopped else detour_return.update(path, perc, dt)
     fork_passed = not obstacle_stopped and fork_watch.update(path, perc, dt)
     if returned is not None:
@@ -343,7 +372,7 @@ while gui.is_running():
 
     if gui.is_autonomous():
         steering, throttle = autonomous.step(
-            perc.lane_offset, perc.lane_curvature, params, dt, obstacle_guard.scale,
+            perc.lane_offset, perc.lane_curvature, params, dt, guard_scale,
             profile=detour_return.profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found,
             far_offset=perc.far_offset, far_curvature=perc.far_curvature,
         )
@@ -359,7 +388,7 @@ while gui.is_running():
         prev_stop_reason = autonomous.stop_reason
 
     # Stop signs, lights and the mission's stops: the most restrictive wins.
-    constraint = sign_policy.update(snapshot, now)
+    constraint = SignConstraint(reason="speed test") if speed_test else sign_policy.update(snapshot, now)
     scale = min(constraint.scale, mission_command.scale)
     hold = constraint.hold or mission_command.hold
     prev_hold = hold
@@ -397,7 +426,7 @@ while gui.is_running():
     # still stopped before it pulls away.
     sign_stopped = gui.is_autonomous() and constraint.hold
     lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(),
-                  obstacle_stopped=obstacle_stopped, sign_stopped=sign_stopped)
+                  obstacle_stopped=obstacle_stopped, sign_stopped=sign_stopped, speed_test=speed_test)
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
     arduino.send_motor(throttle, steering)
@@ -422,6 +451,7 @@ while gui.is_running():
             f"{params.base_speed:.2f}", f"{params.min_speed:.2f}",
             "" if perc.far_offset is None else perc.far_offset,
             "" if perc.far_curvature is None else f"{perc.far_curvature:.4f}",
+            challenge.value,
         ))
 
     gui.update_textures(perc)
@@ -441,8 +471,11 @@ while gui.is_running():
     gui.update_telemetry(fps, int(round(error)), steering, throttle, lane_text, stop_text)
     gui.update_path_status(path, perc.profile_ready, perc.lane_state)
     gui.update_sonar(last_sonar, obstacle_guard)
-    gui.update_signs(snapshot, constraint, applied=gui.is_autonomous())
-    gui.update_mission(mission, mission_command, applied=gui.is_autonomous())
+    applied = gui.is_autonomous() and not speed_test
+    why = "speed test" if speed_test else "manual"
+    gui.update_challenge(challenge)
+    gui.update_signs(snapshot, constraint, applied=applied, why=why)
+    gui.update_mission(mission, mission_command, applied=applied, why=why)
     gui.render_frame()
 
 _close_recording()

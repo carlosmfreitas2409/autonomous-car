@@ -26,3 +26,6 @@ class Config:
     # Speed
     base_speed: float = 0.80
     min_speed: float = 0.67
+
+
+SPEED_TEST = Config(base_speed=1.0, min_speed=0.70)
