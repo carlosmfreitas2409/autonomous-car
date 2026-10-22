@@ -53,3 +53,35 @@ def test_confirmed_light_is_drawn_in_its_state_colour():
     canvas = render_overlay(frame, [track], detector_available=True, camera_open=True)
     column = canvas[60:160, 300:302].reshape(-1, 3)
     assert any(pixel.tolist() == [60, 60, 235] for pixel in column)
+
+
+def _wait_for(worker, predicate, timeout=3.0):
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate(worker.get_snapshot()):
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_paused_worker_opens_no_camera_and_says_so(monkeypatch, tmp_path):
+    from perception.sign_worker import SignWorker
+
+    opened = []
+    monkeypatch.setattr(SignWorker, "_open_camera", lambda self: (opened.append(1), (None, None))[1])
+    worker = SignWorker(("missing.mp4",), model_path=str(tmp_path / "missing.onnx"))
+    worker.set_paused(True)
+    worker.start()
+    try:
+        assert _wait_for(worker, lambda s: s.paused)
+        snapshot = worker.get_snapshot()
+        assert snapshot.tracks == [] and not snapshot.camera_open
+        assert opened == []
+
+        worker.set_paused(False)
+        assert _wait_for(worker, lambda s: not s.paused)
+        assert _wait_for(worker, lambda s: "NO CAMERA" in s.status)
+        assert opened
+    finally:
+        worker.close()

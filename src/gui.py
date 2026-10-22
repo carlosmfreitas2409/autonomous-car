@@ -4,6 +4,7 @@ import cv2 as cv
 import serial.tools.list_ports
 import time
 
+from challenge import Challenge
 from config import Config
 from lights import LightsController, StripEffect, TurnSignal
 
@@ -24,6 +25,13 @@ _PATH_NAMES = {path: label for label, path in _PATH_LABELS.items()}
 _PATH_COLOR_IDLE = (150, 150, 150)
 _PATH_COLOR_DETOUR = (255, 160, 40)
 _PATH_COLOR_WARN = (255, 80, 80)
+
+
+_CHALLENGE_LABELS = {
+    "Delivery": Challenge.DELIVERY,
+    "Speed": Challenge.SPEED,
+}
+_CHALLENGE_NAMES = {challenge: label for label, challenge in _CHALLENGE_LABELS.items()}
 
 
 _TURN_SIGNAL_LABELS = {
@@ -85,6 +93,7 @@ class TunerGUI:
         self._signs_uploaded_at = -1.0
         self._lights: LightsController | None = None
         self._path_request: Path | None = None
+        self._challenge_request: Challenge | None = None
         self._mission_request: tuple[str | None, str | None] | None = None
         self._shown_letters: tuple[str | None, str | None] = (None, None)
         self._dock_action: str | None = None
@@ -174,6 +183,14 @@ class TunerGUI:
                         dpg.add_spacer(width=4)
                         self._tags["tel_signs"] = dpg.add_text("Signs: --", color=(150, 150, 150))
                     with dpg.group(horizontal=True, height=24):
+                        dpg.add_text("Stage:", color=_PATH_COLOR_IDLE)
+                        self._tags["challenge"] = dpg.add_radio_button(
+                            tuple(_CHALLENGE_LABELS),
+                            horizontal=True,
+                            default_value=_CHALLENGE_NAMES[Challenge.DELIVERY],
+                            callback=self._on_challenge,
+                        )
+                        dpg.add_spacer(width=8)
                         self._tags["path_label"] = dpg.add_text("Path:", color=_PATH_COLOR_IDLE)
                         self._tags["path"] = dpg.add_radio_button(
                             tuple(_path_item_label(label) for label in _PATH_LABELS),
@@ -319,6 +336,12 @@ class TunerGUI:
             min_speed=dpg.get_value(self._tags["min_speed"]),
         )
 
+    def load_tuning(self, config: Config):
+        """Put a stage's PID and speed on the sliders; ROI and threshold are
+        the camera's and stay as they are."""
+        for key in ("kp", "ki", "kd", "base_speed", "min_speed"):
+            dpg.set_value(self._tags[key], getattr(config, key))
+
     def set_pid_reset_callback(self, callback):
         dpg.set_item_callback(self._tags["pid_reset"], callback)
 
@@ -378,6 +401,24 @@ class TunerGUI:
         dpg.set_value(self._tags["tel_stop"], f"Stop: {stop_reason or '--'}")
         dpg.configure_item(self._tags["tel_stop"], color=(255, 80, 80) if stop_reason else (150, 150, 150))
 
+    # --- stage -----------------------------------------------------------
+
+    def _on_challenge(self, _sender, value):
+        self._challenge_request = _CHALLENGE_LABELS[value]
+
+    def poll_challenge_request(self) -> Challenge | None:
+        """The stage the operator clicked since the last call, if any."""
+        request, self._challenge_request = self._challenge_request, None
+        return request
+
+    def update_challenge(self, challenge: Challenge):
+        """Show the loop's stage (a change it refused snaps back). The speed
+        test has no path choice and no mission."""
+        dpg.set_value(self._tags["challenge"], _CHALLENGE_NAMES[challenge])
+        enabled = challenge is Challenge.DELIVERY
+        for key in ("path", "pickup", "delivery"):
+            dpg.configure_item(self._tags[key], enabled=enabled)
+
     # --- path ------------------------------------------------------------
 
     def _on_path(self, _sender, value):
@@ -436,7 +477,7 @@ class TunerGUI:
         colour = (255, 80, 80) if cargo.fault else (255, 200, 0) if not cargo.lid_closed or cargo.unlocked else (0, 255, 0)
         dpg.configure_item(tag, color=colour)
 
-    def update_signs(self, snapshot: SignSnapshot, constraint: SignConstraint, applied: bool):
+    def update_signs(self, snapshot: SignSnapshot, constraint: SignConstraint, applied: bool, why: str = "manual"):
         # The worker publishes at ~10 fps and this loop runs at ~30: only
         # upload a frame once.
         if snapshot.frame is not None and snapshot.timestamp != self._signs_uploaded_at:
@@ -444,7 +485,10 @@ class TunerGUI:
             self._signs_uploaded_at = snapshot.timestamp
 
         chip = self._tags["tel_signs"]
-        if not snapshot.camera_open:
+        if snapshot.paused:
+            dpg.set_value(chip, "Signs: paused")
+            dpg.configure_item(chip, color=(150, 150, 150))
+        elif not snapshot.camera_open:
             dpg.set_value(chip, f"Signs: {snapshot.status or 'NO CAMERA'}")
             dpg.configure_item(chip, color=(255, 80, 80))
         elif not snapshot.detector_available:
@@ -465,7 +509,7 @@ class TunerGUI:
             text += f" - {constraint.reason}"
         text += f" · cap {cap:.2f}"
         if not applied:
-            text += " (not applied - manual)"
+            text += f" (not applied - {why})"
         dpg.set_value(self._tags["signs_policy"], text)
         dpg.configure_item(self._tags["signs_policy"], color=_POLICY_COLOUR[constraint.state])
 
@@ -510,7 +554,7 @@ class TunerGUI:
         request, self._dock_request = self._dock_request, None
         return request
 
-    def update_mission(self, mission: Mission, command: MissionCommand, applied: bool):
+    def update_mission(self, mission: Mission, command: MissionCommand, applied: bool, why: str = "manual"):
         """Show the mission's letters (a change it refused snaps back) and state."""
         self._shown_letters = (mission.pickup, mission.delivery)
         dpg.set_value(self._tags["pickup"], mission.pickup or _NO_LETTER)
@@ -527,7 +571,7 @@ class TunerGUI:
         if command.reason:
             text += f" - {command.reason}"
         if not applied and command.state is not MissionState.IDLE:
-            text += " (not applied - manual)"
+            text += f" (not applied - {why})"
         dpg.set_value(self._tags["mission_status"], text)
         dpg.configure_item(self._tags["mission_status"], color=_MISSION_COLOUR[command.state])
         dpg.set_value(self._tags["mission_route"], " > ".join(mission.route))

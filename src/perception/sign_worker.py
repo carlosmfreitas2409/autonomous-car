@@ -62,6 +62,7 @@ class SignSnapshot:
     detector_available: bool = False
     status: str = ""
     fps: float = 0.0
+    paused: bool = False            # the speed test: no camera, no model
 
     def age(self, now: float) -> float:
         if self.timestamp <= 0.0:
@@ -143,6 +144,7 @@ class SignWorker:
         self._confidence = confidence
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._paused = threading.Event()
         self._thread = threading.Thread(target=self._run, name="sign-perception", daemon=True)
         self._snapshot = SignSnapshot(
             frame=render_overlay(None, [], detector_available=False, camera_open=False,
@@ -152,6 +154,14 @@ class SignWorker:
 
     def start(self) -> None:
         self._thread.start()
+
+    def set_paused(self, paused: bool) -> None:
+        """Paused, the camera is let go and nothing is detected; resumed, it
+        is reopened like after a failed read."""
+        if paused:
+            self._paused.set()
+        else:
+            self._paused.clear()
 
     def get_snapshot(self) -> SignSnapshot:
         with self._lock:
@@ -169,7 +179,7 @@ class SignWorker:
         merged = {
             "tracks": previous.tracks, "frame": previous.frame, "timestamp": previous.timestamp,
             "camera_open": previous.camera_open, "detector_available": previous.detector_available,
-            "status": previous.status, "fps": previous.fps,
+            "status": previous.status, "fps": previous.fps, "paused": previous.paused,
         }
         merged.update(fields)
         snapshot = SignSnapshot(**merged)
@@ -190,6 +200,21 @@ class SignWorker:
 
         try:
             while not self._stop.is_set():
+                if self._paused.is_set():
+                    if not self.get_snapshot().paused:
+                        if capture is not None:
+                            capture.release()
+                            capture = None
+                        tracker.reset()
+                        self._publish(tracks=[], camera_open=False, paused=True, status="paused", fps=0.0,
+                                      frame=render_overlay(None, [], detector_available=detector.available,
+                                                           camera_open=False, status="paused - speed test"))
+                    time.sleep(0.1)
+                    continue
+                if self.get_snapshot().paused:
+                    self._publish(paused=False, status=detector_status)
+                    next_retry = 0.0
+
                 if capture is None:
                     now = time.monotonic()
                     if now < next_retry:

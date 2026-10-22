@@ -96,6 +96,7 @@ class LightsController:
         self._autonomous = True
         self._obstacle_stopped = False
         self._sign_stopped = False
+        self._speed_test = False
         self._scene: DockScene | None = None
         self._braking = False
         self._prev_throttle = 0.0
@@ -108,6 +109,7 @@ class LightsController:
         autonomous: bool,
         obstacle_stopped: bool = False,
         sign_stopped: bool = False,
+        speed_test: bool = False,
         scene: DockScene | None = None,
     ) -> None:
         speed = abs(throttle)
@@ -121,6 +123,7 @@ class LightsController:
         self._autonomous = autonomous
         self._obstacle_stopped = obstacle_stopped
         self._sign_stopped = sign_stopped
+        self._speed_test = speed_test
         self._scene = scene
 
     def _resolve_strip(self) -> StripEffect:
@@ -132,7 +135,9 @@ class LightsController:
             return StripEffect.RED
         if self._scene is not None:
             return _SCENE_STRIP[self._scene]
-        return StripEffect.CYAN if self._autonomous else StripEffect.GREEN
+        if not self._autonomous:
+            return StripEffect.GREEN
+        return StripEffect.POLICE if self._speed_test else StripEffect.CYAN
 
     def compute(self) -> LightsOutput:
         # Stopped for an obstacle: hazards, over the loop's override (Detour,
@@ -146,22 +151,25 @@ class LightsController:
             signal = self.turn_signal
         left_active = signal in (TurnSignal.LEFT, TurnSignal.HAZARD)
         right_active = signal in (TurnSignal.RIGHT, TurnSignal.HAZARD)
-        lit = self._scene in _SCENE_LIT
+        # The speed test is a show: every lamp on, over the operator's choice.
+        show = self._speed_test
+        drl = self.drl or show
+        lit = show or self._scene in _SCENE_LIT
 
         return LightsOutput(
             front_left_signal=left_active,
             front_right_signal=right_active,
-            front_left_drl=self.drl,
-            front_right_drl=self.drl,
+            front_left_drl=drl,
+            front_right_drl=drl,
             back_left_signal=left_active,
             back_right_signal=right_active,
-            back_left_position=self.drl,
-            back_right_position=self.drl,
+            back_left_position=drl,
+            back_right_position=drl,
             back_left_brake=self._braking,
             back_right_brake=self._braking,
             reverse_left=self.reverse,
             reverse_right=self.reverse,
-            low_beam=self.low_beam,
+            low_beam=self.low_beam or show,
             logo=self.logo or lit,
             projector=self.projector or lit,
             strip_effect=self._resolve_strip(),
