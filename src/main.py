@@ -12,6 +12,7 @@ from arduino import Arduino
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("main")
 
+from cargo import ManualOpen
 from config import Config
 from lights import LightsController, TurnSignal
 from obstacle import ObstacleGuard
@@ -23,6 +24,7 @@ from input.mission import Mission, MissionCommand
 from path import HOME_PATH, DetourReturn, ForkWatch, Path, anchor_for, profile_for
 from perception.sign_worker import SignWorker
 from gui import TunerGUI
+from voice import Voice
 
 
 # Sign perception runs on its own thread with its own camera: the worker takes
@@ -125,15 +127,17 @@ class FrameSource:
             return True, self._frame
 
 
-_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state", "fork", "kp", "kd", "ema", "roi", "base_speed", "min_speed", "far_offset", "far_curvature")
+_LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state", "fork", "kp", "kd", "ema", "roi", "base_speed", "min_speed", "far_offset", "far_curvature", "cargo")
 
 
 parser = argparse.ArgumentParser(description="Autonomous car tuner")
 parser.add_argument("--video", help="replay a recorded video instead of the camera")
 parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
 parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
-parser.add_argument("--camera", type=int, default=1, help="camera index when not replaying a video (default 0)")
+parser.add_argument("--camera", type=int, default=0, help="camera index when not replaying a video (default 0)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
+parser.add_argument("--no-voice", action="store_true", help="no spoken prompts at the docks")
+parser.add_argument("--voice", help='dock prompt voice: a `say` voice name, or "system" for the Mac\'s system voice (e.g. a Siri voice); default Luciana')
 args = parser.parse_args()
 
 cap = cv.VideoCapture(args.video if args.video else args.camera)
@@ -208,6 +212,8 @@ sign_cam_indices = tuple(i for i in SIGN_CAM_INDICES if args.video or i != args.
 sign_worker = SignWorker(sign_cam_indices, SIGN_MODEL_PATH, SIGN_CONFIDENCE)
 sign_policy = SignPolicy()
 mission = Mission()
+voice = Voice(enabled=not args.no_voice, voice=args.voice)
+manual_open = ManualOpen()
 sign_worker.start()
 
 gui.set_pid_reset_callback(autonomous.reset)
@@ -258,28 +264,55 @@ while gui.is_running():
 
     letters = gui.poll_mission_request()
     if letters is not None:
-        if gui.is_stopped():
+        # Parked after a delivery, the next order is given where it stands;
+        # clearing both letters forgets that dock, so that needs an e-stop.
+        if gui.is_stopped() or (mission.parked and letters != (None, None)):
             mission.configure(*letters)
         else:
-            logger.warning("Pickup/delivery can only be changed while e-stopped")
+            logger.warning("Pickup/delivery can only be changed while e-stopped or parked at a delivery")
+
+    # The person at the dock: loading or unloading is done ("release"), or
+    # not yet after all ("wait"). Triangle's e-stop is the PS5's wait.
+    for request in (gui.poll_dock_request(), "release" if ps5.poll_release() else None):
+        if request is None:
+            continue
+        refused = "e-stopped, resume first" if gui.is_stopped() else (
+            mission.release(now) if request == "release" else mission.hold_departure())
+        if refused:
+            logger.warning(f"Dock {request} refused: {refused}")
+    voice.update()
 
     sonar = arduino.read_sonar()
     if sonar is not None:
         last_sonar = sonar
         obstacle_guard.observe(sonar)
     obstacle_guard.update(dt)
+    # The cargo compartment, None with no cargo node on the bus (and then no
+    # `K` line is ever sent).
+    cargo = arduino.read_cargo(now)
+    if gui.poll_open_request():
+        if gui.is_stopped():
+            manual_open.request(now)
+        else:
+            logger.warning("Open compartment refused: e-stop first")
+    open_by_hand = manual_open.update(now, cargo, stopped=gui.is_stopped())
 
     if gui.is_stopped():
         if not prev_stopped:
             arduino.send_estop()
         prev_stopped = True
+        if cargo is not None:
+            # E-stopped the car cannot move: the dock's compartment stays
+            # open, and the operator may open it by hand.
+            arduino.send_cargo(mission.unlock or open_by_hand)
         gui.update_sonar(last_sonar, obstacle_guard)
+        gui.update_cargo(cargo)
         autonomous.reset()
         sign_policy.reset()
         mission.reset()
         held_steering = None
         lights.signal_override = TurnSignal.RIGHT if path is Path.DETOUR else None
-        lights.update(0.0, estopped=True, autonomous=gui.is_autonomous())
+        lights.update(0.0, estopped=True, autonomous=gui.is_autonomous(), scene=mission.scene)
         lights_output = lights.compute()
         arduino.send_lights(lights_output)
         gui.update_signs(sign_worker.get_snapshot(), SignConstraint(reason="e-stop"), applied=False)
@@ -316,9 +349,15 @@ while gui.is_running():
     # sign camera or the model. The mission decides before the tracker runs,
     # so a detour sign's decision anchors this very frame.
     snapshot = sign_worker.get_snapshot()
-    mission_command = mission.update(snapshot, path, now, fork_passed=fork_passed)
+    # A released car pulls away only once the sonar sees nothing ahead.
+    way_clear = not obstacle_guard.stopped and obstacle_guard.scale >= 1.0
+    # A released car also waits for its "leaving" prompt to finish.
+    mission_command = mission.update(snapshot, path, now, fork_passed=fork_passed, clear=way_clear, cargo=cargo,
+                                     quiet=not voice.speaking)
     if mission_command.path is not None:
         path = mission_command.path
+    if gui.is_autonomous():
+        voice.announce(mission_command.announce)
 
     standing = gui.is_autonomous() and (obstacle_guard.stopped or prev_hold)
     perc = tracker.process(frame, params, anchor_for(path), learn=not standing)
@@ -397,10 +436,15 @@ while gui.is_running():
     # still stopped before it pulls away.
     sign_stopped = gui.is_autonomous() and constraint.hold
     lights.update(throttle, estopped=False, autonomous=gui.is_autonomous(),
-                  obstacle_stopped=obstacle_stopped, sign_stopped=sign_stopped)
+                  obstacle_stopped=obstacle_stopped, sign_stopped=sign_stopped,
+                  scene=mission_command.scene if gui.is_autonomous() else None)
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
     arduino.send_motor(throttle, steering)
+    if cargo is not None:
+        # Only the mission holds the car at a dock: driven by hand it stays
+        # locked. The master also refuses it while the wheels are driven.
+        arduino.send_cargo(mission.unlock and gui.is_autonomous())
 
     curvature = perc.lane_curvature if perc.lane_curvature is not None else 0.0
     error = (perc.lane_offset or 0) + 60.0 * curvature
@@ -422,6 +466,8 @@ while gui.is_running():
             f"{params.base_speed:.2f}", f"{params.min_speed:.2f}",
             "" if perc.far_offset is None else perc.far_offset,
             "" if perc.far_curvature is None else f"{perc.far_curvature:.4f}",
+            "" if cargo is None else f"{cargo.grams} {int(cargo.stable)} {int(cargo.lid_closed)} "
+                                     f"{int(cargo.unlocked)} {int(cargo.fault)}",
         ))
 
     gui.update_textures(perc)
@@ -441,6 +487,7 @@ while gui.is_running():
     gui.update_telemetry(fps, int(round(error)), steering, throttle, lane_text, stop_text)
     gui.update_path_status(path, perc.profile_ready, perc.lane_state)
     gui.update_sonar(last_sonar, obstacle_guard)
+    gui.update_cargo(cargo)
     gui.update_signs(snapshot, constraint, applied=gui.is_autonomous())
     gui.update_mission(mission, mission_command, applied=gui.is_autonomous())
     gui.render_frame()
@@ -448,6 +495,7 @@ while gui.is_running():
 _close_recording()
 cap.release()
 sign_worker.close()
+voice.close()
 ps5.shutdown()
 arduino.close()
 gui.shutdown()

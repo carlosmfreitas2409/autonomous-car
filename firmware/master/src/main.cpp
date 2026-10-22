@@ -3,6 +3,7 @@
 #include "battery.h"
 #include "buzzer.h"
 #include "can_bus.h"
+#include "cargo.h"
 #include "command_parser.h"
 #include "config.h"
 #include "motors.h"
@@ -89,6 +90,7 @@ void loop() {
   battery::update();
 
   telemetry::update();
+  cargo::update();
 
   const uint32_t blink_period = (safety::state() == safety::State::FAULT) ? 100 : 1000;
   if ((now - last_blink_ms) >= blink_period) {

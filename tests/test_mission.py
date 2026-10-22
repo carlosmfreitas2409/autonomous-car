@@ -4,14 +4,16 @@ main road, round again. The script follows the mission's own path
 requests, so a test reads as the drive the car would make, including the ones
 where a sign is missed or a detour is taken by mistake."""
 
+import dataclasses
 import itertools
 
 import pytest
 
-from input.mission import (_ACT_DISTANCE_M as ACT, _DWELL_S, _LEAVING_S, _SETTLE_S,
-                           _SIGNAL_BEFORE_LEAVING_S, _STOP_DISTANCE_M as STOP,
-                           Mission, MissionState, Stage, plan_route)
-from lights import TurnSignal
+from cargo import CargoReading
+from input.mission import (_ACT_DISTANCE_M as ACT, _DELIVERED_S, _DEPART_CLEAR_S, _EMPTY_G, _LEAVING_S,
+                           _REMIND_S, _SETTLE_S, _STOP_DISTANCE_M as STOP, Mission, MissionState, Stage,
+                           plan_route)
+from lights import DockScene, TurnSignal
 from path import Path
 from perception.sign_tracker import Track
 from perception.sign_worker import SignSnapshot
@@ -29,26 +31,55 @@ def track(id, label, distance, variant=None, confirmed=True):
 
 
 class Drive:
-    """The car on the scripted track: a clock, a path and a log of what it did."""
+    """The car on the scripted track: a clock, a path and a log of what it did.
+    With `auto_release` someone at every dock releases the truck as soon as
+    it docks; `clear` is what the sonar says about the way ahead, `cargo`
+    what the cargo node does (None: not connected), `quiet` whether the
+    truck's voice is silent."""
 
-    def __init__(self, pickup, delivery):
+    def __init__(self, pickup, delivery, auto_release=True):
         self.mission = Mission()
         self.mission.configure(pickup, delivery)
+        self.auto_release = auto_release
+        self.clear = True
+        self.cargo = None
+        self.quiet = True
         self.t = 0.0
         self.path = Path.STRAIGHT
         self.log: list[str] = []
         self.commands = []
         self._ids = itertools.count(1)
+        self._dock = None
+
+    @property
+    def now(self):
+        return BASE + self.t
 
     def frame(self, *tracks, age=0.0, fork_passed=False):
         snapshot = SignSnapshot(tracks=list(tracks), timestamp=BASE + self.t - age,
                                 camera_open=True, detector_available=True)
-        command = self.mission.update(snapshot, self.path, BASE + self.t, fork_passed=fork_passed)
+        command = self.mission.update(snapshot, self.path, self.now, fork_passed=fork_passed, clear=self.clear,
+                                      cargo=self.cargo, quiet=self.quiet)
         if command.path is not None:
             self.path = command.path
+        dock = self.mission.dock
+        if dock is not None and dock is not self._dock and dock.role is not None:
+            self.log.append(f"{dock.letter}: {dock.role.value}")
+        self._dock = dock
+        if self.auto_release and command.state is MissionState.DOCKED:
+            self.mission.release(self.now)
         self.commands.append(command)
         self.t += DT
         return command
+
+    def dock_at(self, letter, sign_id=None):
+        """Drive up to `letter` until the car docks there."""
+        sign_id = next(self._ids) if sign_id is None else sign_id
+        distance = ACT - 0.1
+        while self.mission.dock is None:
+            command = self.frame(track(sign_id, "delivery_sign", distance, letter))
+            distance -= 0.1 * max(command.scale, 0.3)
+        return sign_id
 
     def gap(self, seconds=4.0):
         for _ in range(round(seconds / DT)):
@@ -61,15 +92,10 @@ class Drive:
         mission lets it, and never slower than a crawl."""
         sign_id = next(self._ids)
         distance = start
-        held = False
         for _ in range(2000):
             if distance <= end or self.done:
                 break
             command = self.frame(track(sign_id, label, distance, variant))
-            if command.hold and not held:
-                role = "delivery" if self.mission.stage is Stage.DONE else "pickup"
-                self.log.append(f"{variant}: {role}")
-            held = command.hold
             if not command.hold:
                 distance -= 0.1 * max(command.scale, 0.3)
         return sign_id
@@ -97,11 +123,12 @@ class Drive:
         self.sign("delivery_sign", "C" if readable else None)
         self.gap(4.0)
 
-    def laps(self, count=3, missed=(), forced=(), unreadable=(), phantom=()):
-        """Drive `count` laps. Faults are sets of (lap, place): place is an
-        exit number, or "C". Detour 1 rejoins past exit 2's mouth, so exit 2
-        is only met straight past exit 1; every way round passes C."""
-        lap, place = 0, 1
+    def laps(self, count=3, missed=(), forced=(), unreadable=(), phantom=(), start=None):
+        """Drive `count` laps, from the start line or parked at the letter
+        `start`. Faults are sets of (lap, place): place is an exit number, or
+        "C". Detour 1 rejoins past exit 2's mouth, so exit 2 is only met
+        straight past exit 1; every way round passes C."""
+        lap, place = 0, 1 if start in (None, "C") else "C"
         while lap < count and not self.done:
             if (lap, place) in phantom:
                 self.sign("detour")
@@ -145,10 +172,40 @@ def test_every_pair_drives_its_planned_route(pickup, delivery):
     assert drive.log == plan_route(pickup, delivery)
 
 
-def test_same_letter_stops_there_for_good():
+def test_same_letter_loads_and_unloads_at_one_dock():
     drive = Drive("B", "B").laps()
-    assert drive.log == ["exit 1: straight", "exit 2: detour", "B: delivery"]
+    assert drive.log == ["exit 1: straight", "exit 2: detour", "B: pickup", "B: delivery"]
+    assert drive.log == plan_route("B", "B")
     assert drive.done
+
+
+@pytest.mark.parametrize("pickup,delivery,start,route", [
+    ("C", "A", "A", ["C: pickup", "exit 1: detour", "A: delivery"]),
+    ("A", "C", "A", ["A: pickup", "C: delivery"]),
+    ("A", "B", "C", ["exit 1: detour", "A: pickup", "exit 1: straight", "exit 2: detour", "B: delivery"]),
+    ("B", "A", "B", ["B: pickup", "exit 1: detour", "A: delivery"]),
+    ("A", "C", "B", ["exit 1: detour", "A: pickup", "C: delivery"]),
+])
+def test_plan_route_from_a_parked_dock(pickup, delivery, start, route):
+    assert plan_route(pickup, delivery, start) == route
+
+
+def park_at(letter):
+    """A drive that has just delivered at `letter`."""
+    drive = Drive("B" if letter == "A" else "A", letter).laps()
+    assert drive.done and drive.mission.parked
+    return drive
+
+
+@pytest.mark.parametrize("start", "ABC")
+@pytest.mark.parametrize("pickup,delivery", PAIRS + [("A", "A")])
+def test_next_order_leaves_from_where_it_was_delivered(start, pickup, delivery):
+    drive = park_at(start)
+    drive.mission.configure(pickup, delivery)
+    drive.log = []
+    drive.laps(start=start)
+    assert drive.done
+    assert drive.log == plan_route(pickup, delivery, start)
 
 
 # --- failures become a delay -----------------------------------------------
@@ -314,54 +371,169 @@ def test_lost_sign_found_again_under_a_new_id_is_not_a_new_exit():
 
 # --- the stop --------------------------------------------------------------
 
-def test_pickup_signals_ramp_dwell_and_release():
-    drive = Drive("C", "A")
-    drive.sign("delivery_sign", "C")
-    signals = [c.turn_signal for c in drive.commands]
-    states = [c.state for c in drive.commands]
-    first_hold = next(i for i, c in enumerate(drive.commands) if c.hold)
-    last_hold = max(i for i, c in enumerate(drive.commands) if c.hold)
+def test_pickup_docks_and_waits_as_long_as_it_takes():
+    drive = Drive("C", "A", auto_release=False)
+    drive.dock_at("C")
+    docked = len(drive.commands) - 1
+    drive.gap(100.0)
+    approach, held = drive.commands[:docked], drive.commands[docked:]
 
-    held = signals[first_hold:last_hold + 1]
-    hazard = held.count(TurnSignal.HAZARD)
+    assert TurnSignal.RIGHT in [c.turn_signal for c in approach]
+    assert all(c.scale < 1.0 for c in approach[-3:])
+    assert all(c.hold and c.scale == 0.0 and c.turn_signal is TurnSignal.HAZARD
+               and c.state is MissionState.DOCKED and c.scene is DockScene.WAITING for c in held)
+    spoken = [c.announce.key for c in held if c.announce]
+    assert spoken == ["docked_pickup"] + ["remind_pickup"] * int(100.0 // _REMIND_S)
+    assert held[0].announce.letter == "C"
+    assert drive.mission.stage is Stage.PICKUP
 
-    assert TurnSignal.RIGHT in signals[:first_hold]
-    assert all(c.scale < 1.0 for c in drive.commands[first_hold - 3:first_hold])
-    # Hazards while stopped, then the left signal while still stopped: signal first, then go.
-    assert held == [TurnSignal.HAZARD] * hazard + [TurnSignal.LEFT] * (len(held) - hazard)
-    assert hazard * DT == pytest.approx(_SETTLE_S + _DWELL_S, abs=1.5 * DT)
-    assert (len(held) - hazard) * DT == pytest.approx(_SIGNAL_BEFORE_LEAVING_S, abs=1.5 * DT)
-    assert states[last_hold] is MissionState.LEAVING
+
+def test_release_signals_checks_the_way_then_leaves():
+    drive = Drive("C", "A", auto_release=False)
+    drive.dock_at("C")
+    drive.gap(5.0)
+    assert drive.mission.release(drive.now) is None
+    released = len(drive.commands)
+    drive.gap(_DEPART_CLEAR_S + _LEAVING_S + 1.0)
+    after = drive.commands[released:]
+    moving = next(i for i, c in enumerate(after) if not c.hold)
+
+    checking = after[:moving]
+    assert all(c.state is MissionState.CHECKING and c.turn_signal is TurnSignal.LEFT
+               and c.scene is DockScene.CHECKING for c in checking)
+    assert checking[0].announce.key == "released"
+    assert len(checking) * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
     # Still signalling left on the first frames of motion, then clear.
-    assert signals[last_hold + 1] is TurnSignal.LEFT
-    assert not drive.commands[last_hold + 1].hold
+    assert after[moving].state is MissionState.LEAVING and after[moving].turn_signal is TurnSignal.LEFT
+    assert after[moving].scene is None
+    assert drive.mission.stage is Stage.DELIVERY and drive.mission.dock is None
+    assert after[-1].turn_signal is None and after[-1].state is MissionState.DRIVING
+
+
+def test_departure_waits_for_the_voice_to_finish():
+    drive = Drive("C", "A", auto_release=False)
+    drive.dock_at("C")
+    drive.mission.release(drive.now)
+    assert drive.frame().announce.key == "released"
+    drive.quiet = False                                     # "Liberado. Afaste-se..." playing
+    drive.gap(5.0)
+    assert all(c.hold and c.state is MissionState.CHECKING and "announcing" in c.reason
+               for c in drive.commands[-50:])
+    drive.quiet = True
+    start = len(drive.commands)
+    drive.gap(_DEPART_CLEAR_S + 1.0)
+    moving = next(i for i, c in enumerate(drive.commands[start:]) if not c.hold)
+    assert moving * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
+
+
+def test_someone_in_front_holds_the_departure():
+    drive = Drive("C", "A", auto_release=False)
+    drive.dock_at("C")
+    drive.mission.release(drive.now)
+    drive.clear = False
+    start = len(drive.commands)
+    drive.gap(10.0)
+    blocked = drive.commands[start:]
+    assert all(c.hold and c.state is MissionState.CHECKING for c in blocked)
+    assert [c.announce.key for c in blocked if c.announce] == ["released", "blocked"]
+    assert "clear" in blocked[-1].reason
+
+    # A moment clear does not count: the 2 s start again after every echo.
+    drive.clear = True
+    drive.gap(_DEPART_CLEAR_S - 0.5)
+    drive.clear = False
+    drive.frame()
+    drive.clear = True
+    drive.gap(_DEPART_CLEAR_S - 0.3)
+    assert drive.commands[-1].hold
+    drive.gap(0.5)
+    assert not drive.commands[-1].hold
     assert drive.mission.stage is Stage.DELIVERY
 
-    drive.gap(_LEAVING_S + 1.0)
-    assert drive.commands[-1].turn_signal is None
 
+def test_wait_and_estop_need_a_new_release():
+    drive = Drive("C", "A", auto_release=False)
+    sign_id = drive.dock_at("C")
+    dock = drive.mission.dock
+    assert drive.mission.hold_departure() is not None       # nothing to hold yet
+    drive.mission.release(drive.now)
+    assert drive.frame().state is MissionState.CHECKING
+    assert drive.mission.hold_departure() is None
+    command = drive.frame()
+    assert command.state is MissionState.DOCKED and command.announce.key == "docked_pickup"
 
-def test_delivery_holds_for_good_with_hazards():
-    drive = Drive("B", "C")
-    drive.mission.stage = Stage.DELIVERY
-    drive.sign("delivery_sign", "C")
-    drive.gap(20.0)
+    drive.mission.release(drive.now)
+    drive.frame()
+    drive.mission.reset()                                   # e-stop
     for _ in range(50):
-        command = drive.frame()
-    assert command.hold and command.scale == 0.0
-    assert command.turn_signal is TurnSignal.HAZARD
-    assert command.state is MissionState.DONE
-
-
-def test_estop_during_dwell_repeats_the_stop():
-    drive = Drive("C", "A")
-    for _ in range(12):
-        command = drive.frame(track(1, "delivery_sign", STOP - 0.1, "C"))
-    assert command.hold
-    drive.mission.reset()
-    command = drive.frame(track(1, "delivery_sign", STOP - 0.1, "C"))
-    assert command.hold and command.state is MissionState.STOPPED
+        command = drive.frame(track(sign_id, "delivery_sign", STOP - 0.1, "C"))
+    assert command.state is MissionState.DOCKED and command.hold
+    assert drive.mission.dock is dock                       # the same dock, not a new approach
     assert drive.mission.stage is Stage.PICKUP
+
+
+def test_release_away_from_a_dock_is_refused():
+    assert Mission().release(BASE) is not None
+    drive = Drive("C", "A", auto_release=False)
+    drive.frame()
+    assert drive.mission.release(drive.now) is not None     # driving
+    command = drive.frame(track(1, "delivery_sign", 2.6, "C"))
+    assert command.state is MissionState.SLOWING
+    assert drive.mission.release(drive.now) is not None     # slowing
+    assert drive.frame(track(1, "delivery_sign", 2.5, "C")).state is MissionState.SLOWING
+    drive.dock_at("C", sign_id=1)
+    assert drive.mission.release(drive.now) is None
+    assert drive.mission.release(drive.now) is not None     # already released
+
+
+def test_delivery_waits_then_parks_ready_for_the_next_order():
+    drive = Drive("B", "C", auto_release=False)
+    drive.mission.stage = Stage.DELIVERY
+    drive.dock_at("C")
+    docked = len(drive.commands) - 1
+    drive.gap(60.0)
+    assert all(c.state is MissionState.DOCKED and c.turn_signal is TurnSignal.HAZARD
+               for c in drive.commands[docked:])
+    assert drive.commands[docked].announce.key == "docked_delivery"
+    assert not drive.mission.parked
+
+    drive.mission.release(drive.now)
+    start = len(drive.commands)
+    for _ in range(300):
+        drive.frame()
+    after = drive.commands[start:]
+    assert all(c.hold and c.scale == 0.0 and c.state is MissionState.DONE
+               and c.turn_signal is TurnSignal.OFF for c in after)
+    assert [c.announce.key for c in after if c.announce] == ["delivered"]
+    delivered = sum(c.scene is DockScene.DELIVERED for c in after)
+    assert delivered * DT == pytest.approx(_DELIVERED_S, abs=1.5 * DT)
+    assert after[-1].scene is DockScene.PARKED
+    assert drive.mission.parked and drive.mission.scene is DockScene.PARKED
+
+
+def test_next_order_from_the_dock_waits_for_its_release():
+    drive = park_at("C")
+    drive.auto_release = False
+    drive.mission.configure("A", "B")
+    assert drive.mission.parked
+    drive.gap(10.0)
+    assert all(c.state is MissionState.DOCKED and c.announce is None for c in drive.commands[-100:])
+    drive.mission.release(drive.now)
+    assert not drive.mission.parked
+    drive.gap(_DEPART_CLEAR_S + 0.5)
+    assert not drive.commands[-1].hold
+    assert drive.mission.stage is Stage.PICKUP and not drive.mission.parked
+
+
+def test_half_made_order_while_parked_stays_parked():
+    drive = park_at("A")
+    drive.mission.configure("C", None)
+    assert drive.mission.stage is Stage.DONE and drive.mission.parked
+    command = drive.frame()
+    assert command.hold and command.state is MissionState.DONE
+    drive.mission.configure(None, None)                     # forgets the dock
+    assert drive.mission.stage is Stage.IDLE and not drive.mission.parked
+    assert not drive.frame().hold
 
 
 def test_lost_letter_abandons_the_approach():
@@ -371,6 +543,185 @@ def test_lost_letter_abandons_the_approach():
     for _ in range(12):
         command = drive.frame()
     assert command.scale == 1.0 and not command.hold
+    assert drive.mission.stage is Stage.PICKUP
+
+
+# --- cargo compartment -----------------------------------------------------
+
+LOADED = 300
+
+
+def cargo(grams=0, lid=True, stable=True, fault=False):
+    return CargoReading(grams=grams, stable=stable, lid_closed=lid, unlocked=False, fault=fault)
+
+
+def lid_cycle(drive, grams):
+    """Someone lifts the lid, loads or unloads to `grams` and shuts it: the
+    frame it shuts on."""
+    drive.cargo = dataclasses.replace(drive.cargo, grams=grams, lid_closed=False)
+    drive.frame()
+    drive.cargo = dataclasses.replace(drive.cargo, lid_closed=True)
+    return drive.frame()
+
+
+def leave(drive, seconds=10.0):
+    """Frames until the car moves off (or `seconds` pass): those it held."""
+    held = []
+    for _ in range(round(seconds / DT)):
+        command = drive.frame()
+        if not command.hold:
+            break
+        held.append(command)
+    return held
+
+
+def test_compartment_unlocks_only_while_waiting_at_a_dock():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo()
+    assert drive.frame().state is MissionState.DRIVING and not drive.mission.unlock
+    assert drive.frame(track(1, "delivery_sign", 2.6, "C")).state is MissionState.SLOWING
+    assert not drive.mission.unlock
+    drive.dock_at("C", sign_id=1)
+    drive.gap(5.0)
+    assert drive.commands[-1].state is MissionState.DOCKED and drive.mission.unlock
+
+    # Lifted: the lock lets go, the latch catches as the lid shuts.
+    drive.cargo = cargo(LOADED, lid=False)
+    drive.gap(5.0)
+    assert drive.commands[-1].state is MissionState.DOCKED and not drive.mission.unlock
+    drive.cargo = cargo(LOADED)
+    assert drive.frame().state is MissionState.CHECKING and not drive.mission.unlock
+    while drive.mission.stage is Stage.PICKUP:
+        drive.frame()
+        assert not drive.mission.unlock
+    for _ in range(100):
+        drive.frame()
+        assert not drive.mission.unlock
+
+
+def test_shutting_the_lid_releases_and_records_the_manifest():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo()
+    drive.dock_at("C")
+    assert drive.commands[-1].announce.key == "docked_pickup_lid"
+    drive.gap(_REMIND_S + 1.0)
+    # A lid never lifted releases nothing.
+    assert all(c.state is MissionState.DOCKED for c in drive.commands[-100:])
+    assert [c.announce.key for c in drive.commands[-100:] if c.announce] == ["remind_pickup_lid"]
+
+    command = lid_cycle(drive, LOADED)
+    assert command.state is MissionState.CHECKING and command.announce.key == "released"
+    held = leave(drive)
+    assert len(held) * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
+    assert drive.mission.stage is Stage.DELIVERY and drive.mission.manifest_g == LOADED
+
+
+def test_released_with_the_lid_open_waits_for_it():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo(LOADED, lid=False)
+    drive.dock_at("C")
+    drive.mission.release(drive.now)
+    held = leave(drive, 10.0)
+    assert len(held) == 100
+    assert all(c.state is MissionState.CHECKING and "lid" in c.reason for c in held)
+    assert [c.announce.key for c in held if c.announce] == ["close_lid"]
+
+    drive.cargo = cargo(LOADED)
+    held = leave(drive)
+    assert len(held) * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
+    assert drive.mission.stage is Stage.DELIVERY
+
+
+def test_empty_pickup_waits_again_and_a_second_release_overrides():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo()
+    drive.dock_at("C")
+    command = lid_cycle(drive, _EMPTY_G - 1)
+    assert command.state is MissionState.DOCKED and command.announce.key == "empty"
+    assert "release again" in command.reason and drive.mission.unlock
+    drive.gap(5.0)
+    assert drive.commands[-1].state is MissionState.DOCKED
+
+    assert drive.mission.release(drive.now) is None
+    held = leave(drive)
+    assert all(c.state is MissionState.CHECKING for c in held)
+    assert len(held) * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
+    assert drive.mission.stage is Stage.DELIVERY and drive.mission.manifest_g == _EMPTY_G - 1
+
+
+@pytest.mark.parametrize("on_board, outcome", [(0, "delivered"), (LOADED, "still_loaded")])
+def test_delivery_leaves_nothing_on_board(on_board, outcome):
+    drive = Drive("B", "C", auto_release=False)
+    drive.mission.stage = Stage.DELIVERY
+    drive.cargo = cargo(LOADED)
+    drive.dock_at("C")
+    assert drive.commands[-1].announce.key == "docked_delivery_lid"
+    command = lid_cycle(drive, on_board)
+    assert command.announce.key == outcome
+    if outcome == "still_loaded":
+        assert command.state is MissionState.DOCKED and drive.mission.unlock
+        assert lid_cycle(drive, 0).state is MissionState.DONE
+    assert drive.done and drive.mission.parked
+
+
+def test_unsettled_weight_is_judged_after_a_while():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo(LOADED, stable=False)
+    drive.dock_at("C")
+    drive.mission.release(drive.now)
+    held = leave(drive)
+    weighing = [c for c in held if "weighing" in c.reason]
+    assert len(weighing) * DT == pytest.approx(_SETTLE_S, abs=1.5 * DT)
+    assert len(held) * DT == pytest.approx(_SETTLE_S + _DEPART_CLEAR_S, abs=2.5 * DT)
+    assert drive.mission.stage is Stage.DELIVERY
+
+
+def test_scale_fault_skips_the_weight():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo(0, fault=True)
+    drive.dock_at("C")
+    lid_cycle(drive, 0)
+    held = leave(drive)
+    assert len(held) * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
+    assert drive.mission.stage is Stage.DELIVERY and drive.mission.manifest_g is None
+
+
+def test_cargo_node_lost_at_the_dock_leaves_as_without_it():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo(0, lid=False)
+    drive.dock_at("C")
+    drive.mission.release(drive.now)
+    assert leave(drive, 3.0)[-1].state is MissionState.CHECKING
+    drive.cargo = None
+    held = leave(drive)
+    assert len(held) * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
+    assert drive.mission.stage is Stage.DELIVERY and drive.mission.manifest_g is None
+
+
+def test_wait_reopens_the_compartment():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo()
+    drive.dock_at("C")
+    lid_cycle(drive, LOADED)
+    assert drive.mission.hold_departure() is None
+    assert drive.frame().state is MissionState.DOCKED and drive.mission.unlock
+    drive.gap(3.0)
+    assert drive.commands[-1].state is MissionState.DOCKED
+    assert lid_cycle(drive, LOADED).state is MissionState.CHECKING
+
+
+def test_leaving_a_parked_dock_checks_the_lid_but_never_unlocks():
+    drive = park_at("C")
+    drive.auto_release = False
+    drive.cargo = cargo(0, lid=False)
+    drive.mission.configure("A", "B")
+    drive.gap(3.0)
+    assert drive.commands[-1].state is MissionState.DOCKED and not drive.mission.unlock
+    drive.mission.release(drive.now)
+    assert leave(drive, 3.0)[-1].reason.endswith("waiting for the lid to close")
+    drive.cargo = cargo(0)
+    held = leave(drive)
+    assert len(held) * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
     assert drive.mission.stage is Stage.PICKUP
 
 

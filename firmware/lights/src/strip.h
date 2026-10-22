@@ -11,9 +11,11 @@ enum class Effect : uint8_t {
   BLUE,
   STROBE,
   RAINBOW,
-  CYAN,
+  CYAN,        // SAE J3134 turquoise (strip.cpp), the id kept for the protocol
   RED_PULSE,
   POLICE,
+  BLUE_BREATHE,
+  CYAN_SWEEP,
 };
 
 void init();
