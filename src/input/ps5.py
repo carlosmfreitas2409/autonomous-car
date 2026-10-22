@@ -10,6 +10,7 @@ _RTRIGGER_AXIS = 5  # R2 (DualSense via SDL2 on macOS)
 _LTRIGGER_AXIS = 4
 _YBUTTON_AXIS = 3
 _BBUTTON = 1  # Circle (DualSense via SDL2 on macOS)
+_CROSS_BUTTON = 0  # releases the truck at a dock (mission.py)
 # Shoulder buttons, SDL2 GameController mapping (consistent with Triangle 3 /
 # Circle 1 above). Verify with `tools/ps5_buttons.py` before trusting them:
 # main.py also logs every button press by index.
@@ -30,6 +31,7 @@ class PS5Controller:
         self._joystick: pygame.joystick.JoystickType | None = None
         self._y_was_pressed = False
         self._b_was_pressed = False
+        self._cross_was_pressed = False
         self._l1_was_pressed = False
         self._r1_was_pressed = False
         self._buttons_were_pressed: set[int] = set()
@@ -80,6 +82,17 @@ class PS5Controller:
         toggled = pressed and not self._b_was_pressed
         self._b_was_pressed = pressed
         return toggled
+
+    def poll_release(self) -> bool:
+        """Cross went down: loading or unloading is done, release the truck."""
+        if not self._update():
+            self._cross_was_pressed = False
+            return False
+
+        pressed = self._joystick.get_button(_CROSS_BUTTON)
+        released = pressed and not self._cross_was_pressed
+        self._cross_was_pressed = pressed
+        return released
 
     def poll_path_buttons(self) -> Optional[Path]:
         """Edge-triggered like the toggles: R1 arms the Detour, L1 goes home.

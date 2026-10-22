@@ -2,6 +2,7 @@
 #include <SPI.h>
 #include <mcp2515.h>
 
+#include "cargo_bridge.h"
 #include "config.h"
 #include "ultrasonic.h"
 
@@ -32,12 +33,15 @@ void setup() {
   SPI.begin();
   mcp.reset();
   mcp.setBitrate(CAN_500KBPS, MCP_8MHZ);
+  cargo_bridge::init(mcp);
   mcp.setNormalMode();
 
   Serial.println(F("RDY car-sonar v1"));
 }
 
 void loop() {
+  cargo_bridge::update();
+
   const uint32_t now = millis();
   if ((now - last_send_ms) < config::CAN_PERIOD_MS) return;
   last_send_ms = now;

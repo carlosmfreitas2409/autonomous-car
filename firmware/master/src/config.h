@@ -72,6 +72,12 @@ constexpr uint8_t SONAR_NO_ECHO = 0xFF;
 
 constexpr uint16_t SONAR_TIMEOUT_MS = 300;
 
+// The cargo node (firmware/cargo), bridged onto the bus by the sonar node: its
+// status is forwarded to the host as a `C` line, the host's `K` becomes its
+// command.
+constexpr uint16_t CAN_CARGO_STATUS_ID = 0x180;
+constexpr uint16_t CAN_CARGO_COMMAND_ID = 0x181;
+
 constexpr uint8_t STOP_CM = 60;
 constexpr uint8_t SLOW_CM = 80;
 

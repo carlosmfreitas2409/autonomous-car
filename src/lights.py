@@ -16,9 +16,30 @@ class StripEffect(Enum):
     BLUE = 3
     STROBE = 4
     RAINBOW = 5
-    CYAN = 6
+    CYAN = 6            # drawn as SAE J3134 / DRIVE PILOT turquoise (firmware strip.cpp)
     RED_PULSE = 7
     POLICE = 8
+    BLUE_BREATHE = 9
+    CYAN_SWEEP = 10
+
+
+class DockScene(Enum):
+    """What the lamps tell the people at a dock (mission.py decides which)."""
+    WAITING = "waiting"         # docked: take your time, the loading zone is lit
+    CHECKING = "checking"       # released: about to move, the loading zone closes
+    DELIVERED = "delivered"     # unloaded, for a moment
+    PARKED = "parked"           # delivered, ready for the next order
+
+
+_SCENE_STRIP = {
+    DockScene.WAITING: StripEffect.BLUE_BREATHE,
+    DockScene.CHECKING: StripEffect.CYAN_SWEEP,
+    DockScene.DELIVERED: StripEffect.GREEN,
+    DockScene.PARKED: StripEffect.BLUE_BREATHE,
+}
+# The door projectors light the ground where the attendant works, and the
+# logo with them, while the car stands at a dock.
+_SCENE_LIT = (DockScene.WAITING, DockScene.DELIVERED, DockScene.PARKED)
 
 
 @dataclass
@@ -76,6 +97,7 @@ class LightsController:
         self._obstacle_stopped = False
         self._sign_stopped = False
         self._speed_test = False
+        self._scene: DockScene | None = None
         self._braking = False
         self._prev_throttle = 0.0
 
@@ -88,6 +110,7 @@ class LightsController:
         obstacle_stopped: bool = False,
         sign_stopped: bool = False,
         speed_test: bool = False,
+        scene: DockScene | None = None,
     ) -> None:
         speed = abs(throttle)
         prev_speed = abs(self._prev_throttle)
@@ -101,6 +124,7 @@ class LightsController:
         self._obstacle_stopped = obstacle_stopped
         self._sign_stopped = sign_stopped
         self._speed_test = speed_test
+        self._scene = scene
 
     def _resolve_strip(self) -> StripEffect:
         if self.strip_effect is not None:
@@ -109,6 +133,8 @@ class LightsController:
             return StripEffect.RED_PULSE
         if self._obstacle_stopped or self._sign_stopped:
             return StripEffect.RED
+        if self._scene is not None:
+            return _SCENE_STRIP[self._scene]
         if not self._autonomous:
             return StripEffect.GREEN
         return StripEffect.POLICE if self._speed_test else StripEffect.CYAN
@@ -128,6 +154,7 @@ class LightsController:
         # The speed test is a show: every lamp on, over the operator's choice.
         show = self._speed_test
         drl = self.drl or show
+        lit = show or self._scene in _SCENE_LIT
 
         return LightsOutput(
             front_left_signal=left_active,
@@ -143,7 +170,7 @@ class LightsController:
             reverse_left=self.reverse,
             reverse_right=self.reverse,
             low_beam=self.low_beam or show,
-            logo=self.logo or show,
-            projector=self.projector or show,
+            logo=self.logo or lit,
+            projector=self.projector or lit,
             strip_effect=self._resolve_strip(),
         )

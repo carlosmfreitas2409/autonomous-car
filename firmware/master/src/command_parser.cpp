@@ -91,6 +91,22 @@ void handle_lights(char* args) {
   }
 }
 
+// K <unlock 0|1>: the host asks the cargo node to unlock (a lease the host
+// renews every frame). Never forwarded while the wheels are driven.
+void handle_cargo(char* args) {
+  char* save = nullptr;
+  char* tok = strtok_r(args, " \t", &save);
+  if (!tok) {
+    Serial.println(F("ERR K"));
+    return;
+  }
+
+  const bool unlock = atol(tok) != 0 && motors::current_throttle() == 0;
+  if (!can_bus::send_cargo(unlock ? 1 : 0)) {
+    Serial.println(F("ERR CAN"));
+  }
+}
+
 void dispatch(char* line) {
   while (*line == ' ' || *line == '\t') ++line;
   if (*line == 0) return;
@@ -103,6 +119,7 @@ void dispatch(char* line) {
     case 'E': handle_estop(); break;
     case 'H': handle_heartbeat(); break;
     case 'L': handle_lights(args); break;
+    case 'K': handle_cargo(args); break;
     default:
       Serial.print(F("ERR "));
       Serial.println(verb);
