@@ -2,7 +2,7 @@
 
 Firmware for the master microcontroller on the Kigali autonomous car. Owns the four drive motors (one BTS7960 per wheel) and the Ackermann-linkage steering motor (a fifth BTS7960 driving an electric-window motor whose position is read by a 10k linear potentiometer on an analog pin). The Python host in `../../src/arduino.py` already speaks the wire protocol.
 
-Also acts as the **CAN gateway** to the lights Nano: the host sends `L` over USB serial, the master packs it into a CAN frame and transmits it on the MCP2515 bus (`firmware/lights/` is the receiver). One USB cable to the computer; the lights board is reachable only via CAN.
+Also acts as the **CAN gateway** to the lights Nano: the host sends `L` over USB serial, the master packs it into a CAN frame and transmits it on the MCP2515 bus (`firmware/lights/` is the receiver). One USB cable to the computer; the lights board is reachable only via CAN. The cargo node (`firmware/cargo/`) reaches the bus through the sonar node: its status arrives as CAN `0x180` and goes to the host as a `C` line, and the host's `K` goes out as CAN `0x181`.
 
 ## Build & flash
 
@@ -66,6 +66,7 @@ USB Serial @ 115200 baud, newline-terminated ASCII.
 | `E` | — | Emergency stop. Latched. All PWMs forced to 0. Cleared only by a subsequent non-zero `M`. |
 | `H` | — | Heartbeat — resets watchdog without changing setpoints. |
 | `L` | `<left> <right> <drl> <low> <brake> <reverse> <logo> <projector> [strip]` | Pack the 8 booleans into a bitmask and transmit as CAN ID `0x100` to the lights Nano. `strip` is the optional LED strip effect id (`0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow, `6` cyan, `7` red pulse, `8` police); omitted or out of range means off. Does **not** affect the drive watchdog. |
+| `K` | `<unlock 0\|1>` | Transmit CAN ID `0x181` (DLC 1, bit 0 unlock) to the cargo node, via the sonar node's bridge: unlock (a lease the host renews every frame; the node locks 300 ms after the last `K 1`) or lock. Always sent as *lock* while the drive throttle is not 0. Does **not** affect the drive watchdog. The host only sends it once `C` lines arrive. |
 
 Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure (no MCP2515 / bus off) produces `ERR CAN`.
 
@@ -75,6 +76,7 @@ Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure 
 - `ERR ...` — parse errors and fault notifications.
 - `T <angle_raw> <target_raw> <throttle> <steer_pwm> <state> <wd_ms>` — telemetry at 20 Hz, behind `TELEMETRY_ENABLED` compile flag. `state` ∈ `R W E F`.
 - `S <state> <nearest_cm> <d0..d2>` — obstacle state at 20 Hz (the sonar node's rate), behind `TELEMETRY_ENABLED`. `state` ∈ `C` clear, `S` slowing, `B` blocked, `X` stale. Distances are cm, with `255` = nothing in range. The host uses the three distances and `X` to slow/stop in autonomous mode.
+- `C <grams> <stable> <lid> <lock> <fault>`: the cargo node's status, one line per CAN `0x180` frame (10 Hz while it is connected, none without it). `lid` 1 = closed, `lock` 1 = coil powered (unlocked), `fault` 1 = the scale is not answering.
 
 ## Behavior
 

@@ -54,7 +54,7 @@ MCP2515: CS=D10, MISO=D12, MOSI=D11, SCK=D13, INT=D2.
 
 Bitmask layout: bit 0 left, 1 right, 2 drl, 3 low beam, 4 brake, 5 reverse, 6 logo, 7 projector.
 
-Strip effect ids: `0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow, `6` cyan, `7` red pulse, `8` police. Unknown ids are treated as off. A DLC-1 frame (from a master built before the strip existed) is still accepted, with the effect taken as off.
+Strip effect ids: `0` off, `1` red, `2` green, `3` blue, `4` strobe, `5` rainbow, `6` cyan, `7` red pulse, `8` police, `9` blue breathe, `10` turquoise arrow. Unknown ids are treated as off. "Cyan" (`6`, and the arrow) is drawn as SAE J3134's ADS-marker turquoise, `(0, 255, 85)` (`TURQUOISE_BLUE` in `src/strip.cpp`), the colour of Mercedes' DRIVE PILOT marker lights; full blue looked sky blue. A DLC-1 frame (from a master built before the strip existed) is still accepted, with the effect taken as off.
 
 Turn-signal blink cadence is firmware-side: master sends a sticky boolean, the firmware toggles the relay every `BLINK_ON_MS` / `BLINK_OFF_MS` (`src/config.h`). Both sides share one state machine, so hazards stay in sync.
 
@@ -72,6 +72,8 @@ USB Serial @ 115200 baud is kept for debug logging only:
 ## LED strip
 
 `src/strip.cpp` drives A2. The strip's 12V is permanently connected, so the firmware only ever writes pixels — there is no power sequencing to do. `init()` blanks the strip at boot so it does not hold whatever its controller powered up with.
+
+The dock effects (`src/input/mission.py`): blue breathe (`9`) is a slow blue breath while the car waits at a dock; the turquoise arrow (`10`) runs from the rear centre up both sides and meets at the middle of the nose, again and again, while a released car waits to pull away. The arrow lights each LED by its distance round the strip from the rear trio's middle LED (`outline_distance`), either way, so both halves run up the two sides together and meet at the front. That assumes the strip is a loop round the car with the rear trio last, which is what the first arrow showed on the car (2026-10-13: one side, then the other).
 
 Police (id `8`) paints **car sides**, not wire order. The strip starts on the left, runs across the front (`STRIP_FRONT_COUNT` pixels, currently 9), down the right side through the second-to-last LED, then the last trio is the rear — of which only the final pixel is rear-left. Police red is that front run plus the last LED (10 pixels); blue is 10 through the second-to-last (12 pixels).
 
@@ -99,6 +101,8 @@ Constants in `src/config.h`:
 | `STRIP_FRONT_COUNT` | 9 | Nose pixels (LEDs 1–9). Police red includes these plus the last LED. |
 | `STRIP_REAR_COUNT` | 3 | Last trio is the rear; only the final pixel is rear-left. |
 | `POLICE_FLASH_MS` / `GAP` / `PAUSE` | 50 / 50 / 180 | Double-flash wig-wag cadence. |
+| `BREATHE_STEP` | 218 | Blue-breathe rate, half `PULSE_STEP` → ~3 s per breath. |
+| `SWEEP_STEP_MS` / `SWEEP_TAIL` / `SWEEP_PAUSE_STEPS` | 55 / 4 / 4 | Arrow: one LED per step, a 4-LED tail, 4 dark steps → ~1 s per arrow. |
 
 ### Mode signature
 

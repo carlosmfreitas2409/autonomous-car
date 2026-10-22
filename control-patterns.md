@@ -254,7 +254,7 @@ Replay: `python src/main.py --video clips/detour_exit.mov` (add `--flip` for the
 
 ## Pickup and Delivery
 
-`src/input/mission.py`. The operator picks a pickup and a delivery letter (A, B or C) in the GUI's Mission block while e-stopped; picking both starts a run from before exit 1, "-" turns the mission off and the car drives exactly as without it.
+`src/input/mission.py`. The operator picks a pickup and a delivery letter (A, B or C) in the GUI's Mission block while e-stopped; picking both starts a run from before exit 1, "-" turns the mission off and the car drives exactly as without it. Parked after a delivery, the next pair can be picked without an e-stop and the run starts from that dock (`plan_route(..., start=letter)`); clearing both letters forgets the dock and needs an e-stop.
 
 **Track model.** From the start: exit 1 (A inside its detour), exit 2 (B inside) a few metres further, C on the main road, round again. Exit 2's mouth sits just past exit 1's, so detour 1 rejoins the road beyond it: **exit 2 is only reached by going straight at exit 1**, and every other way (detour 1, or exit 2 either way) leads round past C to exit 1. Both detour signs look alike and nothing marks a lap, so the mission counts: `next_exit` starts at 1 and moves on at every detour sign by `_exit_after(exit, entered)` (2 only after straight at exit 1, else 1). The first version had "after exit 1 always comes exit 2" from the task's examples; live on 2026-10-07, pickup A then delivery B, the sign after A was exit 1's again, the car took it for exit 2, entered exit 1 for B, and A's fix (then "exit 2 next") kept it in that loop.
 
@@ -275,11 +275,51 @@ The price: a letter readable within 3 m from the neighbouring road would give a 
 
 **Only confirmed, only close.** Tracks count after 3 of the last 5 frames, letters after 3 of the last 5 readings (`sign_tracker.py`), and nothing further than 3 m acts; a box clipped by the frame edge has no distance and never acts. A snapshot older than 0.4 s decides nothing.
 
-**At the target letter.** Same ramp as the stop sign (full speed at 3 m, stopped at 2 m), right signal on the approach, hazards while stopped. Pickup: 0.5 s settle + 3 s dwell, then the left signal for 2 s while still stopped, and for 2 s more while pulling away. Delivery: stopped for good, hazards on, until a new pair of letters is picked. An approach whose track is lost for 1 s is abandoned (the letter comes round again); one that never reaches 2 m within 8 s stops where it is. E-stop repeats an interrupted pickup stop and keeps the count. The loop takes the lower of the sign policy's and the mission's scale and either one's hold; signals go through `LightsController.signal_override`, which beats the operator's radio while set (Right while Detour is armed, the mission's while it drives).
+**At the target letter: the dock handshake.** Same ramp as the stop sign (full speed at 3 m, stopped at 1.5 m), right signal on the approach. Then the car **docks** and waits for as long as loading or unloading takes. There is no timer: a truck carries a lot of cargo, and only the person at the dock knows when it is done. They **release** the truck: "Release truck" in the tuner (the dashboard's dock card later), or PS5 Cross. That is how real docks work: the attendant switches the dock light to green when loading is done and the dock is clear, and only then does the driver pull away. Aurora's driverless trucks likewise get a final self-check in a departure zone before they are cleared to leave.
+
+| State | Car | Signals | Strip / lamps | Voice (pt-BR, macOS `say`) |
+|---|---|---|---|---|
+| Docked | held | hazards | BLUE_BREATHE; door projectors and logo on (the loading zone) | "Caminhão na doca A. Carregue e, quando terminar, toque em Liberar no painel."; a reminder every 30 s |
+| Checking (released, pickup) | held until the voice has finished, then until the sonar reads the way ahead clear for 2 s; any echo restarts the 2 s | left | CYAN_SWEEP; projectors off | "Liberado. Afaste-se, o caminhão vai partir."; once if blocked: "Por favor, afaste-se da frente do caminhão." |
+| Leaving | drives | left for 2 s | cyan | - |
+| Delivered (released, delivery) | held, parked | none | GREEN for 3 s, then BLUE_BREATHE with projectors on | "Entrega concluída na doca C. Obrigado." |
+
+"Clear" is the sonar guard: not stopped and no sensor in its slow zone (150 cm centre, 100 cm sides), so an attendant standing beside the truck also holds it. "Wait" (tuner) or an e-stop takes a released car back to docked, and it needs a new release; an e-stop keeps the dock, since the car has not moved. A release away from a dock is refused and logged. The same letter for both loads and unloads at one dock. An approach whose track is lost for 1 s is abandoned (the letter comes round again); one that never reaches 1.5 m within 8 s docks where it is. The loop takes the lower of the sign policy's and the mission's scale and either one's hold; signals go through `LightsController.signal_override`, which beats the operator's radio while set (Right while Detour is armed, the mission's while it drives). The dock scene ranks below the operator's strip choice, e-stop, obstacle and sign stops, and the projectors/logo are OR-ed with the operator's checkboxes. BLUE_BREATHE (9) and CYAN_SWEEP (10) are new lights-Nano effects; firmware older than them shows the strip dark at a dock. "Cyan" on the strip (the autonomous underglow and the sweep) is drawn as SAE J3134's ADS-marker turquoise, the colour of Mercedes' DRIVE PILOT marker lights (CIE 1931 x 0.012-0.20, y 0.32-0.495): green 255 with blue 85 sits mid-box for WS2812 datasheet primaries, where the old full cyan (blue 255) read y 0.21, a sky blue. Check it by eye on the real strip; LED bins vary. `--no-voice` silences the prompts.
+
+**The cargo compartment.** This works the way Nuro and Starship delivery robots do: the cargo travels locked and opens only at the right stop. A cargo node (`firmware/cargo`, an ESP32 that the sonar node bridges onto CAN over a serial cable) has three parts:
+- a load cell under the bed,
+- a switch on the lid,
+- a 12 V solenoid lock.
+
+The master forwards its status as `C` lines (`src/cargo.py`, `arduino.read_cargo`). The host counts the node as present while those lines are less than 1 s old. **With no node there are no checks and no `K` lines,** so the handshake above runs exactly as written.
+
+With the node:
+- **Locked except at the dock.** It unlocks while the truck waits at its pickup or delivery dock, until the lid is lifted. It never unlocks while driving, slowing, checking, leaving, parked, at a dock it is only leaving from, or while driven by hand. The slanted latch catches again as the lid shuts.
+- **Three locks in series.** The mission's `unlock`, the master refusing any unlock while the throttle is not 0, and a 300 ms lease on the node: the host renews `K 1` every frame, so a dead host, master, bus, sonar node or cable leaves the compartment locked.
+- **Closing the lid is the release.** It counts only if the lid was lifted at this dock first; a lid that stays shut releases nothing. A Starship robot leaves when the customer closes the lid. The tuner and PS5 releases still work.
+- **Weight is checked, never a trigger.** A truck carries a lot of cargo, so the weight cannot tell when loading is done.
+
+Once released, the truck runs its own checks, in order:
+
+| Check | Fails when | Then |
+|---|---|---|
+| Lid closed | open (e.g. released from the tuner mid-load) | holds in checking until it shuts: "Feche o compartimento de carga." once, instead of "Liberado" |
+| Weight (once, at a pickup or delivery dock) | pickup: under 20 g; delivery: 20 g or more | back to docked and unlocked again: "Nenhuma carga detectada..." / "Ainda há carga no compartimento..."; **the next release at that dock skips the weight** (the attendant knows best); the tuner button reads "Release anyway" |
+| Sonar clear 2 s | as above | as above |
+
+More detail:
+- **Settling.** The weight waits for a stable reading (the node's last second within 5 g). It is judged as it stands after 3 s.
+- **Fault.** A scale fault skips the weight check, and so does a dock the truck is only leaving from.
+- **Manifest.** The weight as the truck leaves its pickup is the manifest (`mission.manifest_g`), shown in the mission status.
+- **Losing the node.** If the node drops out mid-check, the truck leaves as it would without one.
+- **Prompts.** While the node is present, the dock prompts say to open the lid and close it again (`docked_pickup_lid`...).
+- **Opening by hand.** "Open compartment" in the tuner unlocks it while the car is e-stopped, to load before a run or empty it after one. It stays unlocked until the lid is lifted, or for 10 s at most, and never once the car may move (`cargo.ManualOpen`).
+- **Calibration.** It is a one-time firmware constant. The scale tares itself at boot, with the bed empty.
+- **Logging.** The `--log` CSV has a `cargo` column (`grams stable lid lock fault`).
 
 Not done: pulling over toward the right line at a stop. Any useful bias is a full-right swerve inside the metre between 3 m and 2 m at this near-bang-bang gain, and a swerve back on leaving; it needs `tools/synth_track.py` and a track day first.
 
-Proof: `python -m pytest tests/test_mission.py` drives every ordered pair and each failure above on a scripted lap that follows the mission's own path requests; the `--log` CSV carries `mission_stage`, `target`, `next_exit`, `mission_state`.
+Proof: `python -m pytest tests/test_mission.py` drives every ordered pair and each failure above on a scripted lap that follows the mission's own path requests; the dock handshake (waiting, release, blocked departure, wait/e-stop, parking and the next order from every dock) and the compartment (unlock only while waiting, lid release, weight refusal and override, settling, fault, a lost node) are in the same file, the `C`/`K` lines in `tests/test_arduino.py`; the `--log` CSV carries `mission_stage`, `target`, `next_exit`, `mission_state` (`docked`, `checking`).
 
 ---
 

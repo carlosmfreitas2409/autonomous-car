@@ -5,11 +5,16 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from cargo import CargoReading
 from lights import LightsOutput
 
 logger = logging.getLogger(__name__)
 
 SONAR_NO_ECHO = 0xFF
+
+# The cargo node reports at 10 Hz: no `C` line for this long means it is not
+# connected (or never was), and the mission runs without the compartment.
+_CARGO_STALE_S = 1.0
 
 
 @dataclass
@@ -79,6 +84,8 @@ class _SerialPort:
 class Arduino:
   def __init__(self, baudrate: int = 115200):
     self._master = _SerialPort(baudrate)
+    self._cargo: Optional[CargoReading] = None
+    self._cargo_at = float("-inf")
 
   def set_master_port(self, port: str):
     self._master.open(port)
@@ -95,6 +102,8 @@ class Arduino:
     self._master.write("H")
 
   def read_sonar(self) -> Optional[SonarReading]:
+    """The newest `S` line, if any arrived. Reads every waiting line, so it
+    also keeps the newest `C` line for `read_cargo`."""
     latest = None
 
     for line in self._master.read_lines():
@@ -116,9 +125,29 @@ class Arduino:
           nearest_cm=None if nearest >= SONAR_NO_ECHO else nearest,
           distances=tuple(distances),
         )
+      elif len(parts) == 6 and parts[0] == "C":
+        try:
+          grams, stable, lid, unlocked, fault = (int(part) for part in parts[1:])
+        except ValueError:
+          continue
+        self._cargo = CargoReading(grams=grams, stable=bool(stable), lid_closed=bool(lid),
+                                   unlocked=bool(unlocked), fault=bool(fault))
+        self._cargo_at = time.monotonic()
       elif line.startswith("ERR"):
         logger.warning(f"master: {line}")
     return latest
+
+  def read_cargo(self, now: float) -> Optional[CargoReading]:
+    """The cargo node's last status, or None when it is not connected."""
+    if now - self._cargo_at > _CARGO_STALE_S:
+      return None
+    return self._cargo
+
+  def send_cargo(self, unlock: bool):
+    """Renews (or ends) the unlock lease; the node locks within 300 ms of
+    the last renewal. Only for a node that is reporting: an older master
+    would answer `ERR K` to every line."""
+    self._master.write(f"K {int(unlock)}")
 
   def send_lights(self, output: LightsOutput):
     left = int(output.front_left_signal or output.back_left_signal)

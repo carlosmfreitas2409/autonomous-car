@@ -2,6 +2,7 @@ import dearpygui.dearpygui as dpg
 import numpy as np
 import cv2 as cv
 import serial.tools.list_ports
+import time
 
 from config import Config
 from lights import LightsController, StripEffect, TurnSignal
@@ -10,6 +11,7 @@ from path import HOME_PATH, Path
 from perception.line_tracking import LineTrackingResult
 from perception.sign_worker import DEBUG_HEIGHT, DEBUG_WIDTH, SignSnapshot
 from input.sign_policy import PolicyState, SignConstraint
+from cargo import CargoReading
 from input.mission import LETTERS, Mission, MissionCommand, MissionState
 
 
@@ -37,11 +39,13 @@ _STRIP_EFFECT_LABELS = {
     "Red": StripEffect.RED,
     "Green": StripEffect.GREEN,
     "Blue": StripEffect.BLUE,
-    "Cyan": StripEffect.CYAN,
+    "Turquoise": StripEffect.CYAN,
     "Red Pulse": StripEffect.RED_PULSE,
     "Strobe": StripEffect.STROBE,
     "Rainbow": StripEffect.RAINBOW,
     "Police": StripEffect.POLICE,
+    "Blue Breathe": StripEffect.BLUE_BREATHE,
+    "Turquoise Sweep": StripEffect.CYAN_SWEEP,
 }
 
 _SONAR_STATES = {
@@ -58,7 +62,8 @@ _MISSION_COLOUR = {
     MissionState.IDLE: (150, 150, 150),
     MissionState.DRIVING: (0, 255, 0),
     MissionState.SLOWING: (255, 200, 0),
-    MissionState.STOPPED: (255, 80, 80),
+    MissionState.DOCKED: (120, 160, 255),
+    MissionState.CHECKING: (255, 200, 0),
     MissionState.LEAVING: (255, 200, 0),
     MissionState.DONE: (130, 200, 255),
 }
@@ -82,6 +87,9 @@ class TunerGUI:
         self._path_request: Path | None = None
         self._mission_request: tuple[str | None, str | None] | None = None
         self._shown_letters: tuple[str | None, str | None] = (None, None)
+        self._dock_action: str | None = None
+        self._dock_request: str | None = None
+        self._open_request = False
         self._build(config, frame_w, frame_h)
 
         self._refresh_ports()
@@ -157,6 +165,8 @@ class TunerGUI:
                         self._tags["tel_throttle"] = dpg.add_text("Throttle: --", color=(0, 255, 0))
                         dpg.add_spacer(width=4)
                         self._tags["tel_sonar"] = dpg.add_text("Sonar: --", color=(150, 150, 150))
+                        dpg.add_spacer(width=4)
+                        self._tags["tel_cargo"] = dpg.add_text("Cargo: --", color=(150, 150, 150))
                         dpg.add_spacer(width=4)
                         self._tags["tel_lane"] = dpg.add_text("Lane: --", color=(150, 150, 150))
                         dpg.add_spacer(width=4)
@@ -280,6 +290,10 @@ class TunerGUI:
                                 )
                         self._tags["mission_status"] = dpg.add_text("Mission: idle", color=(150, 150, 150))
                         self._tags["mission_route"] = dpg.add_text("", color=(200, 200, 200))
+                        self._tags["dock"] = dpg.add_button(label="Release truck", callback=self._on_dock,
+                                                            enabled=False, width=140)
+                        self._tags["open_cargo"] = dpg.add_button(label="Open compartment", callback=self._on_open,
+                                                                  enabled=False, width=140)
 
         dpg.set_primary_window("primary", True)
         dpg.setup_dearpygui()
@@ -406,6 +420,22 @@ class TunerGUI:
         dpg.set_value(tag, f"Sonar: {distance} [{label}]  {'  '.join(sensors)}")
         dpg.configure_item(tag, color=color)
 
+    def update_cargo(self, cargo: CargoReading | None):
+        """The compartment as the cargo node reports it; "--" without one.
+        "Open compartment" only works e-stopped, with a cargo node."""
+        dpg.configure_item(self._tags["open_cargo"], enabled=cargo is not None and self._stopped)
+        tag = self._tags["tel_cargo"]
+        if cargo is None:
+            dpg.set_value(tag, "Cargo: --")
+            dpg.configure_item(tag, color=(150, 150, 150))
+            return
+        weight = "scale fault" if cargo.fault else f"{cargo.grams} g{'' if cargo.stable else ' ~'}"
+        lid = "lid closed" if cargo.lid_closed else "LID OPEN"
+        lock = "unlocked" if cargo.unlocked else "locked"
+        dpg.set_value(tag, f"Cargo: {weight} · {lid} · {lock}")
+        colour = (255, 80, 80) if cargo.fault else (255, 200, 0) if not cargo.lid_closed or cargo.unlocked else (0, 255, 0)
+        dpg.configure_item(tag, color=colour)
+
     def update_signs(self, snapshot: SignSnapshot, constraint: SignConstraint, applied: bool):
         # The worker publishes at ~10 fps and this loop runs at ~30: only
         # upload a frame once.
@@ -463,6 +493,23 @@ class TunerGUI:
         request, self._mission_request = self._mission_request, None
         return request
 
+    def _on_dock(self, _sender):
+        # The action the button showed when it was clicked.
+        self._dock_request = self._dock_action
+
+    def _on_open(self, _sender):
+        self._open_request = True
+
+    def poll_open_request(self) -> bool:
+        """"Open compartment" clicked since the last call."""
+        request, self._open_request = self._open_request, False
+        return request
+
+    def poll_dock_request(self) -> str | None:
+        """"release" or "wait", clicked since the last call."""
+        request, self._dock_request = self._dock_request, None
+        return request
+
     def update_mission(self, mission: Mission, command: MissionCommand, applied: bool):
         """Show the mission's letters (a change it refused snaps back) and state."""
         self._shown_letters = (mission.pickup, mission.delivery)
@@ -472,6 +519,11 @@ class TunerGUI:
         text = f"Mission: {mission.stage.value}"
         if mission.target:
             text += f" {mission.target} · next exit {mission.next_exit}"
+        if mission.dock is not None:
+            waited = int(time.monotonic() - mission.dock.since)
+            text += f" · docked at {mission.dock.letter} {waited // 60}:{waited % 60:02d}"
+        if mission.manifest_g is not None:
+            text += f" · cargo {mission.manifest_g} g"
         if command.reason:
             text += f" - {command.reason}"
         if not applied and command.state is not MissionState.IDLE:
@@ -479,6 +531,13 @@ class TunerGUI:
         dpg.set_value(self._tags["mission_status"], text)
         dpg.configure_item(self._tags["mission_status"], color=_MISSION_COLOUR[command.state])
         dpg.set_value(self._tags["mission_route"], " > ".join(mission.route))
+
+        self._dock_action = {MissionState.DOCKED: "release", MissionState.CHECKING: "wait"}.get(command.state)
+        dock = mission.dock
+        failed = dock is not None and dock.check_failed is not None and not dock.override
+        label = {"wait": "Wait", "release": "Release anyway" if failed else "Release truck"}.get(self._dock_action)
+        dpg.set_item_label(self._tags["dock"], label or "Release truck")
+        dpg.configure_item(self._tags["dock"], enabled=self._dock_action is not None)
 
     def is_running(self) -> bool:
         return dpg.is_dearpygui_running()
