@@ -20,8 +20,6 @@ export function useCartLink() {
   const ageS = receivedAt ? (now - receivedAt) / 1000 : Infinity;
   const isStale = !isConnected || ageS * 1000 > STALE_MS;
   const live = isStale ? null : state;
-  const isController = !!state && state.control.controller === state.you;
-  const isManualHere = live?.drive.mode === 'manual' && live.drive.driver === 'dashboard';
 
   return {
     state,
@@ -30,9 +28,6 @@ export function useCartLink() {
     mismatchVersion: hello && hello.version !== CONTRACT_VERSION ? hello.version : null,
     isConnected,
     isStale,
-    isController,
-    isManualHere,
-    isDrivingHere: isManualHere && isController && !live.drive.estopped,
     ageS,
     rttMs,
     replies,

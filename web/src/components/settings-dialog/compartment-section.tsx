@@ -17,12 +17,12 @@ export function CompartmentSection({ state }: CompartmentSectionProps) {
         Compartimento
       </h3>
       <div className="flex h-12 items-center justify-between gap-4">
-        <span className="text-md">{hint ?? 'Destrava até a tampa abrir, por até 10 s'}</span>
+        <span className="text-md">{hint ?? 'Abrir o compartimento'}</span>
         <Button
           variant="soft"
           disabled={hint !== null}
           className="flex-none disabled:text-ink-3/70"
-          onClick={() => state && openCompartment(state)}
+          onClick={() => state && openCompartment()}
         >
           Abrir
         </Button>

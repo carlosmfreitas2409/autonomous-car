@@ -30,7 +30,7 @@ export function SpeedSection({ state }: SpeedSectionProps) {
         {state && speed && !isDefault && (
           <Button
             className="h-8 rounded-lg px-3 text-sm font-medium"
-            onClick={() => setSpeed(state, speed.defaults)}
+            onClick={() => setSpeed(speed.defaults)}
           >
             Restaurar {percent(speed.defaults.base)} / {percent(speed.defaults.min)} %
           </Button>
@@ -47,9 +47,7 @@ export function SpeedSection({ state }: SpeedSectionProps) {
           scale={100}
           unit="%"
           isDisabled={isDisabled}
-          onChange={(base) =>
-            state && speed && setSpeed(state, { base, min: Math.min(speed.min, base) })
-          }
+          onChange={(base) => state && speed && setSpeed({ base, min: Math.min(speed.min, base) })}
         />
         <Stepper
           label="Velocidade na curva"
@@ -60,7 +58,7 @@ export function SpeedSection({ state }: SpeedSectionProps) {
           scale={100}
           unit="%"
           isDisabled={isDisabled}
-          onChange={(min) => state && setSpeed(state, { min })}
+          onChange={(min) => state && setSpeed({ min })}
         />
       </div>
       <p className="text-sm text-ink-2">A velocidade máxima também limita o modo manual.</p>

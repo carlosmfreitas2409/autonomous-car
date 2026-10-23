@@ -71,7 +71,7 @@ export function StripPicker({ state, settings }: StripPickerProps) {
               variant={isSelected ? 'selected' : 'ghost'}
               disabled={isDisabled}
               className="h-16 flex-col gap-2 rounded-xl px-0 text-xs font-medium @sm:text-sm"
-              onClick={() => state && !isSelected && setLights(state, { strip: effect.id })}
+              onClick={() => state && !isSelected && setLights({ strip: effect.id })}
             >
               <Swatch effect={effect.id} />
               {effect.label}

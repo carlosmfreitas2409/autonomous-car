@@ -44,9 +44,6 @@ describe('loop text', () => {
     expect(refusalText({ cmd: 'dock', reason: 'e-stopped, resume first' })).toBe(
       'Doca · Caminhão parado, retome primeiro',
     );
-    expect(refusalText({ cmd: 'claim', reason: 'console 3 has control' })).toBe(
-      'Controle · O console 3 está no controle',
-    );
     expect(refusalText({ cmd: 'mystery', reason: 'something new' })).toBe(
       'mystery · something new',
     );

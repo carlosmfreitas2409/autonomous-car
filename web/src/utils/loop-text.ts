@@ -26,11 +26,6 @@ const POLICY_STATES: Record<string, string> = {
   waiting_green: 'Aguardando o sinal verde',
 };
 
-const MANUAL_NOTES: Record<string, string> = {
-  'dashboard link lost - stopped': 'Conexão perdida · parado',
-  'release the throttle to drive': 'Solte o acelerador para dirigir',
-};
-
 export const CHECK_TEXT: Record<DockCheck, string> = {
   announcing: 'Avisando que vai sair',
   lid: 'Aguardando fechar a tampa',
@@ -47,20 +42,16 @@ export const CHECK_FAILED_TEXT = {
 const COMMANDS: Record<string, string> = {
   estop: 'Parar',
   mode: 'Modo',
-  drive: 'Direção',
   path: 'Trajeto',
   mission: 'Entrega',
   lights: 'Luzes',
   speed: 'Velocidade',
   pid: 'PID',
-  claim: 'Controle',
-  release: 'Controle',
   dock: 'Doca',
   open_cargo: 'Compartimento',
 };
 
 const REFUSALS: Record<string, string> = {
-  'view only: take control first': 'Só visualização, assuma o controle primeiro',
   'e-stopped, resume first': 'Caminhão parado, retome primeiro',
   'e-stop first': 'Pare o caminhão primeiro',
   'no docks in the speed test': 'Sem docas na prova de velocidade',
@@ -71,8 +62,6 @@ const REFUSALS: Record<string, string> = {
   'bad json': 'Mensagem inválida',
   busy: 'Caminhão ocupado, tente de novo',
 };
-
-const CONSOLE_HOLDS = /^console (\d+) has control$/;
 
 export function missionLine(mission: Mission): string {
   const { dock, target } = mission;
@@ -115,23 +104,13 @@ export function stopTitle(state: CartState): string | null {
       return missionLine(state.mission);
     case 'holding':
       return `Segurando ${formatNumber(state.path.holding_s, 1)} s`;
-    case 'manual':
-      return manualNoteText(drive.stop_text);
     default:
       return drive.stop_text;
   }
 }
 
-export function manualNoteText(note: string) {
-  return MANUAL_NOTES[note] ?? note;
-}
-
 export function refusalText(reply: Pick<Reply, 'cmd' | 'reason'>) {
   const command = (reply.cmd && COMMANDS[reply.cmd]) ?? reply.cmd ?? 'Comando';
   const reason = reply.reason ?? '';
-  const console = CONSOLE_HOLDS.exec(reason);
-  const text = console
-    ? `O console ${console[1]} está no controle`
-    : (REFUSALS[reason] ?? (reason || 'recusado'));
-  return `${command} · ${text}`;
+  return `${command} · ${REFUSALS[reason] ?? (reason || 'recusado')}`;
 }

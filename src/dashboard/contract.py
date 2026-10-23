@@ -19,9 +19,8 @@ from input.sign_policy import SignConstraint
 from lights import LightsController, LightsOutput, StripEffect, TurnSignal
 from obstacle import _SLOW_CM, _STOP_CM
 from path import HOME_PATH, Path
-from supervisor import Mode, Supervisor
 
-CONTRACT_VERSION = 2
+CONTRACT_VERSION = 3
 
 # The loop does not measure speed: there is no encoder on the car. Once a
 # straight has been timed at a known PWM, put the m/s at full PWM here and
@@ -165,7 +164,7 @@ def light_settings(controller: LightsController) -> dict:
     }
 
 
-def build_state(*, now: float, fps: float, supervisor: Supervisor, manual_note: Optional[str],
+def build_state(*, now: float, fps: float, estopped: bool, manual: bool,
                 steering: float, throttle: float, stop: Optional[tuple[str, str]],
                 path: Path, detour_stage: str, carrying: bool, profile_label: str, holding: float,
                 perc, roi: Optional[tuple[float, float]],
@@ -252,17 +251,14 @@ def build_state(*, now: float, fps: float, supervisor: Supervisor, manual_note: 
         "version": CONTRACT_VERSION,
         "t": round(now, 3),
         "drive": {
-            "mode": supervisor.mode.value,
-            "estopped": supervisor.estopped,
-            "driver": supervisor.driver.value if supervisor.mode is Mode.MANUAL else None,
-            "lease_lost": supervisor.lease_lost,
-            "manual_note": manual_note,
+            "mode": "manual" if manual else "autonomous",
+            "estopped": estopped,
             "steering": _round(steering),
             "throttle": _round(throttle),
             "applied_throttle": _round(applied_throttle),
             "speed_est_mps": speed,
-            "stop_text": "e-stop" if supervisor.estopped else None if stop is None else stop[1],
-            "stop_source": "estop" if supervisor.estopped else None if stop is None else stop[0],
+            "stop_text": "e-stop" if estopped else None if stop is None else stop[1],
+            "stop_source": "estop" if estopped else None if stop is None else stop[0],
             "fw": fw,
         },
         "path": {
@@ -311,7 +307,7 @@ def build_state(*, now: float, fps: float, supervisor: Supervisor, manual_note: 
         "health": {
             "loop_fps": _round(fps, 1),
             "serial_open": serial_open,
-            "drive_camera": perc is not None or supervisor.estopped,
+            "drive_camera": perc is not None or estopped,
         },
         # The throttle on straights (also the manual stick's full scale) and
         # on the sharpest curves, as the loop holds them.
@@ -337,7 +333,6 @@ def build_state(*, now: float, fps: float, supervisor: Supervisor, manual_note: 
 # --- commands --------------------------------------------------------------
 
 _PATHS = {p.value: p for p in Path}
-_MODES = {m.value: m for m in Mode}
 _SIGNALS = {s.value: s for s in TurnSignal}
 _STRIPS = {"auto": None, **{e.name.lower(): e for e in StripEffect}}
 _LIGHT_SWITCHES = ("drl", "low_beam", "logo", "projector")
@@ -375,15 +370,10 @@ def parse_command(message: Any) -> Optional[Command]:
             return None
         return Command("estop", id=command_id, args={"engaged": engaged})
     if kind == "mode":
-        mode = _MODES.get(message.get("mode"))
-        if mode is None:
+        mode = message.get("mode")
+        if mode not in ("autonomous", "manual"):
             return None
-        return Command("mode", id=command_id, args={"mode": mode})
-    if kind == "drive":
-        steering, throttle = _clamp(message.get("steering")), _clamp(message.get("throttle"))
-        if steering is None or throttle is None:
-            return None
-        return Command("drive", id=command_id, args={"steering": steering, "throttle": throttle})
+        return Command("mode", id=command_id, args={"manual": mode == "manual"})
     if kind == "path":
         path = _PATHS.get(message.get("path"))
         if path is None:
@@ -423,10 +413,6 @@ def parse_command(message: Any) -> Optional[Command]:
                     return None
                 args[gain] = min(value, high)
         return Command("pid", id=command_id, args=args) if args else None
-    if kind == "claim":
-        return Command("claim", id=command_id, args={"force": message.get("force") is True})
-    if kind == "release":
-        return Command("release", id=command_id)
     if kind == "ping":
         t = message.get("t")
         return Command("ping", id=command_id, args={"t": t if isinstance(t, (int, float)) else None})
@@ -453,7 +439,3 @@ def _parse_lights(message: dict, command_id: Optional[int]) -> Optional[Command]
     if not args:
         return None
     return Command("lights", id=command_id, args=args)
-
-
-# Commands any viewer may send; everything else needs the control claim.
-OPEN_COMMANDS = ("claim", "release", "ping")

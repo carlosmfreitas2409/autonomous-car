@@ -4,7 +4,6 @@ import { PhoneLayout } from '@/components/phone-layout';
 import { RefusalToasts } from '@/components/refusal-toasts';
 import { WorldBackdrop } from '@/components/world-backdrop';
 import { useCartLink } from '@/hooks/use-cart-link';
-import { useGamepadDrive } from '@/hooks/use-gamepad-drive';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useStopShortcut } from '@/hooks/use-stop-shortcut';
 import { cn } from '@/utils/cn';
@@ -16,7 +15,6 @@ export function App() {
   const link = useCartLink();
   const isCompact = useMediaQuery(COMPACT_QUERY);
   const isShort = useMediaQuery(SHORT_QUERY);
-  const gamepad = useGamepadDrive(link.isDrivingHere);
   useStopShortcut();
 
   return (
@@ -28,11 +26,7 @@ export function App() {
     >
       <WorldBackdrop state={link.state} isStale={link.isStale} />
 
-      {isCompact ? (
-        <PhoneLayout link={link} gamepad={gamepad} isShort={isShort} />
-      ) : (
-        <DesktopLayout link={link} gamepad={gamepad} />
-      )}
+      {isCompact ? <PhoneLayout link={link} isShort={isShort} /> : <DesktopLayout link={link} />}
 
       {(link.isStale || link.mismatchVersion !== null) && (
         <LinkBanner link={link} isCompact={isCompact} />

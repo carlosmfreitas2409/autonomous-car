@@ -25,7 +25,7 @@ function detourStageText(stage: string) {
 }
 
 export function PathControl({ state, isFullWidth = false }: PathControlProps) {
-  const { path, home, detour_stage: detourStage } = state.path;
+  const { path, detour_stage: detourStage } = state.path;
 
   return (
     <ButtonGroup
@@ -41,10 +41,9 @@ export function PathControl({ state, isFullWidth = false }: PathControlProps) {
             aria-pressed={isCurrent}
             variant={isCurrent ? 'selected' : 'ghost'}
             className={cn('font-medium', !isCurrent && 'text-ink', isFullWidth && 'flex-1 px-0')}
-            onClick={() => !isCurrent && setPath(state, name)}
+            onClick={() => !isCurrent && setPath(name)}
           >
             {PATH_NAMES[name]}
-            {name === home && ' ⌂'}
           </Button>
         );
       })}

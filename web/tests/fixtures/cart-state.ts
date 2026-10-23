@@ -5,13 +5,9 @@ export const cartState = (): CartState => ({
   type: 'state',
   version: 2,
   t: 10,
-  you: 1,
   drive: {
     mode: 'autonomous',
     estopped: false,
-    driver: null,
-    lease_lost: false,
-    manual_note: null,
     steering: 0.1,
     throttle: 0.5,
     applied_throttle: 0.5,
@@ -85,5 +81,4 @@ export const cartState = (): CartState => ({
   },
   lights: { signal: 'off', brake: false, strip: 'off' },
   health: { loop_fps: 30, serial_open: true, drive_camera: true },
-  control: { controller: 1, clients: 1 },
 });

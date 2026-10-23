@@ -14,14 +14,11 @@ export interface Firmware {
   age_s: number;
 }
 
-export type StopSource = 'estop' | 'controller' | 'sign' | 'mission' | 'holding' | 'manual';
+export type StopSource = 'estop' | 'controller' | 'sign' | 'mission' | 'holding';
 
 export interface Drive {
   mode: Mode;
   estopped: boolean;
-  driver: 'pad' | 'dashboard' | null;
-  lease_lost: boolean;
-  manual_note: string | null;
   steering: number;
   throttle: number;
   applied_throttle: number;
@@ -217,7 +214,6 @@ export interface CartState {
   type: 'state';
   version: number;
   t: number;
-  you: number;
   drive: Drive;
   path: PathStatus;
   lane: Lane | null;
@@ -231,7 +227,6 @@ export interface CartState {
   battery?: Battery | null;
   speed?: SpeedLimits | null;
   pid?: Pid | null;
-  control: { controller: number | null; clients: number };
 }
 
 export interface TrackLayout {
@@ -243,7 +238,6 @@ export interface TrackLayout {
 export interface Hello {
   type: 'hello';
   version: number;
-  client: number;
   layout: TrackLayout;
 }
 
@@ -257,7 +251,6 @@ export interface Reply {
 export type Command =
   | { type: 'estop'; engaged: boolean }
   | { type: 'mode'; mode: Mode }
-  | { type: 'drive'; steering: number; throttle: number }
   | { type: 'path'; path: PathName }
   | { type: 'mission'; pickup: Letter | null; delivery: Letter | null }
   | { type: 'dock'; action: 'wait' }
@@ -265,8 +258,6 @@ export type Command =
   | ({ type: 'lights' } & Partial<LightSettings>)
   | { type: 'speed'; base?: number; min?: number }
   | ({ type: 'pid' } & Partial<PidGains>)
-  | { type: 'claim'; force?: boolean }
-  | { type: 'release' }
   | { type: 'ping'; t: number };
 
 export type ServerMessage =

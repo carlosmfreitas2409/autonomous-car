@@ -14,7 +14,6 @@ from perception.sign_worker import DEBUG_HEIGHT, DEBUG_WIDTH, SignSnapshot
 from input.sign_policy import PolicyState, SignConstraint
 from cargo import CargoReading
 from input.mission import LETTERS, Mission, MissionCommand, MissionState
-from supervisor import Supervisor
 
 
 _PATH_LABELS = {
@@ -131,15 +130,11 @@ class TunerGUI:
         toggled, self._mode_toggle = self._mode_toggle, False
         return toggled
 
-    def update_supervisor(self, supervisor: Supervisor):
-        """Show the loop's mode and e-stop on the two buttons."""
-        self._stopped = supervisor.estopped
-        if supervisor.autonomous:
-            mode = "Autonomous Mode"
-        else:
-            mode = f"Manual ({supervisor.driver.value})"
-        dpg.set_item_label(self._tags["mode"], mode)
-        dpg.set_item_label(self._tags["estop"], "Resume" if supervisor.estopped else "Emergency Stop")
+    def update_drive(self, estopped: bool, manual: bool):
+        """Show the loop's e-stop and mode on the two buttons."""
+        self._stopped = estopped
+        dpg.set_item_label(self._tags["mode"], "Manual Mode" if manual else "Autonomous Mode")
+        dpg.set_item_label(self._tags["estop"], "Resume" if estopped else "Emergency Stop")
 
     def _build(self, config: Config, frame_w: int, frame_h: int):
         dpg.create_context()

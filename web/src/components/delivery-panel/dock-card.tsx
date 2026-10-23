@@ -31,7 +31,7 @@ export function DockCard({ state }: DockCardProps) {
         {status.hint && <p className="text-sm text-ink-2">{status.hint}</p>}
       </div>
       {status.canWait && (
-        <Button size="xl" variant="soft" className="w-full" onClick={() => holdDeparture(state)}>
+        <Button size="xl" variant="soft" className="w-full" onClick={() => holdDeparture()}>
           Esperar
         </Button>
       )}

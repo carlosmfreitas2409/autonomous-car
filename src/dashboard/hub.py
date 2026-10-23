@@ -1,17 +1,14 @@
 """The one place the control loop and the dashboard server meet.
 
 The loop thread only ever does constant-time things here: swap in the newest
-state dict and frame references, read the newest drive stick, and drain a
-short list of commands. It never waits on a client. The server thread reads
+state dict and frame references, and drain a short list of commands. It never waits on a client. The server thread reads
 the same slots and does all the slow work (JSON, JPEG, sockets).
 
 Two rules make the network unable to hurt the car:
 
 - Everything outbound is latest-value: a slow client skips states and frames,
   nothing queues behind it.
-- E-stop and mode commands are kept in order and never dropped. Drive sticks
-  are not queued at all: only the newest one matters, and its arrival time is
-  what the supervisor's lease checks.
+- E-stop and mode commands are kept in order and never dropped.
 """
 
 from collections import deque
@@ -25,7 +22,6 @@ import time
 import numpy as np
 
 from dashboard.contract import Command
-from supervisor import DriveInput
 
 _EVENT_BACKLOG = 200
 _MAX_COMMANDS = 64
@@ -45,19 +41,15 @@ class Hub:
         self._state_seq = 0
         self._frames = {"drive": Frame(), "signs": Frame()}
         self._commands: deque[Command] = deque()
-        self._drive: Optional[DriveInput] = None
         self._events: deque[dict] = deque(maxlen=_EVENT_BACKLOG)
         self._event_seq = itertools.count(1)
         self._replies: dict[int, deque] = {}
-        self._controller: Optional[int] = None
         self._clients = itertools.count(1)
-        self._connected: set[int] = set()
 
     # --- loop side -------------------------------------------------------
 
     def publish(self, state: dict, drive_frame: Optional[np.ndarray], sign_frame: Optional[np.ndarray]) -> None:
         with self._lock:
-            state["control"] = {"controller": self._controller, "clients": len(self._connected)}
             self._state = state
             self._state_seq += 1
             if drive_frame is not None:
@@ -73,10 +65,6 @@ class Hub:
             commands = list(self._commands)
             self._commands.clear()
         return commands
-
-    def latest_drive(self) -> Optional[DriveInput]:
-        with self._lock:
-            return self._drive
 
     def reply(self, client: int, message: dict) -> None:
         with self._lock:
@@ -96,49 +84,15 @@ class Hub:
     def connect(self) -> int:
         with self._lock:
             client = next(self._clients)
-            self._connected.add(client)
             self._replies[client] = deque(maxlen=256)
         return client
 
     def disconnect(self, client: int) -> None:
         with self._lock:
-            self._connected.discard(client)
             self._replies.pop(client, None)
-            released = self._controller == client
-            if released:
-                self._controller = None
-                self._drive = None
-        if released:
-            self.event("warning", "dashboard", f"console {client} disconnected, control released")
-
-    def claim(self, client: int, force: bool) -> tuple[bool, str]:
-        with self._lock:
-            holder = self._controller
-            if holder is not None and holder != client and not force:
-                return False, f"console {holder} has control"
-            self._controller = client
-        if holder != client:
-            note = f" (taken from console {holder})" if holder is not None else ""
-            self.event("info", "dashboard", f"console {client} took control{note}")
-        return True, ""
-
-    def release(self, client: int) -> None:
-        with self._lock:
-            if self._controller != client:
-                return
-            self._controller = None
-            self._drive = None
-        self.event("info", "dashboard", f"console {client} released control")
-
-    def is_controller(self, client: int) -> bool:
-        with self._lock:
-            return self._controller == client
 
     def submit(self, command: Command) -> bool:
         with self._lock:
-            if command.type == "drive":
-                self._drive = DriveInput(command.args["steering"], command.args["throttle"], self._clock())
-                return True
             if len(self._commands) >= _MAX_COMMANDS:
                 # Never drop an e-stop: shed the oldest non-safety command.
                 for queued in self._commands:

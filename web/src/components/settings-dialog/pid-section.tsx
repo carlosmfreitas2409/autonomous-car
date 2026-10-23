@@ -29,7 +29,7 @@ export function PidSection({ state }: PidSectionProps) {
         {state && pid && !isDefault && (
           <Button
             className="h-8 rounded-lg px-3 text-sm font-medium"
-            onClick={() => setPid(state, pid.defaults)}
+            onClick={() => setPid(pid.defaults)}
           >
             Restaurar padrão
           </Button>
@@ -46,7 +46,7 @@ export function PidSection({ state }: PidSectionProps) {
             max={pid?.max[gain.id] ?? 0}
             decimals={4}
             isDisabled={isDisabled}
-            onChange={(value) => state && setPid(state, { [gain.id]: value })}
+            onChange={(value) => state && setPid({ [gain.id]: value })}
           />
         ))}
       </div>

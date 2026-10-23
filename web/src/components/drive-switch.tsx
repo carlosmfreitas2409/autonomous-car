@@ -17,8 +17,8 @@ export function DriveSwitch({ state, isConnected, isFullWidth = false }: DriveSw
   const segment = cn(isFullWidth && 'flex-1 px-0');
 
   function handleStopOrResume() {
-    if (!isStopped) stop();
-    else if (state) resume(state);
+    if (isStopped) resume();
+    else stop();
   }
 
   return (

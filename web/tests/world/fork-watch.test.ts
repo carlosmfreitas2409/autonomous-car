@@ -117,13 +117,9 @@ const cartState = (
   type: 'state',
   version: 1,
   t: 0,
-  you: 1,
   drive: {
     mode: 'autonomous',
     estopped: false,
-    driver: null,
-    lease_lost: false,
-    manual_note: null,
     steering: 0,
     throttle: 0.4,
     applied_throttle: 0.4,
@@ -184,7 +180,6 @@ const cartState = (
   },
   lights: null,
   health: { loop_fps: 20, serial_open: true, drive_camera: true },
-  control: { controller: 1, clients: 1 },
 });
 
 const quiet: LaneReading = { shape: null, opening: null, near: 0.17 };

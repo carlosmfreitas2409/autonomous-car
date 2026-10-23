@@ -57,10 +57,9 @@ and every change is one click, with no confirmations.
 | Action | How | Rule |
 |---|---|---|
 | Stop | Parar, `Space`, PS5 Triangle, tuner | Any console may stop. Always wins. |
-| Drive autonomously | Autônomo, or `Shift+A` | From Stop it resumes; from manual it hands back. |
-| Drive manually | Manual, or `M` | **Latched**: stays manual until Autônomo or Parar. From Stop it resumes, and the cart still waits for the stick at neutral. While the PS5 pad drives, it takes the wheel. |
-| Drive | any gamepad on the operator laptop (left stick, R2/L2), or WASD / arrows | Nothing is held to stay in manual. Let go and the cart stops; it is still manual. |
-| Path | Normal / Reto / Desvio, `R` (Desvio), `L` (home) | Same as PS5 R1/L1. |
+| Drive autonomously | Autônomo | From Stop it resumes; from manual it hands back. |
+| Drive manually | Manual | The PS5 on the cart drives. **Latched**: stays manual until Autônomo or Parar. From Stop it resumes. |
+| Path | Normal / Reto / Desvio | Same as PS5 R1/L1. |
 | Letters | De / Para pickers | While stopped, or parked at the dock it last delivered to (clearing both still needs a stop). |
 | Release the truck | Not from the dashboard: shutting the lid (cargo node), or the tuner / PS5 Cross | The dock card only shows what the truck waits for. After a failed weight check, shutting the lid again leaves without the weight check. |
 | Hold the departure | "Esperar" on the dock card, tuner | While it checks itself before leaving; back to waiting at the dock. |
@@ -69,24 +68,15 @@ and every change is one click, with no confirmations.
 | Steering PID | Ajustes dialog: Kp, Ki, Kd (± a step, or type a value) | Any time. Same numbers as the tuner's PID sliders, same ranges. |
 | Lights | Ajustes dialog | Any time. Same as the tuner's Lights section. |
 
-**Link loss in manual.** The page streams the stick at 30 Hz. If the cart
-hears nothing for 0.3 s it sends zero throttle, holds the steering and flashes
-the hazards. It stays manual. When the stream comes back it drives again only
-after the stick has been at neutral, so a reconnect with the trigger held
-cannot launch the cart. The same neutral check applies when you take manual
-and when you resume from e-stop.
+**The dashboard never drives.** Manual is always the PS5 on the cart, over
+Bluetooth, so Wi-Fi never moves or stops the cart while you drive by hand.
 
-**The PS5 on the cart always wins.** Moving its stick or triggers while the
-dashboard drives hands the cart to the pad. Its Circle and Triangle work as
-before.
+**One e-stop, one mode.** They are two values in the loop (`estopped`,
+`manual` in `src/main.py`). The tuner, the PS5 and every open dashboard set
+them, and all of them show the same thing. Nobody "has control" and nothing
+says which console made a change; the log line does.
 
-**One console has control at a time.** There is no "take control" step:
-any click on a console that does not hold control takes it first, then acts.
-Every browser can stop. Closing the controlling tab releases control; in
-dashboard manual the lease then stops the cart.
-
-Manual is fully manual: the sonar does not stop the cart in manual, from the
-pad or the dashboard (as before).
+Manual is fully manual: the sonar does not stop the cart in manual (as before).
 
 ---
 
@@ -272,8 +262,7 @@ the path the autonomy steers. Autonomous and manual are told apart by name.
   - Overlays:
     - drive output and steering at the top left;
     - alerts at the top right, only while something is wrong;
-    - the path control at the bottom left;
-    - the stick card while the dashboard drives.
+    - the path control at the bottom left.
 - **Entrega** (top right): the stage, letters A/B/C and where each one is,
   the next decision ("Entre no desvio na saída 1"), the route with the current
   step, and the track.
@@ -296,7 +285,7 @@ the path the autonomy steers. Autonomous and manual are told apart by name.
   - The letter pickers appear while stopped, and while parked after a
     delivery ("Entregue em C").
 - **Cameras** (bottom): both at once, the drive camera with the tracker
-  overlay and the sign camera with its boxes. `C` swaps them. The drive
+  overlay and the sign camera with its boxes. The drive
   camera is not read while stopped, so it pauses.
 - **Sistema** (bottom right): link, console, firmware, serial, sonar, cameras,
   sign model, letters, path, loop rate. Only what needs attention gets a
@@ -341,8 +330,10 @@ closed LAN:
 - **Place it at the operator table,** raised, with line of sight to the track.
   Bring an extension cord.
 
-**Operator laptop on Ethernet** (bring a USB-C adapter). That leaves one
-wireless hop instead of two that share the same air.
+**Operator laptop on Wi-Fi or Ethernet.** The dashboard never drives, so a
+Wi-Fi hiccup only makes the page stutter. Ethernet (bring a USB-C adapter)
+leaves one wireless hop instead of two sharing the same air, if the video
+stutters too much.
 
 **Both Macs:**
 
@@ -368,7 +359,7 @@ internet: no fonts, CDN or map tiles.
 |---|---|
 | Venue internet down / captive portal | Nothing: the router has no WAN. |
 | Wi-Fi lost, autonomous | The cart keeps driving autonomously. The page greys out within 1 s. Stop it with the PS5. |
-| Wi-Fi lost, dashboard manual | The cart stops within 0.3 s with hazards, still manual. |
+| Wi-Fi lost, manual | Nothing: the PS5 drives over Bluetooth. |
 | Router dies | Same as Wi-Fi lost. |
 | Python dies | The firmware watchdog stops the motors after 0.5 s. |
 
@@ -381,10 +372,9 @@ only way to stop the cart.
 
 | Where | What |
 |---|---|
-| `src/supervisor.py` | E-stop, mode, manual driver, drive lease. Owned by the loop; the GUI, the PS5 and the dashboard only ask. |
 | `src/status.py` | The "why is it not moving" cause and text, shared by the GUI and the dashboard. |
 | `src/dashboard/contract.py` | `build_state` (pure, from the loop's objects), `parse_command`, track `layout`, segment / next and last decision / route progress. |
 | `src/dashboard/hub.py` | Latest-value slots between the loop and the server. E-stop and mode are never dropped. |
 | `src/dashboard/server.py` | aiohttp in a daemon thread: the page, `/ws/control`, `/ws/video`. |
-| `web/` | Vite + React + TypeScript, Tailwind and three.js, all bundled: nothing is fetched at run time. `src/App.tsx` is the page; `components/` its parts (`ui/` primitives, `delivery-panel/`); `hooks/`, `services/` (control socket, cart commands) and `utils/` (health, battery, alerts, signs, gamepad); `types.ts` mirrors the Python contract. `world/` is the 3D view: `world-view.tsx`, `cart.tsx` (the cart's art) and `utils/` (scene, layers, lane reader, fork watch). Tests live in `web/tests/`; the fork tests run on frames recorded at the venue (`tests/fixtures/forks.json`). `bun run lint`, `fmt`, `typecheck` and `test` check it all (oxlint, oxfmt). |
-| `tests/test_supervisor.py`, `tests/test_dashboard.py` | Lease, latch, contract, hub, and a live server round trip. |
+| `web/` | Vite + React + TypeScript, Tailwind and three.js, all bundled: nothing is fetched at run time. `src/App.tsx` is the page; `components/` its parts (`ui/` primitives, `delivery-panel/`); `hooks/`, `services/` (control socket, cart commands) and `utils/` (health, battery, alerts, signs); `types.ts` mirrors the Python contract. `world/` is the 3D view: `world-view.tsx`, `cart.tsx` (the cart's art) and `utils/` (scene, layers, lane reader, fork watch). Tests live in `web/tests/`; the fork tests run on frames recorded at the venue (`tests/fixtures/forks.json`). `bun run lint`, `fmt`, `typecheck` and `test` check it all (oxlint, oxfmt). |
+| `tests/test_dashboard.py` | Contract, hub, and a live server round trip. |

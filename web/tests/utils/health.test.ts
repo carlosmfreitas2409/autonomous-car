@@ -9,13 +9,9 @@ const state = (
   type: 'state',
   version: 1,
   t: 10,
-  you: 1,
   drive: {
     mode: 'autonomous',
     estopped: overrides.estopped ?? false,
-    driver: null,
-    lease_lost: false,
-    manual_note: null,
     steering: 0,
     throttle: 0,
     applied_throttle: 0,
@@ -76,7 +72,6 @@ const state = (
   },
   lights: null,
   health: { loop_fps: 30, serial_open: true, drive_camera: true },
-  control: { controller: 1, clients: 1 },
 });
 
 const input = (s: CartState | null, more: Partial<Parameters<typeof checkHealth>[0]> = {}) => ({

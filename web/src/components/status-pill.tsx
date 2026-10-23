@@ -5,7 +5,6 @@ import { stopTitle } from '@/utils/loop-text';
 interface StatusPillProps {
   state: CartState | null;
   isConnected: boolean;
-  isController: boolean;
   className?: string;
 }
 
@@ -24,7 +23,7 @@ interface Status {
   tone: Tone;
 }
 
-function describe(state: CartState | null, isConnected: boolean, isController: boolean): Status {
+function describe(state: CartState | null, isConnected: boolean): Status {
   const drive = state?.drive;
   if (!state || !drive) {
     const title = isConnected ? 'Aguardando o caminhão' : 'Sem conexão com o caminhão';
@@ -33,11 +32,7 @@ function describe(state: CartState | null, isConnected: boolean, isController: b
   if (drive.estopped) return { title: 'Parado', hint: 'Retome para seguir', tone: 'stop' };
   const stopped = stopTitle(state);
   if (stopped) return { title: stopped, hint: '', tone: 'stop' };
-  if (drive.mode === 'manual') {
-    let title = isController ? 'Manual' : 'Outro console dirigindo';
-    if (drive.driver !== 'dashboard') title = 'Controle PS5 dirigindo';
-    return { title, hint: '', tone: 'manual' };
-  }
+  if (drive.mode === 'manual') return { title: 'Manual', hint: '', tone: 'manual' };
 
   const { stage, pickup, delivery } = state.mission;
   if (stage === 'pickup' || stage === 'delivery') {
@@ -46,8 +41,8 @@ function describe(state: CartState | null, isConnected: boolean, isController: b
   return { title: 'Autônomo', hint: '', tone: 'autonomous' };
 }
 
-export function StatusPill({ state, isConnected, isController, className }: StatusPillProps) {
-  const { title, hint, tone } = describe(state, isConnected, isController);
+export function StatusPill({ state, isConnected, className }: StatusPillProps) {
+  const { title, hint, tone } = describe(state, isConnected);
 
   return (
     <div

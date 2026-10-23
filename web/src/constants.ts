@@ -1,6 +1,6 @@
 import type { Obstacle, PathName, StripEffect } from '@/types';
 
-export const CONTRACT_VERSION = 2;
+export const CONTRACT_VERSION = 3;
 
 export const STALE_MS = 1000;
 

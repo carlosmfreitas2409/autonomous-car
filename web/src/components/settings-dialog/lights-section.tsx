@@ -58,9 +58,7 @@ export function LightsSection({ state, settings }: LightsSectionProps) {
                   variant={isSelected ? 'selected' : 'ghost'}
                   disabled={isDisabled}
                   className="h-8 rounded-xl px-3 text-sm font-medium @max-sm:flex-1 @max-sm:px-0"
-                  onClick={() =>
-                    state && !isSelected && setLights(state, { turn_signal: signal.id })
-                  }
+                  onClick={() => state && !isSelected && setLights({ turn_signal: signal.id })}
                 >
                   {signal.label}
                 </Button>
@@ -75,7 +73,7 @@ export function LightsSection({ state, settings }: LightsSectionProps) {
             key={lamp.id}
             isChecked={!!settings?.[lamp.id]}
             disabled={isDisabled}
-            onCheckedChange={(isChecked) => state && setLights(state, { [lamp.id]: isChecked })}
+            onCheckedChange={(isChecked) => state && setLights({ [lamp.id]: isChecked })}
           >
             {lamp.label}
           </Switch>

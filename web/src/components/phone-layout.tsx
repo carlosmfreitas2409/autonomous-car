@@ -11,7 +11,6 @@ import { DeliveryPanel } from './delivery-panel';
 import { DriveReadouts } from './drive-readouts';
 import { DriveSwitch } from './drive-switch';
 import { HealthPanel } from './health-panel';
-import { ManualNote } from './manual-note';
 import { PathControl } from './path-control';
 import { SettingsButton } from './settings-dialog';
 import { StatusPill } from './status-pill';
@@ -21,7 +20,6 @@ import { ButtonGroup, Panel } from './ui/panel';
 
 interface PhoneLayoutProps {
   link: CartLink;
-  gamepad: string | null;
   isShort: boolean;
 }
 
@@ -34,7 +32,7 @@ const ATTENTION_DOT: Record<Tone, string | null> = {
   bad: 'bg-stop',
 };
 
-export function PhoneLayout({ link, gamepad, isShort }: PhoneLayoutProps) {
+export function PhoneLayout({ link, isShort }: PhoneLayoutProps) {
   const [tab, setTab] = useState<Tab | null>(null);
   const { state, live } = link;
   const dock = state?.mission.dock;
@@ -63,7 +61,6 @@ export function PhoneLayout({ link, gamepad, isShort }: PhoneLayoutProps) {
           <StatusPill
             state={live}
             isConnected={link.isConnected}
-            isController={link.isController}
             className="min-w-0 flex-1 self-stretch"
           />
           <BatteryGauge state={state} isStale={link.isStale} />
@@ -79,10 +76,6 @@ export function PhoneLayout({ link, gamepad, isShort }: PhoneLayoutProps) {
       </div>
 
       <div className="absolute inset-x-4 bottom-[max(16px,env(safe-area-inset-bottom))] flex flex-col gap-2">
-        {live && link.isManualHere && (
-          <ManualNote state={live} gamepad={gamepad} isController={link.isController} />
-        )}
-
         {open && (
           <Panel
             elevation="raised"

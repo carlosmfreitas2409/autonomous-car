@@ -18,7 +18,7 @@ export function LetterPicker({ kind, state }: LetterPickerProps) {
   function handlePick(letter: Letter) {
     const next = { pickup: mission.pickup, delivery: mission.delivery };
     next[kind] = selected === letter ? null : letter;
-    setLetters(state, next.pickup, next.delivery);
+    setLetters(next.pickup, next.delivery);
   }
 
   return (

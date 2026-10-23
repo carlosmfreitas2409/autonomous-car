@@ -23,7 +23,6 @@ from perception.sign_tracker import Track, bearing_deg
 from perception.sign_worker import SignSnapshot
 from perception.traffic_light import LightState
 from status import stop_cause, stop_text
-from supervisor import Mode, Source, Supervisor
 
 
 def _track(**overrides):
@@ -43,12 +42,12 @@ def _perc():
     )
 
 
-def _state(supervisor=None, perc=None, mission=None, telemetry=None, battery=None, lights_controller=None,
+def _state(estopped=True, manual=False, perc=None, mission=None, telemetry=None, battery=None, lights_controller=None,
            tuning=None, mission_command=None, cargo=None, stop=None):
     lights = LightsController()
     lights.update(0.4, estopped=False, autonomous=True)
     return build_state(
-        now=50.0, fps=23.4, supervisor=supervisor or Supervisor(), manual_note=None,
+        now=50.0, fps=23.4, estopped=estopped, manual=manual,
         steering=0.12345, throttle=0.5, stop=stop,
         path=Path.STRAIGHT, detour_stage="", carrying=False, profile_label="normal", holding=0.0,
         perc=perc, roi=(0.03, 0.98),
@@ -65,7 +64,7 @@ def _state(supervisor=None, perc=None, mission=None, telemetry=None, battery=Non
 def test_state_is_json_and_carries_every_slice():
     state = _state(perc=_perc())
     text = json.dumps(state)
-    assert json.loads(text)["version"] == 2
+    assert json.loads(text)["version"] == 3
     for key in ("drive", "path", "lane", "signs", "policy", "mission", "obstacle", "lights", "health", "cargo"):
         assert key in state
     assert state["lane"]["rows"] == [[170, 150, True], [200, 155, False]]
@@ -96,11 +95,9 @@ def test_estopped_state_has_no_lane_and_says_why():
 
 
 def test_stop_names_its_source_once_driving():
-    s = Supervisor()
-    s.request_estop(False, Source.GUI)
-    drive = _state(supervisor=s, stop=("mission", "loading at A, waiting for release"))["drive"]
+    drive = _state(estopped=False, stop=("mission", "loading at A, waiting for release"))["drive"]
     assert drive["stop_source"] == "mission" and drive["stop_text"] == "loading at A, waiting for release"
-    drive = _state(supervisor=s)["drive"]
+    drive = _state(estopped=False)["drive"]
     assert drive["stop_source"] is None and drive["stop_text"] is None
 
 
@@ -151,11 +148,9 @@ def test_no_encoder_means_no_speed_but_the_applied_output():
     assert state["drive"]["fw"]["state"] == "R" and state["drive"]["fw"]["age_s"] == 0.5
 
 
-def test_manual_driver_is_reported():
-    s = Supervisor()
-    s.request_mode(Mode.MANUAL, Source.DASHBOARD)
-    assert _state(supervisor=s)["drive"]["driver"] == "dashboard"
-    assert _state()["drive"]["driver"] is None
+def test_mode_is_reported():
+    assert _state(manual=True)["drive"]["mode"] == "manual"
+    assert _state()["drive"]["mode"] == "autonomous"
 
 
 def test_layout_is_the_missions_own_table():
@@ -215,8 +210,7 @@ def test_stop_text_priority_matches_the_old_inline_logic():
 
 @pytest.mark.parametrize("message", [
     None, [], {}, {"type": "nope"}, {"type": "estop"}, {"type": "estop", "engaged": 1},
-    {"type": "mode", "mode": "turbo"}, {"type": "drive", "steering": "x", "throttle": 0},
-    {"type": "drive", "steering": float("nan"), "throttle": 0}, {"type": "drive", "steering": True, "throttle": 0},
+    {"type": "mode", "mode": "turbo"}, {"type": "drive", "steering": 0, "throttle": 0}, {"type": "claim"},
     {"type": "path", "path": "left"}, {"type": "mission", "pickup": "D", "delivery": "A"},
     {"type": "lights"}, {"type": "lights", "drl": 1}, {"type": "lights", "turn_signal": "up"},
     {"type": "lights", "strip": "disco"}, {"type": "lights", "low_beam": True, "strip": "disco"},
@@ -231,9 +225,9 @@ def test_malformed_commands_are_rejected(message):
 
 def test_commands_parse_and_clamp():
     assert parse_command({"type": "estop", "engaged": True}).args == {"engaged": True}
-    assert parse_command({"type": "mode", "mode": "manual"}).args["mode"] is Mode.MANUAL
-    drive = parse_command({"type": "drive", "steering": -3, "throttle": 0.25, "id": 4})
-    assert drive.args == {"steering": -1.0, "throttle": 0.25} and drive.id == 4
+    mode = parse_command({"type": "mode", "mode": "manual", "id": 4})
+    assert mode.args == {"manual": True} and mode.id == 4
+    assert parse_command({"type": "mode", "mode": "autonomous"}).args == {"manual": False}
     assert parse_command({"type": "path", "path": "detour"}).args["path"] is Path.DETOUR
     assert parse_command({"type": "mission", "pickup": "A", "delivery": None}).args == {"pickup": "A", "delivery": None}
     assert parse_command({"type": "dock", "action": "wait", "id": 9}).args == {"action": "wait"}
@@ -318,32 +312,13 @@ def test_bearing_is_zero_on_axis_and_half_fov_at_the_edge():
 
 # --- hub -------------------------------------------------------------------
 
-def test_hub_never_drops_an_estop_and_keeps_only_the_latest_stick():
-    hub = Hub(clock=lambda: 7.0)
+def test_hub_never_drops_an_estop():
+    hub = Hub()
     for _ in range(64):
         assert hub.submit(parse_command({"type": "path", "path": "normal"}))
     assert hub.submit(parse_command({"type": "estop", "engaged": True}))
-    hub.submit(parse_command({"type": "drive", "steering": 0.1, "throttle": 0.2}))
-    hub.submit(parse_command({"type": "drive", "steering": 0.3, "throttle": 0.4}))
     commands = hub.drain_commands()
     assert commands[-1].type == "estop" and len(commands) == 64
-    assert all(c.type != "drive" for c in commands)
-    drive = hub.latest_drive()
-    assert (drive.steering, drive.throttle, drive.received_at) == (0.3, 0.4, 7.0)
-
-
-def test_one_controller_at_a_time_and_disconnect_releases():
-    hub = Hub()
-    a, b = hub.connect(), hub.connect()
-    assert hub.claim(a, force=False) == (True, "")
-    ok, reason = hub.claim(b, force=False)
-    assert not ok and "has control" in reason
-    hub.submit(parse_command({"type": "drive", "steering": 0.0, "throttle": 0.0}))
-    hub.disconnect(a)
-    assert hub.latest_drive() is None
-    assert hub.claim(b, force=False)[0]
-    texts = [e["text"] for e in hub.events_since(0)]
-    assert any("disconnected" in t for t in texts)
 
 
 # --- server ----------------------------------------------------------------
@@ -371,26 +346,15 @@ def test_server_streams_state_video_and_routes_commands(tmp_path):
             state = await _next(viewer, "state")
             assert state["lane"]["state"] == "both 3/5"
 
-            # A viewer may stop the car but not drive it.
+            # Every console commands; the loop acks what it applies.
+            other = await session.ws_connect(base + "/ws/control")
             await viewer.send_json({"type": "mode", "mode": "manual", "id": 1})
+            await other.send_json({"type": "estop", "engaged": True, "id": 2})
+            await viewer.send_json({"type": "drive", "steering": 0.2, "throttle": 0.0, "id": 3})
             nack = await _next(viewer, "nack")
-            assert nack["id"] == 1 and "view only" in nack["reason"]
-            # Holding the truck at its dock is a command like any other: it needs control.
-            await viewer.send_json({"type": "dock", "action": "wait", "id": 5})
-            nack = await _next(viewer, "nack")
-            assert nack["id"] == 5 and nack["cmd"] == "dock" and "view only" in nack["reason"]
-            await viewer.send_json({"type": "estop", "engaged": True, "id": 2})
+            assert nack["id"] == 3 and nack["reason"] == "invalid command"
             await asyncio.sleep(0.1)
-            assert [c.type for c in hub.drain_commands()] == ["estop"]
-
-            operator = await session.ws_connect(base + "/ws/control")
-            await viewer.send_json({"type": "claim", "id": 3})
-            assert (await _next(viewer, "ack"))["cmd"] == "claim"
-            await operator.send_json({"type": "claim", "id": 4})
-            assert (await _next(operator, "nack"))["cmd"] == "claim"
-            await viewer.send_json({"type": "drive", "steering": 0.2, "throttle": 0.0})
-            await asyncio.sleep(0.1)
-            assert hub.latest_drive().steering == 0.2
+            assert sorted(c.type for c in hub.drain_commands()) == ["estop", "mode"]
 
             await viewer.send_json({"type": "ping", "t": 123})
             assert (await _next(viewer, "pong"))["t"] == 123
@@ -401,7 +365,7 @@ def test_server_streams_state_video_and_routes_commands(tmp_path):
             assert frame[0] == 0 and frame[1:3] == b"\xff\xd8"
 
             await viewer.close()
-            await operator.close()
+            await other.close()
             await video.close()
 
     try:

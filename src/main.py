@@ -28,7 +28,6 @@ from path import HOME_PATH, DetourReturn, ForkWatch, Path, anchor_for, profile_f
 from perception.sign_worker import SignWorker
 from gui import TunerGUI
 from status import stop_cause
-from supervisor import Source, Supervisor
 from voice import Voice
 
 
@@ -221,7 +220,6 @@ sign_policy = SignPolicy()
 mission = Mission()
 voice = Voice(enabled=not args.no_voice, voice=args.voice)
 manual_open = ManualOpen()
-supervisor = Supervisor()
 sign_worker.start()
 
 # The operator dashboard: a server thread that only ever meets the loop in the
@@ -274,12 +272,31 @@ warned_calibrating = False
 # reads it on the next frame (it decides before the tracker runs).
 fork_passed = False
 
+# Whether the car may move and who steers it. The tuner, the PS5 and the
+# dashboard all set these and all show them. It boots stopped, autonomous.
+estopped = True
+manual = False
+
+
+def set_estop(engaged):
+    global estopped
+    if engaged != estopped:
+        estopped = engaged
+        logger.info("E-stop engaged" if engaged else "E-stop released")
+
+
+def set_manual(on):
+    global manual
+    if on != manual:
+        manual = on
+        logger.info("Mode: manual" if on else "Mode: autonomous")
+
 
 def letters_refusal(letters):
     """Why a new (pickup, delivery) is refused, or None. Parked after a
     delivery, the next order is given where it stands; clearing both letters
     forgets that dock, so that needs an e-stop."""
-    if supervisor.estopped or (mission.parked and letters != (None, None)):
+    if estopped or (mission.parked and letters != (None, None)):
         return None
     return "pickup/delivery can only be changed while e-stopped or parked at a delivery"
 
@@ -288,7 +305,7 @@ def dock_request(request, now):
     """The person at the dock: loading or unloading is done ("release"), or
     not yet after all ("wait"), from any console. Returns why it was refused,
     or None."""
-    if supervisor.estopped:
+    if estopped:
         return "e-stopped, resume first"
     if speed_test:
         return "no docks in the speed test"
@@ -298,7 +315,7 @@ def dock_request(request, now):
 def open_request(now):
     """The operator's "open the compartment", only while e-stopped. Returns
     why it was refused, or None."""
-    if not supervisor.estopped:
+    if not estopped:
         return "e-stop first"
     manual_open.request(now)
     return None
@@ -314,9 +331,9 @@ def apply_dashboard_commands(now):
     for command in hub.drain_commands():
         reason = None
         if command.type == "estop":
-            supervisor.request_estop(command.args["engaged"], Source.DASHBOARD)
+            set_estop(command.args["engaged"])
         elif command.type == "mode":
-            supervisor.request_mode(command.args["mode"], Source.DASHBOARD)
+            set_manual(command.args["manual"])
         elif command.type == "path":
             requested_path = command.args["path"]
         elif command.type == "lights":
@@ -340,11 +357,11 @@ def apply_dashboard_commands(now):
     return requested_path
 
 
-def publish(perc, steering, throttle, stop, constraint, mission_command, lights_output, applied, manual_note, cargo):
+def publish(perc, steering, throttle, stop, constraint, mission_command, lights_output, applied, cargo):
     if hub is None:
         return
     state = build_state(
-        now=now, fps=fps, supervisor=supervisor, manual_note=manual_note,
+        now=now, fps=fps, estopped=estopped, manual=manual,
         steering=steering, throttle=throttle, stop=stop,
         path=path, detour_stage=detour_return.stage, carrying=detour_return.profile_for(path) is not profile_for(path),
         profile_label=autonomous.profile_label, holding=autonomous.holding,
@@ -368,21 +385,18 @@ while gui.is_running():
     for index in ps5.poll_button_presses():
         logger.info(f"PS5 button {index} ({BUTTON_NAMES.get(index, '?')})")
 
-    if ps5.poll_estop_toggle():
-        supervisor.toggle_estop(Source.PAD)
-    if gui.poll_estop_toggle():
-        supervisor.toggle_estop(Source.GUI)
-
-    if ps5.poll_mode_toggle():
-        supervisor.toggle_mode(Source.PAD)
-    if gui.poll_mode_toggle():
-        supervisor.toggle_mode(Source.GUI)
+    for toggled in (ps5.poll_estop_toggle(), gui.poll_estop_toggle()):
+        if toggled:
+            set_estop(not estopped)
+    for toggled in (ps5.poll_mode_toggle(), gui.poll_mode_toggle()):
+        if toggled:
+            set_manual(not manual)
 
     tuning.update(gui.poll_tuning_request())
 
     requested_challenge = gui.poll_challenge_request()
     if requested_challenge is not None and requested_challenge is not challenge:
-        if supervisor.estopped:
+        if estopped:
             challenge = requested_challenge
             tuning = tunings[challenge]
             path = HOME_PATH
@@ -432,13 +446,13 @@ while gui.is_running():
         refused = open_request(now)
         if refused:
             logger.warning(f"Open compartment refused: {refused}")
-    open_by_hand = manual_open.update(now, cargo, stopped=supervisor.estopped)
+    open_by_hand = manual_open.update(now, cargo, stopped=estopped)
 
-    gui.update_supervisor(supervisor)
+    gui.update_drive(estopped, manual)
     gui.update_lights(lights)
     gui.update_tuning(tuning)
 
-    if supervisor.estopped:
+    if estopped:
         if not prev_stopped:
             arduino.send_estop()
         prev_stopped = True
@@ -453,7 +467,7 @@ while gui.is_running():
         mission.reset()
         held_steering = None
         lights.signal_override = TurnSignal.RIGHT if path is Path.DETOUR else None
-        lights.update(0.0, estopped=True, autonomous=supervisor.autonomous, speed_test=speed_test,
+        lights.update(0.0, estopped=True, autonomous=not manual, speed_test=speed_test,
                       scene=None if speed_test else mission.scene)
         lights_output = lights.compute()
         arduino.send_lights(lights_output)
@@ -464,7 +478,7 @@ while gui.is_running():
         gui.update_signs(snapshot, constraint, applied=False)
         gui.update_mission(mission, mission_command, applied=False)
         gui.update_path_status(path, tracker.profile_ready, "e-stop")
-        publish(None, 0.0, 0.0, ("estop", "e-stop"), constraint, mission_command, lights_output, False, None, cargo)
+        publish(None, 0.0, 0.0, ("estop", "e-stop"), constraint, mission_command, lights_output, False, cargo)
         gui.render_frame()
         continue
     prev_stopped = False
@@ -506,7 +520,7 @@ while gui.is_running():
                                          quiet=not voice.speaking)
     if mission_command.path is not None:
         path = mission_command.path
-    if supervisor.autonomous:
+    if not manual:
         voice.announce(mission_command.announce)
 
     # The speed test runs without the sonar guard: it still observes, for
@@ -514,12 +528,12 @@ while gui.is_running():
     guard_stopped = obstacle_guard.stopped and not speed_test
     guard_scale = 1.0 if speed_test else obstacle_guard.scale
 
-    standing = supervisor.autonomous and (guard_stopped or prev_hold)
+    standing = not manual and (guard_stopped or prev_hold)
     perc = tracker.process(frame, params, anchor_for(path), learn=not standing)
 
     # Stopped for an obstacle the car is not moving: the detour's gap and
     # steady-lane timers must not count a car standing in the gap.
-    obstacle_stopped = supervisor.autonomous and guard_stopped
+    obstacle_stopped = not manual and guard_stopped
     returned = None if obstacle_stopped else detour_return.update(path, perc, dt)
     fork_passed = not obstacle_stopped and fork_watch.update(path, perc, dt)
     if returned is not None:
@@ -535,8 +549,7 @@ while gui.is_running():
         logger.warning(f"Path {path.value} selected while the tracker is still {perc.lane_state}; steering on the two-edge scan until it has a lane width")
         warned_calibrating = True
 
-    manual = None
-    if supervisor.autonomous:
+    if not manual:
         steering, throttle = autonomous.step(
             perc.lane_offset, perc.lane_curvature, params, dt, guard_scale,
             profile=detour_return.profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found,
@@ -546,10 +559,7 @@ while gui.is_running():
             detour_return.observe_hold(autonomous.holding, dt)
     else:
         autonomous.reset()
-        # The pad (or the GUI) drives exactly as before; the dashboard's stick
-        # drives under the supervisor's lease.
-        manual = supervisor.manual(ps5.poll(), None if hub is None else hub.latest_drive(), now)
-        steering, throttle = manual.steering, manual.throttle
+        steering, throttle = ps5.poll()
         throttle *= params.base_speed
 
     if autonomous.stop_reason != prev_stop_reason:
@@ -561,7 +571,7 @@ while gui.is_running():
     scale = min(constraint.scale, mission_command.scale)
     hold = constraint.hold or mission_command.hold
     prev_hold = hold
-    if supervisor.autonomous:
+    if not manual:
         if hold or throttle <= 0.0:
             throttle *= scale
         elif scale < 1.0:
@@ -585,26 +595,25 @@ while gui.is_running():
     draw_throttle_bar(perc.display_frame, throttle)
 
     # The mission's signals only mean something when it is driving.
-    if supervisor.autonomous and mission_command.turn_signal is not None:
+    if not manual and mission_command.turn_signal is not None:
         lights.signal_override = mission_command.turn_signal
     else:
         lights.signal_override = TurnSignal.RIGHT if path is Path.DETOUR else None
 
-    # Only an obstacle or a dropped dashboard link forces hazards; a sign/light
-    # stop just turns the strip red. The mission's own stops are left out: a
-    # pickup signals left while still stopped before it pulls away.
-    sign_stopped = supervisor.autonomous and constraint.hold
-    link_stopped = manual is not None and manual.lease_lost
-    lights.update(throttle, estopped=False, autonomous=supervisor.autonomous,
-                  obstacle_stopped=obstacle_stopped or link_stopped, sign_stopped=sign_stopped, speed_test=speed_test,
-                  scene=mission_command.scene if supervisor.autonomous else None)
+    # Only an obstacle forces hazards; a sign/light stop just turns the strip
+    # red. The mission's own stops are left out: a pickup signals left while
+    # still stopped before it pulls away.
+    sign_stopped = not manual and constraint.hold
+    lights.update(throttle, estopped=False, autonomous=not manual,
+                  obstacle_stopped=obstacle_stopped, sign_stopped=sign_stopped, speed_test=speed_test,
+                  scene=None if manual else mission_command.scene)
     lights_output = lights.compute()
     arduino.send_lights(lights_output)
     arduino.send_motor(throttle, steering)
     if cargo is not None:
         # Only the mission holds the car at a dock: driven by hand it stays
         # locked. The master also refuses it while the wheels are driven.
-        arduino.send_cargo(mission.unlock and supervisor.autonomous and not speed_test)
+        arduino.send_cargo(mission.unlock and not manual and not speed_test)
 
     curvature = perc.lane_curvature if perc.lane_curvature is not None else 0.0
     error = (perc.lane_offset or 0) + 60.0 * curvature
@@ -635,26 +644,18 @@ while gui.is_running():
     lane_text = perc.lane_state if perc.width_ratio is None else f"{perc.lane_state} w{perc.width_ratio:.2f}"
     if detour_return.stage:
         lane_text = f"{lane_text} | {detour_return.stage}"
-    manual_note = None
-    if manual is not None and manual.lease_lost:
-        manual_note = "dashboard link lost - stopped"
-    elif manual is not None and manual.waiting_neutral:
-        manual_note = "release the throttle to drive"
-    if supervisor.autonomous:
-        stop = stop_cause(autonomous.stop_reason, autonomous.holding, hold, constraint, mission_command)
-    else:
-        # Manual: the controller and the policies are not applied.
-        stop = None if manual_note is None else ("manual", manual_note)
+    # Manual: the controller and the policies are not applied.
+    stop = None if manual else stop_cause(autonomous.stop_reason, autonomous.holding, hold, constraint, mission_command)
     gui.update_telemetry(fps, int(round(error)), steering, throttle, lane_text, None if stop is None else stop[1])
     gui.update_path_status(path, perc.profile_ready, perc.lane_state)
     gui.update_sonar(last_sonar, obstacle_guard)
-    applied = supervisor.autonomous and not speed_test
+    applied = not manual and not speed_test
     why = "speed test" if speed_test else "manual"
     gui.update_challenge(challenge)
     gui.update_cargo(cargo)
     gui.update_signs(snapshot, constraint, applied=applied, why=why)
     gui.update_mission(mission, mission_command, applied=applied, why=why)
-    publish(perc, steering, throttle, stop, constraint, mission_command, lights_output, applied, manual_note, cargo)
+    publish(perc, steering, throttle, stop, constraint, mission_command, lights_output, applied, cargo)
     gui.render_frame()
 
 _close_recording()

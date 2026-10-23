@@ -22,7 +22,7 @@ import threading
 import cv2 as cv
 from aiohttp import WSMsgType, web
 
-from dashboard.contract import CONTRACT_VERSION, OPEN_COMMANDS, layout, parse_command
+from dashboard.contract import CONTRACT_VERSION, layout, parse_command
 from dashboard.hub import Hub
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class DashboardServer:
         if self._error is not None:
             logger.error("dashboard server failed to start: %s", self._error)
             return False
-        logger.info("dashboard on http://%s:%d/", self._host or "<any address, IPv4 and IPv6>", self._port)
+        logger.info("dashboard on http://localhost:%d/", self._port)
         return True
 
     def stop(self) -> None:
@@ -131,7 +131,7 @@ class DashboardServer:
         await ws.prepare(request)
         client = self._hub.connect()
         logger.info("dashboard console %d connected from %s", client, request.remote)
-        await ws.send_json({"type": "hello", "version": CONTRACT_VERSION, "client": client, "layout": layout()})
+        await ws.send_json({"type": "hello", "version": CONTRACT_VERSION, "layout": layout()})
         pusher = asyncio.ensure_future(self._push(ws, client))
         try:
             async for message in ws:
@@ -161,22 +161,6 @@ class DashboardServer:
         if command.type == "ping":
             await ws.send_json({"type": "pong", "t": command.args["t"]})
             return
-        if command.type == "claim":
-            ok, reason = self._hub.claim(client, command.args["force"])
-            await ws.send_json({"type": "ack" if ok else "nack", "id": command_id, "cmd": "claim", "reason": reason})
-            return
-        if command.type == "release":
-            self._hub.release(client)
-            await ws.send_json({"type": "ack", "id": command_id, "cmd": "release"})
-            return
-
-        # Anyone may stop the car; everything else needs the control claim.
-        stop = command.type == "estop" and command.args["engaged"]
-        if command.type not in OPEN_COMMANDS and not stop and not self._hub.is_controller(client):
-            if command.type != "drive":
-                await ws.send_json({"type": "nack", "id": command_id, "cmd": command.type,
-                                    "reason": "view only: take control first"})
-            return
         if not self._hub.submit(command):
             await ws.send_json({"type": "nack", "id": command_id, "cmd": command.type, "reason": "busy"})
         # The loop acks (or refuses) the rest once it has applied them.
@@ -193,7 +177,7 @@ class DashboardServer:
                 state, seq = self._hub.state()
                 if state is not None and seq != sent_seq:
                     sent_seq = seq
-                    await ws.send_str(json.dumps({**state, "you": client}, separators=(",", ":")))
+                    await ws.send_str(json.dumps(state, separators=(",", ":")))
                 events = self._hub.events_since(event_seq)
                 if events:
                     event_seq = events[-1]["seq"]
