@@ -75,6 +75,7 @@ Malformed lines produce `ERR <verb>` on the same serial. A CAN transmit failure 
 - `RDY car-master v1` — boot banner.
 - `ERR ...` — parse errors and fault notifications.
 - `T <angle_raw> <target_raw> <throttle> <steer_pwm> <state> <wd_ms>` — telemetry at 20 Hz, behind `TELEMETRY_ENABLED` compile flag. `state` ∈ `R W E F`.
+- `B <millivolts> <percent>` — the battery gauge's smoothed reading (the same one the LED bar shows), once a second, behind `TELEMETRY_ENABLED`. Reads low under motor load.
 - `S <state> <nearest_cm> <d0..d2>` — obstacle state at 20 Hz (the sonar node's rate), behind `TELEMETRY_ENABLED`. `state` ∈ `C` clear, `S` slowing, `B` blocked, `X` stale. Distances are cm, with `255` = nothing in range. The host uses the three distances and `X` to slow/stop in autonomous mode.
 - `C <grams> <stable> <lid> <lock> <fault>`: the cargo node's status, one line per CAN `0x180` frame (10 Hz while it is connected, none without it). `lid` 1 = closed, `lock` 1 = coil powered (unlocked), `fault` 1 = the scale is not answering.
 

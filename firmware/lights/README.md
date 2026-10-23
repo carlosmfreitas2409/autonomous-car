@@ -112,7 +112,7 @@ By default the host drives the strip from the car's own state rather than a fixe
 |---|---|---|
 | E-stopped | `7` red pulse | Halted. Wins over everything else. |
 | Autonomous | `6` cyan | The computer is driving. |
-| Manual | `2` green | A human has the pad. |
+| Manual | `11` yellow pulse | A human has the pad. |
 
 The mapping lives in `LightsController._resolve_strip()` (`src/lights.py`), not in firmware — this board only knows how to render an effect id. The GUI's **Auto** entry selects this behaviour; picking any other entry pins the strip to that effect for bench testing.
 

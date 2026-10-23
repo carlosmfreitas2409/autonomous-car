@@ -4,3 +4,4 @@ pygame
 pyserial
 numpy
 onnxruntime
+aiohttp

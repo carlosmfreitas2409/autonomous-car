@@ -33,6 +33,10 @@ uint32_t police_phase_started_ms = 0;
 // the middle of the turquoise box (x 0.15, y 0.37) for datasheet primaries.
 constexpr uint8_t TURQUOISE_BLUE = 85;
 
+// Pure yellow is hue 10923; a WS2812's green outshines its red, so a little
+// toward red keeps it from reading lime.
+constexpr uint16_t YELLOW_HUE = 9000;
+
 uint32_t solid_color(Effect e) {
   switch (e) {
     case Effect::RED:   return Adafruit_NeoPixel::Color(255, 0, 0);
@@ -148,6 +152,17 @@ void render(uint32_t now_ms) {
       break;
     }
 
+    case Effect::YELLOW_PULSE: {
+      // RED_PULSE's triangle in yellow: a person is driving.
+      pulse_phase += config::PULSE_STEP;
+      const uint16_t tri =
+          (pulse_phase < 32768u) ? pulse_phase : (uint16_t)(65535u - pulse_phase);
+      const uint8_t value = (uint8_t)(25u + (((uint32_t)(tri >> 7) * 230u) / 255u));
+      pixels.fill(Adafruit_NeoPixel::gamma32(
+          Adafruit_NeoPixel::ColorHSV(YELLOW_HUE, 255, value)));
+      break;
+    }
+
     case Effect::CYAN_SWEEP: {
       // A turquoise arrow: from the rear centre up both sides together,
       // meeting at the front, again and again - about to move forward.
@@ -227,7 +242,7 @@ void init() {
 }
 
 void set_effect(uint8_t id) {
-  effect = (id > (uint8_t)Effect::CYAN_SWEEP) ? Effect::OFF
+  effect = (id > (uint8_t)Effect::YELLOW_PULSE) ? Effect::OFF
                                           : static_cast<Effect>(id);
 }
 

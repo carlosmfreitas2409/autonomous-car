@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 LETTERS = ("A", "B", "C")
 
 # Which exit's detour holds each letter; C is on the main road.
-LETTER_EXIT = {"A": 1, "B": None, "C": None}
+LETTER_EXIT = {"A": 1, "B": 2, "C": None}
 
 
 
@@ -139,6 +139,9 @@ class MissionCommand:
     reason: str = ""
     scene: Optional[DockScene] = None           # the lights at a dock
     announce: Optional[Announcement] = None     # one-shot, on the frame it happens
+    # CHECKING only, what holds the released car: "announcing", "lid",
+    # "weighing", "clearing" or "blocked". `reason` says the same in words.
+    check: Optional[str] = None
 
 
 class Dock:
@@ -240,6 +243,8 @@ class Mission:
         self._dock_at_spot = False
         self._delivered_at: Optional[float] = None
         self._last_state = MissionState.IDLE
+        self.decisions = 0          # detour signs decided since the run started (route progress)
+        self.last_decision: Optional[tuple[int, int, Path]] = None  # (sign id, exit, path) of the latest
         self._approach: Optional[_Approach] = None
         self._consumed: set[int] = set()
         self._fixed: set[int] = set()
@@ -277,6 +282,11 @@ class Mission:
         """Held where the last delivery left it, not yet released: a new order
         can be given without an e-stop, and leaves from here."""
         return self._spot is not None and (self.dock is None or self.dock.released_at is None)
+
+    @property
+    def parked_at(self) -> Optional[str]:
+        """The letter `parked` holds the car at, else None."""
+        return self._spot[0] if self.parked else None
 
     def configure(self, pickup: Optional[str], delivery: Optional[str]) -> None:
         """Start a new run, or stay idle while either letter is missing. A
@@ -474,6 +484,8 @@ class Mission:
         wanted = Path.DETOUR if LETTER_EXIT[self.target] == exit_number else Path.STRAIGHT
         logger.info("mission: exit %d sign #%d at %.1f m, target %s -> %s",
                     exit_number, sign.id, sign.distance_m, self.target, wanted.value)
+        self.decisions += 1
+        self.last_decision = (sign.id, exit_number, wanted)
         self._sign_ids = {sign.id}
         self._sign_distance = sign.distance_m
         self._sign_seen = now
@@ -558,7 +570,7 @@ class Mission:
             # Still telling the people at the dock that it is leaving: the
             # wait for a clear way starts once they have heard it all.
             dock.clear_since = None
-            return self._checking(dock, "announcing the departure", None)
+            return self._checking(dock, "announcing", "announcing the departure", None)
         announce = None
         if clear:
             if dock.clear_since is None:
@@ -572,7 +584,7 @@ class Mission:
                 dock.blocked_announced = True
                 announce = Announcement("blocked", dock.letter)
         waiting = "checking the way ahead" if clear else "waiting for the way ahead to clear"
-        return self._checking(dock, waiting, announce)
+        return self._checking(dock, "clearing" if clear else "blocked", waiting, announce)
 
     def _waiting(self, dock: Dock, now: float) -> MissionCommand:
         announce = None
@@ -588,9 +600,9 @@ class Mission:
         return MissionCommand(scale=0.0, hold=True, turn_signal=TurnSignal.HAZARD, state=MissionState.DOCKED,
                               scene=DockScene.WAITING, announce=announce, reason=reason)
 
-    def _checking(self, dock: Dock, waiting: str, announce: Optional[Announcement]) -> MissionCommand:
+    def _checking(self, dock: Dock, check: str, waiting: str, announce: Optional[Announcement]) -> MissionCommand:
         return MissionCommand(scale=0.0, hold=True, turn_signal=TurnSignal.LEFT, state=MissionState.CHECKING,
-                              scene=DockScene.CHECKING, announce=announce,
+                              scene=DockScene.CHECKING, announce=announce, check=check,
                               reason=f"leaving {dock.letter}, {waiting}")
 
     def _follow_lid(self, dock: Dock, now: float) -> None:
@@ -622,7 +634,7 @@ class Mission:
                 # Instead of "released": the truck is not about to move.
                 dock.lid_announced = True
                 announce = Announcement("close_lid", dock.letter)
-            return self._checking(dock, "waiting for the lid to close", announce)
+            return self._checking(dock, "lid", "waiting for the lid to close", announce)
         if dock.role is None or dock.weighed or dock.override or cargo.fault:
             return None
 
@@ -630,7 +642,7 @@ class Mission:
             dock.weighing_since = now
         if not cargo.stable and now - dock.weighing_since < _SETTLE_S:
             dock.clear_since = None
-            return self._checking(dock, "weighing the cargo", None)
+            return self._checking(dock, "weighing", "weighing the cargo", None)
 
         empty = cargo.grams < _EMPTY_G
         failed = {Stage.PICKUP: "empty" if empty else None,

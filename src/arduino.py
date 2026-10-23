@@ -26,6 +26,54 @@ class SonarReading:
   distances: tuple[Optional[int], ...] = ()
 
 
+@dataclass
+class MasterTelemetry:
+  """The master's `T` line: `T <angle_raw> <target_raw> <throttle_pwm>
+  <steer_pwm> <state R|W|E|F> <ms_since_cmd> [fault]`. A trailing field this
+  host does not know about (the steering fault char) is kept, not rejected."""
+  angle_raw: int
+  target_raw: int
+  throttle_pwm: int
+  steer_pwm: int
+  state: str
+  ms_since_command: int
+  fault: Optional[str]
+  received_at: float
+
+
+@dataclass
+class BatteryReading:
+  """The master's `B` line: `B <millivolts> <percent>`, once a second. The
+  firmware's own smoothed gauge (the LED bar); it reads low under load."""
+  volts: float
+  percent: int
+  received_at: float
+
+
+def parse_battery(line: str, now: float) -> Optional[BatteryReading]:
+  parts = line.split()
+  if len(parts) < 3 or parts[0] != "B":
+    return None
+  try:
+    millivolts, percent = int(parts[1]), int(parts[2])
+  except ValueError:
+    return None
+  return BatteryReading(millivolts / 1000.0, max(0, min(100, percent)), now)
+
+
+def parse_telemetry(line: str, now: float) -> Optional[MasterTelemetry]:
+  parts = line.split()
+  if len(parts) < 7 or parts[0] != "T" or parts[5] not in ("R", "W", "E", "F"):
+    return None
+  try:
+    angle, target, throttle, steer = (int(p) for p in parts[1:5])
+    ms_since = int(parts[6])
+  except ValueError:
+    return None
+  fault = parts[7] if len(parts) > 7 else None
+  return MasterTelemetry(angle, target, throttle, steer, parts[5], ms_since, fault, now)
+
+
 class _SerialPort:
   def __init__(self, baudrate: int):
     self._baudrate = baudrate
@@ -73,6 +121,10 @@ class _SerialPort:
       lines.append(line)
     return lines
 
+  @property
+  def is_open(self) -> bool:
+    return self._serial is not None
+
   def close(self):
     if self._serial is None:
       return
@@ -86,6 +138,15 @@ class Arduino:
     self._master = _SerialPort(baudrate)
     self._cargo: Optional[CargoReading] = None
     self._cargo_at = float("-inf")
+    # The latest `T` line, parsed in the same drain as the sonar: there is
+    # one reader of the serial port, never two competing for lines.
+    self.telemetry: Optional[MasterTelemetry] = None
+    # The latest `B` line; None until firmware that sends it says so.
+    self.battery: Optional[BatteryReading] = None
+
+  @property
+  def is_open(self) -> bool:
+    return self._master.is_open
 
   def set_master_port(self, port: str):
     self._master.open(port)
@@ -133,6 +194,14 @@ class Arduino:
         self._cargo = CargoReading(grams=grams, stable=bool(stable), lid_closed=bool(lid),
                                    unlocked=bool(unlocked), fault=bool(fault))
         self._cargo_at = time.monotonic()
+      elif line.startswith("T "):
+        telemetry = parse_telemetry(line, time.monotonic())
+        if telemetry is not None:
+          self.telemetry = telemetry
+      elif line.startswith("B "):
+        battery = parse_battery(line, time.monotonic())
+        if battery is not None:
+          self.battery = battery
       elif line.startswith("ERR"):
         logger.warning(f"master: {line}")
     return latest

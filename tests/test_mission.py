@@ -676,6 +676,28 @@ def test_unsettled_weight_is_judged_after_a_while():
     assert drive.mission.stage is Stage.DELIVERY
 
 
+def test_checking_names_what_holds_the_truck():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo(LOADED, lid=False, stable=False)
+    drive.dock_at("C")
+    assert drive.commands[-1].state is MissionState.DOCKED and drive.commands[-1].check is None
+    drive.mission.release(drive.now)
+    assert drive.frame().check == "lid"
+    drive.cargo = cargo(LOADED, stable=False)
+    assert drive.frame().check == "weighing"
+    drive.cargo = cargo(LOADED)
+    drive.quiet = False
+    assert drive.frame().check == "announcing"
+    drive.quiet = True
+    drive.clear = False
+    assert drive.frame().check == "blocked"
+    drive.clear = True
+    assert drive.frame().check == "clearing"
+    held = leave(drive)
+    assert {c.check for c in held} == {"clearing"}
+    assert drive.frame().check is None
+
+
 def test_scale_fault_skips_the_weight():
     drive = Drive("C", "A", auto_release=False)
     drive.cargo = cargo(0, fault=True)

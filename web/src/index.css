@@ -1,0 +1,90 @@
+@import 'tailwindcss';
+
+@theme static {
+  --color-*: initial;
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  --color-page: #e9eaee;
+  --color-panel: #ffffff;
+  --color-well: #cfd1d7;
+  --color-fill: #eceef1;
+  --color-line: #e1e3e8;
+  --color-line-strong: #cdd0d6;
+
+  --color-ink: #16171a;
+  --color-ink-2: #5d6068;
+  --color-ink-3: #6b6e76;
+
+  --color-accent: #0fa898;
+  --color-accent-ink: #0b7a6f;
+
+  --color-stop: #e5484d;
+  --color-stop-ink: #c8252b;
+  --color-stop-soft: #fde4e4;
+  --color-warn: #f0a020;
+  --color-warn-ink: #8c5300;
+  --color-warn-soft: #fcf2df;
+  --color-ok: #2fbf71;
+
+  --color-world: #e6e3dc;
+  --color-road: #fcfbf9;
+  --color-marking: #8e897f;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
+  --text-base: 14px;
+  --text-base--line-height: 20px;
+  --text-md: 15px;
+  --text-lg: 16px;
+  --text-xl: 17px;
+  --text-readout: 88px;
+  --text-readout--line-height: 0.9;
+
+  --shadow-float: 0 4px 20px rgb(20 22 30 / 0.08);
+  --shadow-raised: 0 8px 32px rgb(20 22 30 / 0.12);
+  --shadow-card: 0 8px 24px rgb(20 22 30 / 0.16);
+}
+
+@utility float {
+  background: rgb(255 255 255 / 0.82);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-float);
+}
+
+@utility float-raised {
+  background: rgb(255 255 255 / 0.88);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow-raised);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--color-page);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    touch-action: manipulation;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
