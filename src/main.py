@@ -142,7 +142,7 @@ parser.add_argument("--camera", type=int, default=3, help="camera index when not
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 parser.add_argument("--no-voice", action="store_true", help="no spoken prompts at the docks")
 parser.add_argument("--voice", help='dock prompt voice: a `say` voice name, or "system" for the Mac\'s system voice (e.g. a Siri voice); default Luciana')
-parser.add_argument("--dashboard-port", type=int, default=8000, help="operator dashboard port (default 8000)")
+parser.add_argument("--dashboard-port", type=int, default=80, help="operator dashboard port (default 80)")
 parser.add_argument("--no-dashboard", action="store_true", help="do not start the operator dashboard server")
 args = parser.parse_args()
 

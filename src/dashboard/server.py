@@ -42,7 +42,7 @@ Build it once on this machine (no internet is needed afterwards):</p>
 
 
 class DashboardServer:
-    def __init__(self, hub: Hub, host: Optional[str] = None, port: int = 8000, dist: FilePath = DIST_DIR):
+    def __init__(self, hub: Hub, host: Optional[str] = None, port: int = 80, dist: FilePath = DIST_DIR):
         self._hub = hub
         self._host = host
         self._port = port
