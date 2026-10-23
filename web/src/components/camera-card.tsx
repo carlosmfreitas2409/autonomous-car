@@ -2,6 +2,7 @@ import { useRef } from 'react';
 
 import { type VideoSource, useVideo } from '@/hooks/use-video';
 import type { CartState } from '@/types';
+import { isSpeedTest } from '@/utils/challenge';
 import { cn } from '@/utils/cn';
 
 import { Button } from './ui/button';
@@ -27,6 +28,7 @@ function overlayMessage(
 ) {
   if (!isConnected) return 'Sem conexão de vídeo';
   if (source === 'drive' && state?.drive.estopped) return 'Pausada com o caminhão parado';
+  if (source === 'signs' && state && isSpeedTest(state)) return 'Pausada na prova de velocidade';
   if (source === 'signs' && state && !state.signs.camera_open) {
     return state.signs.status
       ? `Câmera de placas: ${state.signs.status}`

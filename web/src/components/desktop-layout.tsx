@@ -63,7 +63,7 @@ export function DesktopLayout({ link }: DesktopLayoutProps) {
         </div>
       </div>
 
-      {live?.drive.mode === 'autonomous' && (
+      {live?.drive.mode === 'autonomous' && live.challenge !== 'speed' && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2">
           <PathControl state={live} />
         </div>

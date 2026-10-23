@@ -13,7 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from cargo import CargoReading
-from config import Config
+from challenge import Challenge
+from config import SPEED_TEST, Config
 from input.mission import LETTERS, LETTER_EXIT, Mission, MissionCommand, Stage, _exit_after
 from input.sign_policy import SignConstraint
 from lights import LightsController, LightsOutput, StripEffect, TurnSignal
@@ -28,6 +29,9 @@ CONTRACT_VERSION = 3
 EST_MPS_AT_FULL_PWM: Optional[float] = None
 
 _EXITS = (1, 2)
+
+# What each stage's sliders start at, for the dashboard's "restore".
+_STAGE_DEFAULTS = {Challenge.DELIVERY: Config(), Challenge.SPEED: SPEED_TEST}
 
 
 def layout() -> dict:
@@ -172,10 +176,13 @@ def build_state(*, now: float, fps: float, estopped: bool, manual: bool,
                 applied: bool, guard, lights_output: Optional[LightsOutput], lights_signal: Optional[TurnSignal],
                 telemetry, serial_open: bool, battery=None,
                 lights_controller: Optional[LightsController] = None,
-                tuning: Optional[dict] = None, cargo: Optional[CargoReading] = None) -> dict:
+                tuning: Optional[dict] = None, cargo: Optional[CargoReading] = None,
+                challenge: Challenge = Challenge.DELIVERY) -> dict:
     """One state message. `perc` is None while e-stopped (the drive camera is
     not read then); `roi` is (x0, x1) as fractions of the frame width. `stop`
-    is status.stop_cause's (source, text), None while nothing stops the car."""
+    is status.stop_cause's (source, text), None while nothing stops the car.
+    `tuning` is the stage's own PID and speeds, as is every default."""
+    defaults = _STAGE_DEFAULTS[challenge]
     fw = None
     if telemetry is not None:
         fw = {
@@ -250,6 +257,7 @@ def build_state(*, now: float, fps: float, estopped: bool, manual: bool,
         "type": "state",
         "version": CONTRACT_VERSION,
         "t": round(now, 3),
+        "challenge": challenge.value,
         "drive": {
             "mode": "manual" if manual else "autonomous",
             "estopped": estopped,
@@ -314,11 +322,11 @@ def build_state(*, now: float, fps: float, estopped: bool, manual: bool,
         "speed": None if tuning is None else {
             "base": _round(tuning["base_speed"]),
             "min": _round(tuning["min_speed"]),
-            "defaults": {"base": Config.base_speed, "min": Config.min_speed},
+            "defaults": {"base": defaults.base_speed, "min": defaults.min_speed},
         },
         "pid": None if tuning is None else {
             **{gain: _round(tuning[gain], 5) for gain in PID_MAX},
-            "defaults": {gain: getattr(Config, gain) for gain in PID_MAX},
+            "defaults": {gain: getattr(defaults, gain) for gain in PID_MAX},
             "max": PID_MAX,
         },
         # The firmware's battery gauge; None until a `B` line has arrived.
@@ -333,6 +341,7 @@ def build_state(*, now: float, fps: float, estopped: bool, manual: bool,
 # --- commands --------------------------------------------------------------
 
 _PATHS = {p.value: p for p in Path}
+_CHALLENGES = {c.value: c for c in Challenge}
 _SIGNALS = {s.value: s for s in TurnSignal}
 _STRIPS = {"auto": None, **{e.name.lower(): e for e in StripEffect}}
 _LIGHT_SWITCHES = ("drl", "low_beam", "logo", "projector")
@@ -379,6 +388,11 @@ def parse_command(message: Any) -> Optional[Command]:
         if path is None:
             return None
         return Command("path", id=command_id, args={"path": path})
+    if kind == "challenge":
+        challenge = _CHALLENGES.get(message.get("challenge"))
+        if challenge is None:
+            return None
+        return Command("challenge", id=command_id, args={"challenge": challenge})
     if kind == "mission":
         pickup, delivery = message.get("pickup"), message.get("delivery")
         if pickup not in LETTERS + (None,) or delivery not in LETTERS + (None,):

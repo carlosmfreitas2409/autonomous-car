@@ -167,6 +167,7 @@ class Dock:
         self.weighing_since: Optional[float] = None
         self.weighed = False
         self.lid_announced = False
+        self.departure_announced = False
 
     def unrelease(self) -> None:
         self.released_at = None
@@ -175,6 +176,7 @@ class Dock:
         self.weighing_since = None
         self.weighed = False
         self.lid_announced = False
+        self.departure_announced = False
 
 
 class _Approach:
@@ -566,12 +568,17 @@ class Mission:
             command.announce = Announcement(self._dock_key("docked", Stage.DELIVERY), dock.letter)
             return command
 
+        # "Leaving" is only said once the checks have passed: a pickup that
+        # weighs empty waits again, and a delivery never leaves.
+        announce = None
+        if not dock.departure_announced:
+            dock.departure_announced = True
+            announce = Announcement(self._dock_key("released"), dock.letter)
         if not self._quiet:
             # Still telling the people at the dock that it is leaving: the
             # wait for a clear way starts once they have heard it all.
             dock.clear_since = None
-            return self._checking(dock, "announcing", "announcing the departure", None)
-        announce = None
+            return self._checking(dock, "announcing", "announcing the departure", announce)
         if clear:
             if dock.clear_since is None:
                 dock.clear_since = now
@@ -580,7 +587,7 @@ class Mission:
         else:
             dock.clear_since = None
             # From the frame after "released", which it would otherwise replace.
-            if not dock.blocked_announced and self._last_state is MissionState.CHECKING:
+            if not dock.blocked_announced and announce is None:
                 dock.blocked_announced = True
                 announce = Announcement("blocked", dock.letter)
         waiting = "checking the way ahead" if clear else "waiting for the way ahead to clear"
@@ -660,9 +667,9 @@ class Mission:
         command.announce = Announcement(failed, dock.letter)
         return command
 
-    def _dock_key(self, what: str, role: Stage) -> str:
-        """The dock's prompt: with the compartment it says to open and shut the lid."""
-        return f"{what}_{role.value}" + ("_lid" if self._cargo is not None else "")
+    def _dock_key(self, what: str, role: Optional[Stage] = None) -> str:
+        """The dock's prompt: with the compartment it talks about the lid."""
+        return what + ("" if role is None else f"_{role.value}") + ("_lid" if self._cargo is not None else "")
 
     def _depart(self, now: float) -> MissionCommand:
         dock = self.dock
@@ -699,8 +706,6 @@ class Mission:
     def _announce_change(self, state: MissionState) -> Optional[Announcement]:
         if state is MissionState.DOCKED and self.dock.role is not None:
             return Announcement(self._dock_key("docked", self.dock.role), self.dock.letter)
-        if state is MissionState.CHECKING:
-            return Announcement("released", self.dock.letter)
         if state is MissionState.DONE and self._delivered_at is not None:
             return Announcement("delivered", self._spot[0])
         return None

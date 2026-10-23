@@ -3,14 +3,13 @@
 
     python tools/voice_preview.py                   # every prompt, the car's voice
     python tools/voice_preview.py released blocked  # just these
-    python tools/voice_preview.py --voice Eddy      # try another voice
-    python tools/voice_preview.py --voice system    # the Mac's system voice (can be a Siri voice)
+    python tools/voice_preview.py --voice Luciana   # try a `say` voice instead
     python tools/voice_preview.py --list            # the Brazilian voices installed
     python tools/voice_preview.py --save .context/voice   # .aiff files to play later
 
-Better voices: System Settings > Accessibility > Spoken Content > System voice
-> Manage Voices > Portuguese (Brazil), download "Luciana (Enhanced)" or
-"(Premium)". The car picks it up by itself on the next start.
+The car speaks in the Mac's system voice: System Settings > Accessibility >
+Spoken Content > System voice, Portuguese (Brazil), pick a Siri voice there.
+`say -v` cannot name Siri voices, so --list does not show them.
 """
 
 import argparse
@@ -21,11 +20,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from voice import TEXT, _pick_voice, brazilian_voices  # noqa: E402
+from voice import TEXT, brazilian_voices  # noqa: E402
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("keys", nargs="*", help=f"prompts to say (default all): {', '.join(TEXT)}")
-parser.add_argument("--voice", help="a `say` voice name instead of the car's; \"system\" for the Mac's system voice")
+parser.add_argument("--voice", help="a `say` voice name instead of the Mac's system voice")
 parser.add_argument("--letter", default="A", help="the dock letter in the prompts (default A)")
 parser.add_argument("--list", action="store_true", help="list the Brazilian Portuguese voices and exit")
 parser.add_argument("--save", help="write one .aiff per prompt into this folder instead of speaking")
@@ -38,7 +37,7 @@ if args.list:
     print("\n".join(brazilian_voices(say)) or "No pt_BR voice installed.")
     sys.exit()
 
-voice = None if args.voice == "system" else args.voice or _pick_voice(say)
+voice = None if args.voice == "system" else args.voice
 keys = args.keys or list(TEXT)
 unknown = [k for k in keys if k not in TEXT]
 if unknown:
@@ -46,7 +45,7 @@ if unknown:
 if args.save:
     Path(args.save).mkdir(parents=True, exist_ok=True)
 
-print(f"voice: {voice or 'system default'}")
+print(f"voice: {voice or 'system voice'}")
 for key in keys:
     text = TEXT[key].format(letter=args.letter)
     print(f"{key:16} {text}")

@@ -42,6 +42,7 @@ export const CHECK_FAILED_TEXT = {
 const COMMANDS: Record<string, string> = {
   estop: 'Parar',
   mode: 'Modo',
+  challenge: 'Prova',
   path: 'Trajeto',
   mission: 'Entrega',
   lights: 'Luzes',
@@ -55,6 +56,8 @@ const REFUSALS: Record<string, string> = {
   'e-stopped, resume first': 'Caminhão parado, retome primeiro',
   'e-stop first': 'Pare o caminhão primeiro',
   'no docks in the speed test': 'Sem docas na prova de velocidade',
+  'the stage can only be changed while e-stopped': 'Pare o caminhão para trocar a prova',
+  'the speed test drives Straight only': 'A prova de velocidade só segue reto',
   'not leaving a dock': 'O caminhão não está saindo da doca',
   'pickup/delivery can only be changed while e-stopped or parked at a delivery':
     'Pare o caminhão para mudar a entrega',

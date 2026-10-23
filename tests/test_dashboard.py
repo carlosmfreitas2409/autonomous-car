@@ -9,7 +9,8 @@ import pytest
 
 from arduino import parse_battery, parse_telemetry
 from cargo import CargoReading
-from config import Config
+from challenge import Challenge
+from config import SPEED_TEST, Config
 from dashboard.contract import (PID_MAX, build_state, layout, light_settings, next_decision, parse_command,
                                 route_progress, segment)
 from dashboard.hub import Hub
@@ -43,7 +44,7 @@ def _perc():
 
 
 def _state(estopped=True, manual=False, perc=None, mission=None, telemetry=None, battery=None, lights_controller=None,
-           tuning=None, mission_command=None, cargo=None, stop=None):
+           tuning=None, mission_command=None, cargo=None, stop=None, challenge=Challenge.DELIVERY):
     lights = LightsController()
     lights.update(0.4, estopped=False, autonomous=True)
     return build_state(
@@ -55,7 +56,7 @@ def _state(estopped=True, manual=False, perc=None, mission=None, telemetry=None,
         constraint=SignConstraint(), mission=mission or Mission(), mission_command=mission_command or MissionCommand(),
         applied=True, guard=ObstacleGuard(), lights_output=lights.compute(), lights_signal=None,
         telemetry=telemetry, serial_open=False, battery=battery, lights_controller=lights_controller,
-        tuning=tuning, cargo=cargo,
+        tuning=tuning, cargo=cargo, challenge=challenge,
     )
 
 
@@ -218,6 +219,7 @@ def test_stop_text_priority_matches_the_old_inline_logic():
     {"type": "speed", "base": 0.5, "min": float("nan")},
     {"type": "pid"}, {"type": "pid", "kp": "x"}, {"type": "pid", "kd": None},
     {"type": "dock"}, {"type": "dock", "action": "leave"}, {"type": "dock", "action": "release"},
+    {"type": "challenge"}, {"type": "challenge", "challenge": "drift"},
 ])
 def test_malformed_commands_are_rejected(message):
     assert parse_command(message) is None
@@ -232,6 +234,7 @@ def test_commands_parse_and_clamp():
     assert parse_command({"type": "mission", "pickup": "A", "delivery": None}).args == {"pickup": "A", "delivery": None}
     assert parse_command({"type": "dock", "action": "wait", "id": 9}).args == {"action": "wait"}
     assert parse_command({"type": "open_cargo"}).type == "open_cargo"
+    assert parse_command({"type": "challenge", "challenge": "speed"}).args == {"challenge": Challenge.SPEED}
 
 
 def test_lights_command_names_the_controller_attributes_it_sets():
@@ -266,6 +269,15 @@ def test_state_carries_the_loops_tuning_and_its_defaults():
     assert state["pid"] == {"kp": 0.03, "ki": 0.001, "kd": 0.0027,
                             "defaults": {"kp": defaults.kp, "ki": defaults.ki, "kd": defaults.kd}, "max": PID_MAX}
     assert _state()["speed"] is None and _state()["pid"] is None
+
+
+def test_state_names_the_stage_and_its_own_defaults():
+    tuning = {"kp": 0.03, "ki": 0.001, "kd": 0.0027, "base_speed": 0.4, "min_speed": 0.3}
+    assert _state(tuning=tuning)["challenge"] == "delivery"
+    state = _state(tuning=tuning, challenge=Challenge.SPEED)
+    assert state["challenge"] == "speed"
+    assert state["speed"]["defaults"] == {"base": SPEED_TEST.base_speed, "min": SPEED_TEST.min_speed}
+    assert state["pid"]["defaults"] == {"kp": SPEED_TEST.kp, "ki": SPEED_TEST.ki, "kd": SPEED_TEST.kd}
 
 
 def test_state_carries_the_operators_light_settings_apart_from_the_lamps():

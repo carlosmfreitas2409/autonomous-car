@@ -7,6 +7,8 @@ import { Button } from '../ui/button';
 import { CargoStatus } from './cargo-status';
 import { DockCard } from './dock-card';
 import { LetterPicker } from './letter-picker';
+import { SpeedCard } from './speed-card';
+import { StageSwitch } from './stage-switch';
 import { TrackMap } from './track-map';
 import { TurnIcon } from './turn-icon';
 import {
@@ -30,14 +32,15 @@ interface DeliveryHeaderProps {
 
 interface DeliveryCardProps {
   isBare: boolean;
+  label?: string;
   className?: string;
   children: React.ReactNode;
 }
 
-function DeliveryCard({ isBare, className, children }: DeliveryCardProps) {
+function DeliveryCard({ isBare, label = 'Entrega', className, children }: DeliveryCardProps) {
   return (
     <section
-      aria-label="Entrega"
+      aria-label={label}
       className={cn(
         isBare
           ? 'flex w-full flex-col gap-4'
@@ -60,6 +63,21 @@ export function DeliveryPanel({ state, layout, isStale, isBare = false }: Delive
     );
   }
 
+  const stageSwitch = state.challenge && <StageSwitch state={state} />;
+
+  if (state.challenge === 'speed') {
+    return (
+      <DeliveryCard
+        isBare={isBare}
+        label="Prova de velocidade"
+        className={cn(isStale && 'opacity-50 grayscale')}
+      >
+        {stageSwitch}
+        <SpeedCard state={state} />
+      </DeliveryCard>
+    );
+  }
+
   const mission = state.mission;
   const status = deliveryStatus(state);
   const handlers: Record<NonNullable<DeliveryAction>, () => void> = {
@@ -70,6 +88,7 @@ export function DeliveryPanel({ state, layout, isStale, isBare = false }: Delive
 
   return (
     <DeliveryCard isBare={isBare} className={cn(isStale && 'opacity-50 grayscale')}>
+      {stageSwitch}
       {mission.dock ? (
         <DockCard state={state} />
       ) : (

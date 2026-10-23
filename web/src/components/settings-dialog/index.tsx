@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import type { CartState } from '@/types';
+import type { CartState, Challenge } from '@/types';
 import { cn } from '@/utils/cn';
 
 import { Button } from '../ui/button';
@@ -11,6 +11,11 @@ import { LightsSection } from './lights-section';
 import { PidSection } from './pid-section';
 import { SpeedSection } from './speed-section';
 import { StripPicker } from './strip-picker';
+
+const STAGE_TUNING: Record<Challenge, string> = {
+  delivery: 'Velocidade e PID da prova de entrega',
+  speed: 'Velocidade e PID da prova de velocidade',
+};
 
 interface SettingsButtonProps {
   state: CartState | null;
@@ -49,9 +54,16 @@ export function SettingsButton({ state, className }: SettingsButtonProps) {
       <Dialog isOpen={isOpen} aria-labelledby="settings-title" onClose={() => setIsOpen(false)}>
         <div className="flex max-h-[calc(100dvh-32px)] w-[min(880px,calc(100vw-32px))] flex-col gap-6 overflow-auto rounded-3xl bg-panel p-6 shadow-raised">
           <header className="flex items-center justify-between gap-4">
-            <h2 id="settings-title" className="text-xl font-semibold tracking-tight">
-              Ajustes
-            </h2>
+            <div className="flex flex-col gap-1">
+              <h2 id="settings-title" className="text-xl font-semibold tracking-tight">
+                Ajustes
+              </h2>
+              {state?.challenge && (
+                <p className="text-sm text-ink-2">
+                  {STAGE_TUNING[state.challenge]}. Cada prova guarda os seus.
+                </p>
+              )}
+            </div>
             <Button size="icon" aria-label="Fechar" onClick={() => setIsOpen(false)}>
               <svg
                 aria-hidden

@@ -4,7 +4,6 @@ import csv
 import cv2 as cv
 import logging
 import signal
-import threading
 import time
 
 from arduino import Arduino
@@ -17,6 +16,7 @@ from dataclasses import replace
 from cargo import ManualOpen
 from challenge import Challenge
 from config import SPEED_TEST, Config
+from frame_source import FrameSource
 from lights import LightsController, TurnSignal
 from obstacle import ObstacleGuard
 from perception.line_tracking import LineTracker
@@ -74,63 +74,6 @@ def draw_throttle_bar(frame, throttle):
             cv.rectangle(frame, (bar_x - 5, bar_cy), (bar_x + 5, bar_cy + fill_h), color, -1)
 
 
-class FrameSource:
-    """The newest camera frame, read on its own thread.
-
-    The camera delivers 30 fps and the control loop runs slower, so a frame
-    read in the loop is the oldest one in the driver's buffer: several frames
-    (100-170 ms) stale, on top of the loop period itself. On the straight-lap
-    recording of 2026-10-01 the car weaved with a 2.5-3 s period and the
-    wheel at full lock half the time, the signature of a bang-bang loop with
-    too much delay. Reading on a thread keeps the loop fed with the latest
-    frame and takes the read's own cost out of the loop. Video replay stays
-    sequential so a recording replays frame for frame.
-    """
-
-    def __init__(self, cap, live: bool):
-        self._cap = cap
-        self._live = live
-        self._lock = threading.Condition()
-        self._frame = None
-        self._seq = 0
-        self._failed = False
-        self._thread = None
-        if live:
-            self._thread = threading.Thread(target=self._run, daemon=True)
-            self._thread.start()
-
-    def _run(self):
-        while True:
-            ok, frame = self._cap.read()
-            with self._lock:
-                if ok:
-                    self._frame = frame
-                    self._seq += 1
-                    self._failed = False
-                else:
-                    self._failed = True
-                self._lock.notify_all()
-            if not ok:
-                time.sleep(0.01)
-
-    def read(self, timeout: float = 0.5):
-        """(ok, frame): the newest frame not yet handed out."""
-        if not self._live:
-            return self._cap.read()
-        with self._lock:
-            seen = getattr(self, "_handed", 0)
-            deadline = time.monotonic() + timeout
-            while self._seq == seen and not self._failed:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return False, None
-                self._lock.wait(remaining)
-            if self._seq == seen:
-                return False, None
-            self._handed = self._seq
-            return True, self._frame
-
-
 _LOG_FIELDS = ("t", "frame", "path", "lane_state", "rows", "both_rows", "offset", "curvature", "error", "steering", "throttle", "holding", "profile", "stop_reason", "sonar", "sonar_lr", "obstacle", "mission_stage", "target", "next_exit", "mission_state", "fork", "kp", "kd", "ema", "roi", "base_speed", "min_speed", "far_offset", "far_curvature", "cargo", "challenge")
 
 
@@ -141,7 +84,7 @@ parser.add_argument("--flip", action="store_true", help="mirror frames left-righ
 parser.add_argument("--camera", type=int, default=3, help="camera index when not replaying a video (default 2)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 parser.add_argument("--no-voice", action="store_true", help="no spoken prompts at the docks")
-parser.add_argument("--voice", help='dock prompt voice: a `say` voice name, or "system" for the Mac\'s system voice (e.g. a Siri voice); default Luciana')
+parser.add_argument("--voice", help="dock prompt voice: a `say` voice name (e.g. Luciana); default the Mac's system voice, where a Siri voice is chosen")
 parser.add_argument("--dashboard-port", type=int, default=80, help="operator dashboard port (default 80)")
 parser.add_argument("--no-dashboard", action="store_true", help="do not start the operator dashboard server")
 args = parser.parse_args()
@@ -204,6 +147,9 @@ frame_w = round(first_frame.shape[1] / ratio)
 frame_h = round(first_frame.shape[0] / ratio)
 cap.set(cv.CAP_PROP_POS_FRAMES, 0)
 source = FrameSource(cap, live=not args.video)
+# Also on an exception: a capture left to the interpreter's shutdown is
+# released under the reader thread just the same.
+atexit.register(source.close)
 
 gui = TunerGUI(config, frame_w, frame_h)
 arduino = Arduino()
@@ -292,6 +238,26 @@ def set_manual(on):
         logger.info("Mode: manual" if on else "Mode: autonomous")
 
 
+def set_challenge(requested):
+    """Switch the stage, only while e-stopped. Each stage keeps its own PID
+    and speeds, and starts from home with the detour state forgotten.
+    Returns why it was refused, or None."""
+    global challenge, tuning, path, detour_return, fork_watch, fork_passed
+    if requested is challenge:
+        return None
+    if not estopped:
+        return "the stage can only be changed while e-stopped"
+    challenge = requested
+    tuning = tunings[challenge]
+    path = HOME_PATH
+    detour_return = DetourReturn()
+    fork_watch = ForkWatch()
+    fork_passed = False
+    sign_worker.set_paused(challenge is Challenge.SPEED)
+    logger.info(f"Stage: {challenge.value}")
+    return None
+
+
 def letters_refusal(letters):
     """Why a new (pickup, delivery) is refused, or None. Parked after a
     delivery, the next order is given where it stands; clearing both letters
@@ -307,7 +273,7 @@ def dock_request(request, now):
     or None."""
     if estopped:
         return "e-stopped, resume first"
-    if speed_test:
+    if challenge is Challenge.SPEED:
         return "no docks in the speed test"
     return mission.release(now) if request == "release" else mission.hold_departure()
 
@@ -334,8 +300,13 @@ def apply_dashboard_commands(now):
             set_estop(command.args["engaged"])
         elif command.type == "mode":
             set_manual(command.args["manual"])
+        elif command.type == "challenge":
+            reason = set_challenge(command.args["challenge"])
         elif command.type == "path":
-            requested_path = command.args["path"]
+            if challenge is Challenge.SPEED:
+                reason = "the speed test drives Straight only"
+            else:
+                requested_path = command.args["path"]
         elif command.type == "lights":
             for name, value in command.args.items():
                 setattr(lights, name, value)
@@ -369,7 +340,7 @@ def publish(perc, steering, throttle, stop, constraint, mission_command, lights_
         snapshot=snapshot, constraint=constraint, mission=mission, mission_command=mission_command,
         applied=applied, guard=obstacle_guard, lights_output=lights_output, lights_signal=lights.signal_override,
         telemetry=arduino.telemetry, serial_open=arduino.is_open, battery=arduino.battery,
-        lights_controller=lights, tuning=tuning, cargo=cargo,
+        lights_controller=lights, tuning=tuning, cargo=cargo, challenge=challenge,
     )
     hub.publish(state, None if perc is None else perc.display_frame, snapshot.frame)
 
@@ -395,20 +366,12 @@ while gui.is_running():
     tuning.update(gui.poll_tuning_request())
 
     requested_challenge = gui.poll_challenge_request()
-    if requested_challenge is not None and requested_challenge is not challenge:
-        if estopped:
-            challenge = requested_challenge
-            tuning = tunings[challenge]
-            path = HOME_PATH
-            detour_return = DetourReturn()
-            fork_watch = ForkWatch()
-            fork_passed = False
-            sign_worker.set_paused(challenge is Challenge.SPEED)
-            logger.info(f"Stage: {challenge.value}")
-        else:
-            logger.warning("The stage can only be changed while e-stopped")
-    speed_test = challenge is Challenge.SPEED
+    if requested_challenge is not None:
+        refused = set_challenge(requested_challenge)
+        if refused:
+            logger.warning(f"Stage change refused: {refused}")
     dashboard_path = apply_dashboard_commands(now)
+    speed_test = challenge is Challenge.SPEED
 
     # Path buttons are read before the stopped branch so the Detour can be
     # armed while the car waits at the sign.
@@ -659,7 +622,7 @@ while gui.is_running():
     gui.render_frame()
 
 _close_recording()
-cap.release()
+source.close()
 if dashboard is not None:
     dashboard.stop()
 sign_worker.close()

@@ -1,4 +1,12 @@
-import type { CartState, Command, Letter, LightSettings, PathName, PidGains } from '@/types';
+import type {
+  CartState,
+  Challenge,
+  Command,
+  Letter,
+  LightSettings,
+  PathName,
+  PidGains,
+} from '@/types';
 
 import { sendCommand } from './control-socket';
 
@@ -21,6 +29,10 @@ export function driveAutonomous(state: CartState) {
 
 export function driveManual(state: CartState) {
   driveIn(state, { type: 'mode', mode: 'manual' });
+}
+
+export function setChallenge(challenge: Challenge) {
+  sendCommand({ type: 'challenge', challenge });
 }
 
 export function setPath(path: PathName) {

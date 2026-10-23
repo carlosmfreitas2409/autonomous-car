@@ -114,6 +114,16 @@ describe('system status', () => {
     expect(r.ready).toBeNull();
     expect(r.blocker).toBeNull();
   });
+  test('in the speed test, needs no letters, sonar or sign camera', () => {
+    const s = state({ estopped: true, stage: 'idle' });
+    s.challenge = 'speed';
+    s.obstacle = { ...s.obstacle, label: 'no data' };
+    s.signs = { ...s.signs, camera_open: false, status: 'paused' };
+    const r = checkHealth(input(s));
+    expect(r.ready).toBe(true);
+    expect(tone(r, 'Sonar')).toBe('none');
+    expect(tone(r, 'Câmera de placas')).toBe('none');
+  });
   test('flags a lost link and has no verdict without a state', () => {
     const r = checkHealth(input(null, { isConnected: false }));
     expect(tone(r, 'Conexão')).toBe('bad');

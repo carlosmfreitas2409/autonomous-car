@@ -1,4 +1,4 @@
-import type { Obstacle, PathName, StripEffect } from '@/types';
+import type { Challenge, Obstacle, PathName, StripEffect } from '@/types';
 
 export const CONTRACT_VERSION = 3;
 
@@ -8,6 +8,11 @@ export const PATH_NAMES: Record<PathName, string> = {
   normal: 'Normal',
   straight: 'Reto',
   detour: 'Desvio',
+};
+
+export const CHALLENGE_NAMES: Record<Challenge, string> = {
+  delivery: 'Entrega',
+  speed: 'Velocidade',
 };
 
 export const SONAR_NAMES: Record<Obstacle['label'], string> = {

@@ -33,6 +33,9 @@ function describe(state: CartState | null, isConnected: boolean): Status {
   const stopped = stopTitle(state);
   if (stopped) return { title: stopped, hint: '', tone: 'stop' };
   if (drive.mode === 'manual') return { title: 'Manual', hint: '', tone: 'manual' };
+  if (state.challenge === 'speed') {
+    return { title: 'Autônomo', hint: 'prova de velocidade', tone: 'autonomous' };
+  }
 
   const { stage, pickup, delivery } = state.mission;
   if (stage === 'pickup' || stage === 'delivery') {

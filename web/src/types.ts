@@ -1,4 +1,5 @@
 export type Mode = 'autonomous' | 'manual';
+export type Challenge = 'delivery' | 'speed';
 export type PathName = 'normal' | 'straight' | 'detour';
 export type Letter = 'A' | 'B' | 'C';
 export type FirmwareState = 'R' | 'W' | 'E' | 'F';
@@ -214,6 +215,7 @@ export interface CartState {
   type: 'state';
   version: number;
   t: number;
+  challenge?: Challenge;
   drive: Drive;
   path: PathStatus;
   lane: Lane | null;
@@ -251,6 +253,7 @@ export interface Reply {
 export type Command =
   | { type: 'estop'; engaged: boolean }
   | { type: 'mode'; mode: Mode }
+  | { type: 'challenge'; challenge: Challenge }
   | { type: 'path'; path: PathName }
   | { type: 'mission'; pickup: Letter | null; delivery: Letter | null }
   | { type: 'dock'; action: 'wait' }

@@ -114,6 +114,16 @@ describe('world alerts', () => {
     s.obstacle = { ...s.obstacle, label: 'slow' };
     expect(worldAlerts(s)).toEqual([{ text: 'Obstáculo · reduzindo', tone: 'warn' }]);
   });
+  test('in the speed test, leave out the guard, the signs and the mission', () => {
+    const s = healthy();
+    s.challenge = 'speed';
+    s.obstacle = { ...s.obstacle, stopped: true, label: 'stop' };
+    s.signs = { ...s.signs, camera_open: false, status: 'paused' };
+    s.mission = { ...s.mission, state: 'slowing' };
+    expect(worldAlerts(s)).toEqual([]);
+    s.lane = { ...s.lane!, offset_px: null };
+    expect(worldAlerts(s).map((a) => a.text)).toEqual(['Faixa perdida']);
+  });
   test('leave confirmed signs to the world view', () => {
     const s = healthy();
     s.signs.tracks = [

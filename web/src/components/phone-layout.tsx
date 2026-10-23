@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { CHALLENGE_NAMES } from '@/constants';
 import type { CartLink } from '@/hooks/use-cart-link';
 import { cn } from '@/utils/cn';
 import { type Tone, checkHealth, summarizeHealth } from '@/utils/health';
@@ -45,10 +46,13 @@ export function PhoneLayout({ link, isShort }: PhoneLayoutProps) {
   }, [dockKey]);
   const health = summarizeHealth(checkHealth(link));
   const isAutonomous = state?.drive.mode !== 'manual';
+  const challenge = state?.challenge ?? 'delivery';
 
   const tabs: { id: Tab; label: string; dot: string | null }[] = [
-    { id: 'delivery', label: 'Entrega', dot: dock ? 'bg-accent' : null },
-    ...(isAutonomous ? [{ id: 'path' as const, label: 'Trajeto', dot: null }] : []),
+    { id: 'delivery', label: CHALLENGE_NAMES[challenge], dot: dock ? 'bg-accent' : null },
+    ...(isAutonomous && challenge !== 'speed'
+      ? [{ id: 'path' as const, label: 'Trajeto', dot: null }]
+      : []),
     { id: 'health', label: 'Sistema', dot: ATTENTION_DOT[health.tone] },
     { id: 'cameras', label: 'Câmeras', dot: null },
   ];

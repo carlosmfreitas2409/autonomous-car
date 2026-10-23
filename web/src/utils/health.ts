@@ -1,6 +1,7 @@
 import { PATH_NAMES, SONAR_NAMES } from '@/constants';
 import type { CartState, FirmwareState } from '@/types';
 
+import { isSpeedTest } from './challenge';
 import { formatNumber } from './format';
 
 const FIRMWARE_STATE_NAMES: Record<FirmwareState, string> = {
@@ -45,11 +46,14 @@ export function checkHealth({ state, isConnected, isStale, ageS, rttMs }: Health
   const { drive, health, obstacle, signs, mission, path } = state;
   const fw = drive.fw;
   const sonarOk = !obstacle.stale && obstacle.label !== 'no data';
+  const isSpeed = isSpeedTest(state);
 
   const checks: Check[] = [
     link,
     controllerCheck(state),
-    { label: 'Sonar', value: SONAR_NAMES[obstacle.label], tone: sonarOk ? 'ok' : 'bad' },
+    isSpeed
+      ? { label: 'Sonar', value: 'fora da prova', tone: 'none' }
+      : { label: 'Sonar', value: SONAR_NAMES[obstacle.label], tone: sonarOk ? 'ok' : 'bad' },
     drive.estopped
       ? { label: 'Câmera da pista', value: 'pausada', tone: 'none' }
       : {
@@ -65,9 +69,9 @@ export function checkHealth({ state, isConnected, isStale, ageS, rttMs }: Health
   const preflight: [boolean, string][] = [
     [rttMs !== null && rttMs < FAST_LINK_MS, 'conexão lenta'],
     [health.serial_open && fw !== null && fw.age_s < 1, 'controlador'],
-    [sonarOk, 'sonar'],
-    [signs.camera_open && signs.detector, 'câmera de placas'],
-    [mission.stage !== 'idle', 'defina uma entrega'],
+    [isSpeed || sonarOk, 'sonar'],
+    [isSpeed || (signs.camera_open && signs.detector), 'câmera de placas'],
+    [isSpeed || mission.stage !== 'idle', 'defina uma entrega'],
     [path.path === path.home, `trajeto fora de ${PATH_NAMES[path.home]}`],
   ];
   const blocker = preflight.find(([ok]) => !ok)?.[1] ?? null;
@@ -122,7 +126,10 @@ function controllerCheck({ drive, health }: CartState): Check {
   return { label: 'Controlador', value: `${FIRMWARE_STATE_NAMES[fw.state]}${fault}`, tone };
 }
 
-function signCameraCheck({ signs }: CartState): Check {
+function signCameraCheck(state: CartState): Check {
+  const { signs } = state;
+  if (isSpeedTest(state))
+    return { label: 'Câmera de placas', value: 'fora da prova', tone: 'none' };
   if (!signs.camera_open) {
     return { label: 'Câmera de placas', value: signs.status || 'desligada', tone: 'bad' };
   }
