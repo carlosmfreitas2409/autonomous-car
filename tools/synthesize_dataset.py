@@ -58,10 +58,15 @@ import argparse
 import json
 import random
 import shutil
+import sys
 from pathlib import Path
 
 import cv2 as cv
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from perception.sign_detection import white_balance  # noqa: E402
 
 # Class order. This is what ends up in the ONNX metadata, and
 # src/perception/sign_detection.py's KNOWN_LABELS must match it.
@@ -841,6 +846,8 @@ def main() -> int:
             sample = make_sample(frame, cutouts, rng)
         # Real photographs get a light touch; see degrade_frame.
         frame = degrade_frame(frame, rng, gentle=from_real)
+        # The detector balances every frame before it looks; so does its training.
+        frame = white_balance(frame)
 
         lines = []
         if sample:

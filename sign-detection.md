@@ -741,6 +741,34 @@ red emergency-exit sign as `stop` at 0.54 - 23 px, which the tracker puts at
 floor-tape curve at the frame edge reaches 0.55 as `traffic_light` in one frame
 and is read UNKNOWN there; it cannot commit a red.
 
+### The competition venue (signs4), and white balance
+
+137 car-camera frames of the final track: stop 000-510, detour 520-770, B
+780-950, A 1110-1300, C 1310-1510. Purple-blue stage light through haze over
+everything. Round 6, raw, at 0.5 - frames with a box in each sign's segment:
+**stop 14/51**, detour 22/26, delivery 36/60. The stop was lost through the
+whole of 290-510, i.e. at the 150-300 px where the car has to stop.
+
+The stop face is pink: BGR (198, 135, 240) against the artwork's (39, 40, 217).
+That is light *added* - a +160 blue channel - not a multiplicative cast, and
+pasting the artwork under the venue's average cast changed nothing (0.96). Same
+experiment as round 1: the real sign alone on an ordinary background scores
+0.88; give it back its own surroundings and it falls to 0.02.
+
+Grey-world white balance of the frame before the detector fixes most of it:
+**stop 14 -> 33/51**, detour 22 -> 25/26, delivery 36 -> 41/60. On the earlier
+venue it costs one box (105 -> 104 of 111 at 0.5) and two light reads, both
+refusals (54 -> 52 of 56, still no red<->green). Frame-filling close-ups survive
+it (every class >= 0.91 at 320-640 px but one stop paste at 0.65). It is in
+`SignDetector.detect`, so the car, the evals and label pre-fill all get it; the
+crop readers still read raw pixels, which is what their colour rules were
+measured on; and `synthesize_dataset.py` balances every output frame, so the
+next model trains on what it will be shown.
+
+Split for training: held out in `assets/real/images/signs4/` are stop 420-510,
+detour 700-770, B 780-840, A 1110-1170 and C 1380-1510 (46 frames); the other
+91 are in `assets/real_train/images/signs4/`.
+
 ### Not measured at all yet
 
 - **`delivery_sign` has only 15 held-out real boxes**, one room, one day.

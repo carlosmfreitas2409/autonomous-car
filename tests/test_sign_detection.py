@@ -75,3 +75,19 @@ def test_detection_crop_with_margin_clamps_to_the_frame():
     crop = detection.crop(frame, margin=0.5)
     assert crop.shape[0] <= 100 and crop.shape[1] <= 120
     assert crop.size > 0
+
+
+def test_white_balance_removes_a_colour_cast():
+    """The competition venue's purple wash: the detector must see it neutral."""
+    from perception.sign_detection import white_balance
+    rng = np.random.default_rng(0)
+    scene = rng.integers(40, 200, (72, 128, 3)).astype(np.float32)
+    cast = np.clip(scene * np.float32([1.4, 0.7, 1.1]), 0, 255).astype(np.uint8)
+    means = white_balance(cast).reshape(-1, 3).mean(axis=0)
+    assert means.max() - means.min() < 3
+
+
+def test_white_balance_leaves_a_grey_frame_alone():
+    from perception.sign_detection import white_balance
+    grey = np.full((10, 10, 3), 120, np.uint8)
+    assert np.array_equal(white_balance(grey), grey)

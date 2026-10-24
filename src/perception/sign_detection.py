@@ -108,7 +108,7 @@ class SignDetector:
         if self._session is None or frame is None or frame.size == 0:
             return []
 
-        blob, scale, pad_x, pad_y = self._preprocess(frame)
+        blob, scale, pad_x, pad_y = self._preprocess(white_balance(frame))
         outputs = self._session.run(None, {self._input_name: blob})
         return self._decode(outputs[0], scale, pad_x, pad_y, frame.shape[:2])
 
@@ -192,6 +192,23 @@ class SignDetector:
                 Detection(label, (int(x0), int(y0), int(x1), int(y1)), float(confidences[index]))
             )
         return detections
+
+
+def white_balance(frame: np.ndarray) -> np.ndarray:
+    """Grey-world white balance: scale each channel so the frame averages grey.
+
+    The detector sees this; the crop readers never do - their colour rules were
+    measured on the camera's own pixels. At the competition venue purple stage
+    light through haze turns the red stop sign pink - face BGR (198, 135, 240)
+    against the artwork's (39, 40, 217) - and round 6 found the stop in 14 of
+    51 frames. Balanced, 33 of 51, detour 22 -> 25 of 26, delivery 36 -> 41 of
+    60, with the earlier venue unchanged. Nothing to tune: the gains come from
+    the frame itself, and the training set is balanced the same way so the
+    model only ever learns from what it will be shown.
+    """
+    means = frame.reshape(-1, 3).mean(axis=0)
+    gains = means.mean() / np.maximum(means, 1.0)
+    return np.clip(frame.astype(np.float32) * gains, 0, 255).astype(np.uint8)
 
 
 def letterbox(frame: np.ndarray, width: int, height: int, pad_value: int = PAD_VALUE):
