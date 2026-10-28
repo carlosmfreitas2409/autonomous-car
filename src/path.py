@@ -109,10 +109,13 @@ class DetourReturn:
             return ControlProfile.DETOUR
         return profile_for(path)
 
-    def observe_hold(self, holding: float, dt: float) -> None:
+    def observe_hold(self, holding: float, dt: float, standing: bool = False) -> None:
         """Feed the controller's hold time every frame: a completed hold of
         `_CARRY_HOLD_MIN_S` or more is the merge, after which no carry is
-        owed and a running carry is released."""
+        owed and a running carry is released. Nothing counts while the car
+        is `standing` (see `update`)."""
+        if standing:
+            return
         if holding > 0:
             self._hold_run = holding
             # A blind stretch starts the count again; a few weak frames in the
@@ -141,7 +144,14 @@ class DetourReturn:
             self._carry_time = 0.0
             self._after_merge = 0.0
 
-    def update(self, path: Path, perc, dt: float):
+    def update(self, path: Path, perc, dt: float, standing: bool = False):
+        """`standing`: the car is held still (an obstacle, a sign, a dock);
+        `observe_hold` takes the same. Neither the gap and steady-lane timers
+        here nor the carry there may count a car standing still: a pickup
+        docked inside the detour ran the carry to its 20 s cap and the car met
+        the blind exit on Normal's 0.2 s grace (lap_b2, 2026-10-24)."""
+        if standing:
+            return None
         self._whole_lane = perc.lane_offset is not None and not perc.provisional and perc.both_rows >= 2
         self._lane_measured = (perc.lane_offset is not None and not perc.provisional
                                and (perc.both_rows > 0 or perc.band_rows >= 2))

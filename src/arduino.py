@@ -1,4 +1,5 @@
 import serial
+import serial.tools.list_ports
 import logging
 import time
 
@@ -72,6 +73,11 @@ def parse_telemetry(line: str, now: float) -> Optional[MasterTelemetry]:
     return None
   fault = parts[7] if len(parts) > 7 else None
   return MasterTelemetry(angle, target, throttle, steer, parts[5], ms_since, fault, now)
+
+
+def usb_serial_ports() -> list[str]:
+  """The serial ports behind a USB device: the master's, not Bluetooth's."""
+  return [port.device for port in serial.tools.list_ports.comports() if port.vid is not None]
 
 
 class _SerialPort:

@@ -781,7 +781,8 @@ def run_closed_loop(scenario: str, camera: CameraModel, car: CarModel, track: Tr
         frame = camera.render(track.lines, cam_pose, track.model.tape_m)
         res = tracker.process(frame, params, anchor_for(path))
         profile = profile_for(path)
-        steering, throttle = auto.step(res.lane_offset, res.lane_curvature, params, dt, profile=profile, provisional=res.provisional)
+        steering, throttle = auto.step(res.lane_offset, res.lane_curvature, params, dt, profile=profile, provisional=res.provisional,
+                                       rows_found=res.rows_found, far_offset=res.far_offset, far_curvature=res.far_curvature)
         used_detour |= auto.profile.value == "detour"
         queue.append((steering, throttle))
         cmd = queue.popleft()

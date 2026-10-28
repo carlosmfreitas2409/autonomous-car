@@ -6,7 +6,7 @@ import logging
 import signal
 import time
 
-from arduino import Arduino
+from arduino import Arduino, usb_serial_ports
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("main")
@@ -26,7 +26,6 @@ from input.sign_policy import SignConstraint, SignPolicy
 from input.mission import Mission, MissionCommand
 from path import HOME_PATH, DetourReturn, ForkWatch, Path, anchor_for, profile_for
 from perception.sign_worker import SignWorker
-from gui import TunerGUI
 from status import stop_cause
 from voice import Voice
 
@@ -81,12 +80,16 @@ parser = argparse.ArgumentParser(description="Autonomous car tuner")
 parser.add_argument("--video", help="replay a recorded video instead of the camera")
 parser.add_argument("--record", help="write every camera frame to this file, for replaying later")
 parser.add_argument("--flip", action="store_true", help="mirror frames left-right (for a clip recorded flipped)")
-parser.add_argument("--camera", type=int, default=3, help="camera index when not replaying a video (default 2)")
+parser.add_argument("--camera", type=int, default=0, help="camera index when not replaying a video (default 2)")
 parser.add_argument("--log", help="write per-frame telemetry to this CSV")
 parser.add_argument("--no-voice", action="store_true", help="no spoken prompts at the docks")
 parser.add_argument("--voice", help="dock prompt voice: a `say` voice name (e.g. Luciana); default the Mac's system voice, where a Siri voice is chosen")
 parser.add_argument("--dashboard-port", type=int, default=80, help="operator dashboard port (default 80)")
 parser.add_argument("--no-dashboard", action="store_true", help="do not start the operator dashboard server")
+parser.add_argument("--no-gui", action="store_true", help="run without the tuner window: the PS5 and the dashboard drive the car, Ctrl+C quits")
+parser.add_argument("--port", help="the master's serial port, opened at start (default with --no-gui: the only USB serial port)")
+parser.add_argument("--stage", choices=[stage.value for stage in Challenge], default=Challenge.DELIVERY.value,
+                    help="the stage to start in (default delivery); the dashboard or the tuner can change it while e-stopped")
 args = parser.parse_args()
 
 cap = cv.VideoCapture(args.video if args.video else args.camera)
@@ -151,8 +154,24 @@ source = FrameSource(cap, live=not args.video)
 # released under the reader thread just the same.
 atexit.register(source.close)
 
-gui = TunerGUI(config, frame_w, frame_h)
+if args.no_gui:
+    from headless import HeadlessGUI
+    gui = HeadlessGUI(config)
+else:
+    from gui import TunerGUI
+    gui = TunerGUI(config, frame_w, frame_h)
 arduino = Arduino()
+# Without the tuner there is no COM list to pick the master from.
+master_port = args.port
+if master_port is None and args.no_gui:
+    usb_ports = usb_serial_ports()
+    if len(usb_ports) == 1:
+        master_port = usb_ports[0]
+    elif not args.video:
+        print(f"Error: pick the master's port with --port (USB serial ports: {', '.join(usb_ports) or 'none'})")
+        exit(1)
+if master_port is not None:
+    arduino.set_master_port(master_port)
 tracker = LineTracker()
 autonomous = Autonomous()
 detour_return = DetourReturn()
@@ -191,7 +210,9 @@ gui.set_pid_reset_callback(autonomous.reset)
 gui.set_master_port_callback(arduino.set_master_port)
 gui.set_lights_controller(lights)
 
-challenge = Challenge.DELIVERY
+challenge = Challenge(args.stage)
+if challenge is Challenge.SPEED:
+    sign_worker.set_paused(True)
 # The PID gains and speed limits belong to the loop, one set per stage: the
 # tuner's sliders and the dashboard both ask for changes, and both show what
 # is set here.
@@ -443,6 +464,10 @@ while gui.is_running():
         gui.update_path_status(path, tracker.profile_ready, "e-stop")
         publish(None, 0.0, 0.0, ("estop", "e-stop"), constraint, mission_command, lights_output, False, cargo)
         gui.render_frame()
+        if args.no_gui:
+            # The tuner's render waits for the display; with nothing to draw
+            # this branch would spin a core and flood the serial link.
+            time.sleep(1 / 60)
         continue
     prev_stopped = False
 
@@ -494,11 +519,12 @@ while gui.is_running():
     standing = not manual and (guard_stopped or prev_hold)
     perc = tracker.process(frame, params, anchor_for(path), learn=not standing)
 
-    # Stopped for an obstacle the car is not moving: the detour's gap and
-    # steady-lane timers must not count a car standing in the gap.
+    # Stopped for an obstacle, a sign or the mission the car is not moving:
+    # the detour's and the fork watch's timers must not count a car standing
+    # still (in the gap, or docked inside a detour).
     obstacle_stopped = not manual and guard_stopped
-    returned = None if obstacle_stopped else detour_return.update(path, perc, dt)
-    fork_passed = not obstacle_stopped and fork_watch.update(path, perc, dt)
+    returned = detour_return.update(path, perc, dt, standing=standing)
+    fork_passed = not standing and fork_watch.update(path, perc, dt)
     if returned is not None:
         logger.info(f"Detour entrance passed, returning to {returned.value} (lane {perc.lane_state})")
         path = returned
@@ -518,8 +544,7 @@ while gui.is_running():
             profile=detour_return.profile_for(path), provisional=perc.provisional, rows_found=perc.rows_found,
             far_offset=perc.far_offset, far_curvature=perc.far_curvature,
         )
-        if not obstacle_stopped:
-            detour_return.observe_hold(autonomous.holding, dt)
+        detour_return.observe_hold(autonomous.holding, dt, standing=standing)
     else:
         autonomous.reset()
         steering, throttle = ps5.poll()

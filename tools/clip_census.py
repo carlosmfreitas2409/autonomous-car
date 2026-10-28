@@ -281,7 +281,8 @@ def run_census(clip: str, schedule, params: Config, fps_override: Optional[float
 
         steering, throttle = controller.step(
             result.lane_offset, result.lane_curvature, params, dt,
-            profile=profile_for(path), provisional=result.provisional,
+            profile=profile_for(path), provisional=result.provisional, rows_found=result.rows_found,
+            far_offset=result.far_offset, far_curvature=result.far_curvature,
         )
 
         records.append(FrameRecord(
