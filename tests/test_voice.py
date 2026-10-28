@@ -10,7 +10,7 @@ from voice import TEXT, Voice
 ANNOUNCED = {"docked_pickup", "docked_delivery", "remind_pickup", "remind_delivery",
              "released", "blocked", "delivered",
              "docked_pickup_lid", "docked_delivery_lid", "remind_pickup_lid", "remind_delivery_lid",
-             "close_lid", "empty", "still_loaded"}
+             "released_lid", "close_lid", "empty", "still_loaded"}
 
 
 def test_every_announcement_has_words():
@@ -39,7 +39,6 @@ class FakeSay:
 def say(monkeypatch):
     FakeSay.started = []
     monkeypatch.setattr(voice.shutil, "which", lambda _: "/usr/bin/say")
-    monkeypatch.setattr(voice, "_pick_voice", lambda _: "Luciana")
     monkeypatch.setattr(voice.subprocess, "Popen", FakeSay)
     return FakeSay.started
 
@@ -49,7 +48,7 @@ def test_a_prompt_waits_for_the_one_playing_and_only_the_latest_waits(say):
     speaker.announce(Announcement("docked_pickup", "A"))
     speaker.announce(Announcement("released", "A"))
     speaker.announce(Announcement("blocked", "A"))
-    assert len(say) == 1 and say[0].command == ["/usr/bin/say", "-v", "Luciana", TEXT["docked_pickup"].format(letter="A")]
+    assert len(say) == 1 and say[0].command == ["/usr/bin/say", TEXT["docked_pickup"].format(letter="A")]
     say[0].busy = False
     speaker.update()
     assert len(say) == 2 and say[1].command[-1] == TEXT["blocked"]
@@ -87,3 +86,9 @@ def test_system_voice_names_no_voice(say):
     speaker = Voice(voice="system")
     speaker.announce(Announcement("blocked", "A"))
     assert say[0].command == ["/usr/bin/say", TEXT["blocked"]]
+
+
+def test_a_named_voice_is_passed_to_say(say):
+    speaker = Voice(voice="Luciana")
+    speaker.announce(Announcement("blocked", "A"))
+    assert say[0].command == ["/usr/bin/say", "-v", "Luciana", TEXT["blocked"]]

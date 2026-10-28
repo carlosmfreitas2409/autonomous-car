@@ -7,6 +7,10 @@ turns it into speech. macOS `say` runs in its own process so the loop never
 waits on it. A prompt that arrives while one is playing waits for it to end,
 and a newer one replaces it: only the latest still matters. Without `say` (not
 macOS) or with `--no-voice` it does nothing.
+
+It speaks in the Mac's system voice (System Settings > Accessibility > Spoken
+Content > System voice), which is where a Siri voice is chosen: `say -v`
+cannot name Siri voices, but a bare `say` uses them.
 """
 
 import logging
@@ -19,25 +23,24 @@ from input.mission import Announcement
 logger = logging.getLogger(__name__)
 
 TEXT = {
-    "docked_pickup": "Caminhão na doca {letter}. Carregue e, quando terminar, toque em Liberar no painel.",
-    "docked_delivery": "Entrega na doca {letter}. Descarregue e, quando terminar, toque em Liberar no painel.",
-    "remind_pickup": "Aguardando o carregamento na doca {letter}. Toque em Liberar quando terminar.",
-    "remind_delivery": "Aguardando a descarga na doca {letter}. Toque em Liberar quando terminar.",
+    "docked_pickup": "Caminhão na doca {letter}. Pode carregar.",
+    "docked_delivery": "Entrega na doca {letter}. Pode descarregar.",
+    "remind_pickup": "Aguardando o carregamento na doca {letter}.",
+    "remind_delivery": "Aguardando a descarga na doca {letter}.",
     "released": "Liberado. Afaste-se, o caminhão vai partir.",
     "blocked": "Por favor, afaste-se da frente do caminhão.",
     "delivered": "Entrega concluída na doca {letter}.",
-    # With the cargo compartment: it unlocks at the dock, and shutting the lid releases.
     "docked_pickup_lid": "Caminhão na doca {letter}. O compartimento está destravado: carregue e feche a tampa.",
     "docked_delivery_lid": "Entrega na doca {letter}. O compartimento está destravado: retire a carga e feche a tampa.",
     "remind_pickup_lid": "Aguardando o carregamento na doca {letter}. Feche a tampa quando terminar.",
     "remind_delivery_lid": "Aguardando a descarga na doca {letter}. Feche a tampa quando terminar.",
-    "close_lid": "Feche o compartimento de carga.",
-    "empty": "Nenhuma carga detectada. Carregue o compartimento, ou libere de novo para partir assim mesmo.",
-    "still_loaded": "Ainda há carga no compartimento. Retire a carga, ou libere de novo para partir assim mesmo.",
+    "released_lid": "Compartimento fechado. Afaste-se, o caminhão vai partir.",
+    "close_lid": "Feche a tampa do compartimento.",
+    "empty": "Nenhuma carga detectada. Coloque a carga e feche a tampa. "
+             "Se fechar de novo sem carga, o caminhão parte assim mesmo.",
+    "still_loaded": "Ainda há carga no compartimento. Retire a carga e feche a tampa. "
+                    "Se fechar de novo com carga, o caminhão parte assim mesmo.",
 }
-
-_PREFERRED_VOICE = "Luciana"
-
 
 def brazilian_voices(say: str) -> list[str]:
     """The pt_BR voices installed, as `say -v` names them."""
@@ -48,28 +51,12 @@ def brazilian_voices(say: str) -> list[str]:
     return [line.split(" pt_BR ")[0].strip() for line in listing.splitlines() if " pt_BR " in line]
 
 
-def _pick_voice(say: str) -> Optional[str]:
-    """Luciana, the downloadable Premium or Enhanced one first (System
-    Settings > Accessibility > Spoken Content > Manage Voices), else any
-    Brazilian Portuguese voice, else the system default (None)."""
-    voices = brazilian_voices(say)
-    for quality in ("(Premium)", "(Enhanced)", ""):
-        for name in voices:
-            if name.startswith(_PREFERRED_VOICE) and name.endswith(quality):
-                return name
-    return voices[0] if voices else None
-
-
 class Voice:
     def __init__(self, enabled: bool = True, voice: Optional[str] = None):
-        """`voice`: a `say` voice name, or "system" for the Mac's system
-        voice (System Settings > Accessibility > Spoken Content), which can
-        be a Siri voice that `say -v` cannot name. None picks Luciana."""
+        """`voice`: a `say` voice name (e.g. Luciana); None or "system" is
+        the Mac's system voice."""
         self._say = shutil.which("say") if enabled else None
-        if self._say is None or voice == "system":
-            self._voice = None
-        else:
-            self._voice = voice or _pick_voice(self._say)
+        self._voice = None if self._say is None or voice == "system" else voice
         if self._say is not None:
             logger.info("voice: %s", self._voice or "system voice")
         self._process: Optional[subprocess.Popen] = None

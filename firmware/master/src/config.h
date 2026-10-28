@@ -126,5 +126,7 @@ constexpr bool STEER_INVERT_PWM = true;
 // 20 Hz, the sonar node's CAN rate: at 10 Hz every other sonar frame was
 // dropped, and the host's obstacle filter needs every echo a side sensor gets.
 constexpr uint16_t TELEMETRY_PERIOD_MS = 50;
+// The battery changes slowly (its reading is a ~10 s average): once a second.
+constexpr uint16_t BATT_TELEMETRY_PERIOD_MS = 1000;
 
 }  // namespace config

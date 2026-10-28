@@ -75,6 +75,9 @@ class Track:
     variant_reason: str
     first_seen: float
     last_seen: float
+    # Horizontal angle of the box centre off the camera axis, + right. For
+    # display (the dashboard's world view); nothing decides on it.
+    bearing_deg: Optional[float] = None
 
     @property
     def actionable(self) -> bool:
@@ -96,6 +99,7 @@ class _Record:
         self.last_seen = now
         self.hits: deque = deque(maxlen=HISTORY)
         self.distance: Optional[float] = None
+        self.bearing: Optional[float] = None
         self.light_history: deque = deque(maxlen=HISTORY)
         self.light_state = LightState.UNKNOWN
         self.light_reason = ""
@@ -119,7 +123,7 @@ class _Record:
             distance_m=self.distance, confirmed=self.confirmed,
             light_state=self.light_state, light_reason=self.light_reason, rejected=self.rejected,
             variant=self.variant, variant_reason=self.variant_reason,
-            first_seen=self.first_seen, last_seen=self.last_seen,
+            first_seen=self.first_seen, last_seen=self.last_seen, bearing_deg=self.bearing,
         )
 
 
@@ -192,6 +196,8 @@ class SignTracker:
         record.last_seen = now
         record.hits.append(1)
         self._update_distance(record, detection, frame)
+        x0, _, x1, _ = detection.bbox
+        record.bearing = bearing_deg((x0 + x1) / 2.0, frame.shape[1], self._hfov)
 
         if record.label == "traffic_light":
             reading = self._read_light(detection.crop(frame, traffic_light.CROP_MARGIN))
@@ -237,6 +243,13 @@ class SignTracker:
                 committed = letter
         record.variant = committed
         record.variant_reason = reading.reason
+
+
+def bearing_deg(center_x: float, frame_w: int, hfov_rad: float) -> float:
+    """The angle of an image column off the optical axis, + right, with the
+    same pinhole focal length the distance uses."""
+    focal_px = (frame_w / 2.0) / math.tan(hfov_rad / 2.0)
+    return math.degrees(math.atan((center_x - frame_w / 2.0) / focal_px))
 
 
 def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:

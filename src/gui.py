@@ -54,7 +54,11 @@ _STRIP_EFFECT_LABELS = {
     "Police": StripEffect.POLICE,
     "Blue Breathe": StripEffect.BLUE_BREATHE,
     "Turquoise Sweep": StripEffect.CYAN_SWEEP,
+    "Yellow Pulse": StripEffect.YELLOW_PULSE,
 }
+
+_TURN_SIGNAL_NAMES = {signal: label for label, signal in _TURN_SIGNAL_LABELS.items()}
+_STRIP_EFFECT_NAMES = {effect: label for label, effect in _STRIP_EFFECT_LABELS.items()}
 
 _SONAR_STATES = {
     "clear": ("clear", (0, 255, 0)),
@@ -87,7 +91,8 @@ _POLICY_COLOUR = {
 
 class TunerGUI:
     def __init__(self, config: Config, frame_w: int, frame_h: int):
-        self._autonomous = True
+        self._estop_toggle = False
+        self._mode_toggle = False
         self._stopped = True
         self._tags = {}
         self._signs_uploaded_at = -1.0
@@ -99,6 +104,9 @@ class TunerGUI:
         self._dock_action: str | None = None
         self._dock_request: str | None = None
         self._open_request = False
+        self._shown_lights: tuple | None = None
+        self._tuning_request: dict[str, float] = {}
+        self._shown_tuning: dict[str, float] | None = None
         self._build(config, frame_w, frame_h)
 
         self._refresh_ports()
@@ -107,19 +115,27 @@ class TunerGUI:
         dpg.set_value(sender, max(3, value | 1))
 
     def _toggle_mode(self, _sender):
-        self.toggle_mode()
-
-    def toggle_mode(self):
-        self._autonomous = not self._autonomous
-        dpg.set_item_label(self._tags["mode"], "Autonomous Mode" if self._autonomous else "Manual Mode")
+        self._mode_toggle = True
 
     def _toggle_estop(self, _sender):
-        self.toggle_estop()
+        self._estop_toggle = True
 
-    def toggle_estop(self):
-        self._stopped = not self._stopped
-        dpg.set_item_label(self._tags["estop"], "Resume" if self._stopped else "Emergency Stop")
-        
+    def poll_estop_toggle(self) -> bool:
+        """The e-stop button was clicked since the last call."""
+        toggled, self._estop_toggle = self._estop_toggle, False
+        return toggled
+
+    def poll_mode_toggle(self) -> bool:
+        """The mode button was clicked since the last call."""
+        toggled, self._mode_toggle = self._mode_toggle, False
+        return toggled
+
+    def update_drive(self, estopped: bool, manual: bool):
+        """Show the loop's e-stop and mode on the two buttons."""
+        self._stopped = estopped
+        dpg.set_item_label(self._tags["mode"], "Manual Mode" if manual else "Autonomous Mode")
+        dpg.set_item_label(self._tags["estop"], "Resume" if estopped else "Emergency Stop")
+
     def _build(self, config: Config, frame_w: int, frame_h: int):
         dpg.create_context()
 
@@ -226,16 +242,16 @@ class TunerGUI:
                     with dpg.group():
                         dpg.add_spacer(height=4)
                         dpg.add_text("PID Tuning", color=(130, 200, 255))
-                        self._tags["kp"] = dpg.add_slider_float(label="Kp", default_value=config.kp, min_value=0.0, max_value=0.1, format="%.4f", width=form_w)
-                        self._tags["ki"] = dpg.add_slider_float(label="Ki", default_value=config.ki, min_value=0.0, max_value=0.05, format="%.4f", width=form_w)
-                        self._tags["kd"] = dpg.add_slider_float(label="Kd", default_value=config.kd, min_value=0.0, max_value=0.1, format="%.4f", width=form_w)
+                        self._tags["kp"] = dpg.add_slider_float(label="Kp", default_value=config.kp, min_value=0.0, max_value=0.1, format="%.4f", width=form_w, callback=self._on_tuning, user_data="kp")
+                        self._tags["ki"] = dpg.add_slider_float(label="Ki", default_value=config.ki, min_value=0.0, max_value=0.05, format="%.4f", width=form_w, callback=self._on_tuning, user_data="ki")
+                        self._tags["kd"] = dpg.add_slider_float(label="Kd", default_value=config.kd, min_value=0.0, max_value=0.1, format="%.4f", width=form_w, callback=self._on_tuning, user_data="kd")
                         dpg.add_spacer(height=4)
                         self._tags["pid_reset"] = dpg.add_button(label="Reset PID")
 
                         dpg.add_spacer(height=8)
                         dpg.add_text("Speed Tuning", color=(130, 200, 255))
-                        self._tags["base_speed"] = dpg.add_slider_float(label="Base Speed", default_value=config.base_speed, min_value=0.0, max_value=1.0, format="%.2f", width=form_w)
-                        self._tags["min_speed"] = dpg.add_slider_float(label="Min Speed", default_value=config.min_speed, min_value=0.0, max_value=1.0, format="%.2f", width=form_w)
+                        self._tags["base_speed"] = dpg.add_slider_float(label="Base Speed", default_value=config.base_speed, min_value=0.0, max_value=1.0, format="%.2f", width=form_w, callback=self._on_tuning, user_data="base_speed")
+                        self._tags["min_speed"] = dpg.add_slider_float(label="Min Speed", default_value=config.min_speed, min_value=0.0, max_value=1.0, format="%.2f", width=form_w, callback=self._on_tuning, user_data="min_speed")
 
                     with dpg.group():
                         dpg.add_spacer(height=4)
@@ -316,7 +332,24 @@ class TunerGUI:
         dpg.setup_dearpygui()
         dpg.show_viewport()
 
+    def _on_tuning(self, _sender, value, key):
+        self._tuning_request[key] = value
+
+    def poll_tuning_request(self) -> dict[str, float]:
+        """The PID and speed sliders moved since the last call, keyed like Config."""
+        request, self._tuning_request = self._tuning_request, {}
+        return request
+
+    def update_tuning(self, tuning: dict[str, float]):
+        """Show the loop's PID gains and speeds, whichever console set them."""
+        if tuning == self._shown_tuning:
+            return
+        self._shown_tuning = dict(tuning)
+        for key, value in tuning.items():
+            dpg.set_value(self._tags[key], value)
+
     def read_params(self) -> Config:
+        """Every tuner slider but the PID and speeds, which the loop holds."""
         return Config(
             block_size=dpg.get_value(self._tags["block_size"]),
             threshold_constant=dpg.get_value(self._tags["threshold_c"]),
@@ -328,19 +361,8 @@ class TunerGUI:
             ema_alpha=dpg.get_value(self._tags["alpha"]),
             scan_lines=dpg.get_value(self._tags["scan_lines"]),
 
-            kp=dpg.get_value(self._tags["kp"]),
-            ki=dpg.get_value(self._tags["ki"]),
-            kd=dpg.get_value(self._tags["kd"]),
 
-            base_speed=dpg.get_value(self._tags["base_speed"]),
-            min_speed=dpg.get_value(self._tags["min_speed"]),
         )
-
-    def load_tuning(self, config: Config):
-        """Put a stage's PID and speed on the sliders; ROI and threshold are
-        the camera's and stay as they are."""
-        for key in ("kp", "ki", "kd", "base_speed", "min_speed"):
-            dpg.set_value(self._tags[key], getattr(config, key))
 
     def set_pid_reset_callback(self, callback):
         dpg.set_item_callback(self._tags["pid_reset"], callback)
@@ -387,6 +409,19 @@ class TunerGUI:
     def _on_strip_effect(self, _sender, value):
         if self._lights is not None:
             self._lights.strip_effect = _STRIP_EFFECT_LABELS[value]
+
+    def update_lights(self, controller: LightsController):
+        """Show the light settings, whichever console set them. Only on a
+        change, so a click still on its way through a callback is not undone."""
+        shown = (controller.turn_signal, controller.drl, controller.low_beam,
+                 controller.logo, controller.projector, controller.strip_effect)
+        if shown == self._shown_lights:
+            return
+        self._shown_lights = shown
+        dpg.set_value(self._tags["turn_signal"], _TURN_SIGNAL_NAMES[controller.turn_signal])
+        for key in ("drl", "low_beam", "logo", "projector"):
+            dpg.set_value(self._tags[key], getattr(controller, key))
+        dpg.set_value(self._tags["strip_effect"], _STRIP_EFFECT_NAMES[controller.strip_effect])
 
     def update_textures(self, result: LineTrackingResult):
         dpg.set_value(self._tags["tex_main"], _frame_to_texture(result.display_frame))
@@ -585,12 +620,6 @@ class TunerGUI:
 
     def is_running(self) -> bool:
         return dpg.is_dearpygui_running()
-
-    def is_stopped(self) -> bool:
-        return self._stopped
-
-    def is_autonomous(self) -> bool:
-        return self._autonomous
 
     def render_frame(self):
         dpg.render_dearpygui_frame()

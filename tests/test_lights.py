@@ -68,7 +68,7 @@ def test_speed_test_drives_with_the_police_strip():
 def test_speed_test_keeps_the_stop_and_manual_colours():
     assert lights(speed_test=True, estopped=True).compute().strip_effect is StripEffect.RED_PULSE
     assert lights(speed_test=True, obstacle_stopped=True).compute().strip_effect is StripEffect.RED
-    assert lights(speed_test=True, autonomous=False).compute().strip_effect is StripEffect.GREEN
+    assert lights(speed_test=True, autonomous=False).compute().strip_effect is StripEffect.YELLOW_PULSE
 
 
 def test_operator_strip_choice_wins_over_the_police_strip():

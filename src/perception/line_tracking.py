@@ -146,6 +146,13 @@ class LineTrackingResult:
     # otherwise. Only the DETOUR control profile steers on it, during a hold.
     far_offset: Optional[int] = None
     far_curvature: Optional[float] = None
+    # Display only, never read back: (row y, left x, right x) for every band
+    # row that saw a line, -1 for a side with none (a fork's open side), and
+    # the width profile `width = a*y + b` the anchored scan places its centers
+    # with. The dashboard draws the lane from them; nothing here feeds the
+    # offset or the controller.
+    band_edges: tuple[tuple[int, int, int], ...] = ()
+    width_profile: Optional[tuple[float, float]] = None
 
     @property
     def width_ratio(self) -> Optional[float]:
@@ -159,6 +166,7 @@ class LineTracker:
         self._smoothed_center: Optional[float] = None
         self._half_lane_width: Optional[float] = None
         self._smoothed_curvature: Optional[float] = None
+        self._band_edges: tuple[tuple[int, int, int], ...] = ()
 
         # Lane width as a function of the image row, `width = a*y + b`. On a
         # flat road with a fixed camera perspective makes that exactly linear.
@@ -349,6 +357,8 @@ class LineTracker:
             band_rows=len(band_samples),
             far_offset=far_offset,
             far_curvature=far_curvature,
+            band_edges=self._band_edges,
+            width_profile=self._width_profile,
         )
 
     # --- anchor state ----------------------------------------------------
@@ -592,9 +602,11 @@ class LineTracker:
         the geometry how wide the lane is where the ROI cannot see both lines.
         """
         rows = list(range(round(_BAND_TOP * height), roi_y0, _BAND_STEP))
+        self._band_edges = ()
         if len(rows) < 2:
             return []
         samples = []
+        edges = []
         origin = max(1, min(width - 1, int(scan_origin)))
         for y in reversed(rows):
             if y < 0 or y >= height:
@@ -603,15 +615,20 @@ class LineTracker:
             lefts = np.flatnonzero(row[:origin] == 255)
             rights = np.flatnonzero(row[origin:] == 255)
             if not len(lefts) or not len(rights):
+                if len(lefts) or len(rights):
+                    edges.append((int(y), int(lefts[-1]) if len(lefts) else -1,
+                                  int(rights[0]) + origin if len(rights) else -1))
                 continue
             left_x = int(lefts[-1])
             right_x = int(rights[0]) + origin
             if right_x - left_x < 2 or np.all(row[left_x:right_x + 1] == 255):
                 continue
             samples.append((y, right_x - left_x))
+            edges.append((int(y), left_x, right_x))
             origin = max(1, min(width - 1, (left_x + right_x) // 2))
             cv.circle(debug, (left_x, y), 1, _BAND_COLOR, -1)
             cv.circle(debug, (right_x, y), 1, _BAND_COLOR, -1)
+        self._band_edges = tuple(edges)
         return samples
 
     def _read_far(self, binary, debug, scan_origin, roi_x0, roi_x1, roi_y0, roi_y1, height, width):

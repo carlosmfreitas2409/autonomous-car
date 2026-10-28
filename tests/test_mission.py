@@ -610,7 +610,7 @@ def test_shutting_the_lid_releases_and_records_the_manifest():
     assert [c.announce.key for c in drive.commands[-100:] if c.announce] == ["remind_pickup_lid"]
 
     command = lid_cycle(drive, LOADED)
-    assert command.state is MissionState.CHECKING and command.announce.key == "released"
+    assert command.state is MissionState.CHECKING and command.announce.key == "released_lid"
     held = leave(drive)
     assert len(held) * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
     assert drive.mission.stage is Stage.DELIVERY and drive.mission.manifest_g == LOADED
@@ -649,6 +649,32 @@ def test_empty_pickup_waits_again_and_a_second_release_overrides():
     assert drive.mission.stage is Stage.DELIVERY and drive.mission.manifest_g == _EMPTY_G - 1
 
 
+def test_empty_pickup_shut_twice_leaves_and_says_so_only_then():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo()
+    drive.dock_at("C")
+    start = len(drive.commands)
+    assert lid_cycle(drive, 0).announce.key == "empty"
+    assert drive.mission.unlock
+    drive.gap(5.0)
+    lid_cycle(drive, 0)                                     # still nothing on board
+    leave(drive)
+    assert drive.mission.stage is Stage.DELIVERY
+    spoken = [c.announce.key for c in drive.commands[start:] if c.announce]
+    assert spoken == ["empty", "released_lid"]
+
+
+def test_unsettled_empty_pickup_never_says_it_is_leaving():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo(stable=False)
+    drive.dock_at("C")
+    start = len(drive.commands)
+    lid_cycle(drive, 0)
+    drive.gap(_SETTLE_S + 1.0)
+    assert drive.commands[-1].state is MissionState.DOCKED
+    assert [c.announce.key for c in drive.commands[start:] if c.announce] == ["empty"]
+
+
 @pytest.mark.parametrize("on_board, outcome", [(0, "delivered"), (LOADED, "still_loaded")])
 def test_delivery_leaves_nothing_on_board(on_board, outcome):
     drive = Drive("B", "C", auto_release=False)
@@ -664,6 +690,34 @@ def test_delivery_leaves_nothing_on_board(on_board, outcome):
     assert drive.done and drive.mission.parked
 
 
+def test_delivery_shut_twice_still_loaded_parks_there():
+    drive = Drive("B", "C", auto_release=False)
+    drive.mission.stage = Stage.DELIVERY
+    drive.cargo = cargo(LOADED)
+    drive.dock_at("C")
+    start = len(drive.commands)
+    assert lid_cycle(drive, LOADED).announce.key == "still_loaded"
+    assert drive.mission.unlock
+    command = lid_cycle(drive, LOADED)                      # the load left on board
+    assert command.state is MissionState.DONE and command.announce.key == "delivered"
+    drive.gap(5.0)
+    assert all(c.hold for c in drive.commands[start:])
+    assert drive.done and drive.mission.parked
+    assert [c.announce.key for c in drive.commands[start:] if c.announce] == ["still_loaded", "delivered"]
+
+
+def test_unsettled_delivery_never_says_it_is_leaving():
+    drive = Drive("B", "C", auto_release=False)
+    drive.mission.stage = Stage.DELIVERY
+    drive.cargo = cargo(LOADED, stable=False)
+    drive.dock_at("C")
+    start = len(drive.commands)
+    lid_cycle(drive, 0)
+    drive.gap(_SETTLE_S + 1.0)
+    assert drive.done
+    assert [c.announce.key for c in drive.commands[start:] if c.announce] == ["delivered"]
+
+
 def test_unsettled_weight_is_judged_after_a_while():
     drive = Drive("C", "A", auto_release=False)
     drive.cargo = cargo(LOADED, stable=False)
@@ -674,6 +728,28 @@ def test_unsettled_weight_is_judged_after_a_while():
     assert len(weighing) * DT == pytest.approx(_SETTLE_S, abs=1.5 * DT)
     assert len(held) * DT == pytest.approx(_SETTLE_S + _DEPART_CLEAR_S, abs=2.5 * DT)
     assert drive.mission.stage is Stage.DELIVERY
+
+
+def test_checking_names_what_holds_the_truck():
+    drive = Drive("C", "A", auto_release=False)
+    drive.cargo = cargo(LOADED, lid=False, stable=False)
+    drive.dock_at("C")
+    assert drive.commands[-1].state is MissionState.DOCKED and drive.commands[-1].check is None
+    drive.mission.release(drive.now)
+    assert drive.frame().check == "lid"
+    drive.cargo = cargo(LOADED, stable=False)
+    assert drive.frame().check == "weighing"
+    drive.cargo = cargo(LOADED)
+    drive.quiet = False
+    assert drive.frame().check == "announcing"
+    drive.quiet = True
+    drive.clear = False
+    assert drive.frame().check == "blocked"
+    drive.clear = True
+    assert drive.frame().check == "clearing"
+    held = leave(drive)
+    assert {c.check for c in held} == {"clearing"}
+    assert drive.frame().check is None
 
 
 def test_scale_fault_skips_the_weight():

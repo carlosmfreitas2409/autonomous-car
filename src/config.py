@@ -13,7 +13,7 @@ class Config:
     # ROI
     roi_x0: float = 0.01
     roi_x1: float = 0.99
-    roi_y0: float = 0.55
+    roi_y0: float = 0.60
     roi_y1: float = 0.85
     ema_alpha: float = 0.7
     scan_lines: int = 5

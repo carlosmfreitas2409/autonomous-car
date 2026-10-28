@@ -21,6 +21,7 @@ class StripEffect(Enum):
     POLICE = 8
     BLUE_BREATHE = 9
     CYAN_SWEEP = 10
+    YELLOW_PULSE = 11
 
 
 class DockScene(Enum):
@@ -136,7 +137,7 @@ class LightsController:
         if self._scene is not None:
             return _SCENE_STRIP[self._scene]
         if not self._autonomous:
-            return StripEffect.GREEN
+            return StripEffect.YELLOW_PULSE
         return StripEffect.POLICE if self._speed_test else StripEffect.CYAN
 
     def compute(self) -> LightsOutput:

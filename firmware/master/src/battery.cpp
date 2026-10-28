@@ -9,6 +9,7 @@ namespace battery {
 namespace {
 
 float filtered_pct = 0.0f;
+float filtered_volts = 0.0f;
 uint32_t last_sample_ms = 0;
 bool led_on[config::BATT_LED_COUNT] = {};
 
@@ -55,7 +56,8 @@ void init() {
     pinMode(config::BATT_LED_PINS[i], OUTPUT);
     digitalWrite(config::BATT_LED_PINS[i], LOW);
   }
-  filtered_pct = volts_to_pct(read_battery_volts());
+  filtered_volts = read_battery_volts();
+  filtered_pct = volts_to_pct(filtered_volts);
   refresh_leds();
   last_sample_ms = millis();
 }
@@ -65,9 +67,14 @@ void update() {
   if (now - last_sample_ms < config::BATT_SAMPLE_PERIOD_MS) return;
   last_sample_ms = now;
 
-  const float pct = volts_to_pct(read_battery_volts());
-  filtered_pct += config::BATT_FILTER_ALPHA * (pct - filtered_pct);
+  const float volts_now = read_battery_volts();
+  filtered_volts += config::BATT_FILTER_ALPHA * (volts_now - filtered_volts);
+  filtered_pct += config::BATT_FILTER_ALPHA * (volts_to_pct(volts_now) - filtered_pct);
   refresh_leds();
 }
+
+float volts() { return filtered_volts; }
+
+float percent() { return filtered_pct; }
 
 }  // namespace battery
