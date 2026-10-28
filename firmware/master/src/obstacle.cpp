@@ -40,7 +40,7 @@ void recompute() {
   }
 }
 
-}  // namespace
+}
 
 void init() {
   for (uint8_t i = 0; i < config::SONAR_SENSORS; i++) distances[i] = config::SONAR_NO_ECHO;
@@ -79,4 +79,4 @@ char state_char() {
   return '?';
 }
 
-}  // namespace obstacle
+}

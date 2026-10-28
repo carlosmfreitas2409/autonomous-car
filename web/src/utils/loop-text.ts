@@ -2,10 +2,6 @@ import type { CartState, DockCheck, Mission, Policy, Reply } from '@/types';
 
 import { formatNumber } from './format';
 
-// The loop speaks English in its logs and the tuner; everything it says that
-// reaches the dashboard is worded here. Text it has not been taught falls
-// back to the loop's own words rather than disappearing.
-
 const CONTROLLER_STOPS: Record<string, string> = {
   obstacle: 'Obstáculo à frente',
   'lane lost': 'Faixa perdida',

@@ -36,7 +36,6 @@ function deliveryAlerts(state: CartState): Alert[] {
       detail: policy.applied ? '' : 'não aplicado',
     });
   }
-  // At a dock the dock card says it all; a hold there is the job, not a problem.
   const isAtDock = ['docked', 'checking', 'done'].includes(mission.state);
   if ((mission.hold && !isAtDock) || mission.state === 'slowing') {
     alerts.push({ text: missionLine(mission), tone: mission.hold ? 'bad' : 'warn' });

@@ -1,17 +1,3 @@
-"""The dashboard's web server: a daemon thread inside the car process.
-
-It has to live in this process: only one process can own the cameras and the
-serial port. It never touches the control loop directly, only the `Hub`.
-
-    GET  /            the built web app (web/dist), fully offline
-    WS   /ws/control  JSON: state at <= 20 Hz, events, acks <- commands
-    WS   /ws/video    binary: 1 source byte + JPEG, one frame per credit
-
-Video uses credit flow control: the browser asks for the next frame after it
-has drawn the last one, and gets the newest frame there is. On a bad link the
-frame rate drops; latency does not grow.
-"""
-
 from pathlib import Path as FilePath
 from typing import Optional
 import asyncio
@@ -75,14 +61,12 @@ class DashboardServer:
         except Exception:
             pass
 
-    # --- thread ------------------------------------------------------------
-
     def _run(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._startup())
-        except BaseException as error:  # port in use, ...
+        except BaseException as error:
             self._error = error
             self._ready.set()
             return
@@ -109,8 +93,6 @@ class DashboardServer:
             await self._runner.cleanup()
         self._loop.stop()
 
-    # --- static ------------------------------------------------------------
-
     async def _index(self, _request: web.Request) -> web.StreamResponse:
         index = self._dist / "index.html"
         if not index.is_file():
@@ -123,8 +105,6 @@ class DashboardServer:
         if candidate.parent != self._dist.resolve() or not candidate.is_file():
             raise web.HTTPNotFound()
         return web.FileResponse(candidate)
-
-    # --- control -------------------------------------------------------------
 
     async def _control(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=2.0)
@@ -163,7 +143,6 @@ class DashboardServer:
             return
         if not self._hub.submit(command):
             await ws.send_json({"type": "nack", "id": command_id, "cmd": command.type, "reason": "busy"})
-        # The loop acks (or refuses) the rest once it has applied them.
 
     async def _push(self, ws: web.WebSocketResponse, client: int) -> None:
         sent_seq = -1
@@ -188,8 +167,6 @@ class DashboardServer:
         except (ConnectionResetError, asyncio.CancelledError):
             pass
 
-    # --- video -------------------------------------------------------------
-
     async def _video(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=2.0, max_msg_size=0)
         await ws.prepare(request)
@@ -209,8 +186,6 @@ class DashboardServer:
                 continue
             frame = await self._newer_frame(source, last_seq[source])
             if frame is None or ws.closed:
-                # Nothing new within the wait: send an empty tick so the
-                # browser keeps its credit loop alive and knows it is stale.
                 await ws.send_bytes(bytes([_SOURCES[source]]))
                 continue
             last_seq[source] = frame.seq

@@ -1,9 +1,3 @@
-"""Identity, confirmation, hysteresis and distance, with fake readers.
-
-No camera and no model: detections are hand-built and the crop readers are
-replaced by callables that answer whatever the test needs.
-"""
-
 import numpy as np
 import pytest
 
@@ -20,7 +14,6 @@ def _stack():
 
 
 def light_reader(*states, verified=True):
-    """Answers the given states in order, then repeats the last one."""
     queue = list(states)
 
     def read(_crop):
@@ -44,7 +37,6 @@ def det(label="stop", box=(500, 200, 600, 300), conf=0.8):
 
 
 def run(tracker, frames, start=0.0, step=0.1):
-    """Feed a list of detection lists, one per update; return the last tracks."""
     tracks = []
     for index, detections in enumerate(frames):
         tracks = tracker.update(detections, FRAME, start + index * step)
@@ -86,7 +78,6 @@ def test_stop_confirms_on_two_of_three():
     assert not tracks[0].confirmed
     tracks = run(tracker, [[det()]], start=0.1)
     assert tracks[0].confirmed and tracks[0].actionable
-    # One missed frame in three still counts; a lone hit never does.
     tracker = SignTracker()
     tracks = run(tracker, [[det()], [], [det()]])
     assert tracks[0].confirmed

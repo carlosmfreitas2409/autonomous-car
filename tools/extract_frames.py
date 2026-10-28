@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Turn a clip, or a live camera, into a folder of frames.
 
-Thirty seconds of walking is about nine hundred varied frames; ten stills is
-ten. Every shoot in this phase is video for that reason, and this is what turns
-one into training backgrounds or into images to label.
-
-    python3 tools/extract_frames.py clips/light_approach.mp4 --out dataset/backgrounds --every 6
-    python3 tools/extract_frames.py clips/*.mov --out assets/real/images/detour --every 12 --limit 120
-    python3 tools/extract_frames.py --record 1 --out dataset/backgrounds --every 6
-
-A recording uses the sign camera's settings (1280x720, MJPG, autofocus and
-auto white balance off) and shows a preview. q or ESC stops it. A later run
-keeps the frames already in --out and continues the numbering.
-"""
 
 import argparse
 from pathlib import Path
@@ -38,7 +25,7 @@ def record(camera: int, out: Path, every: int, limit: int, prefix: str) -> int:
         capture.release()
         return 0
     _configure_camera(capture)
-    window = f"camera {camera}  —  q to stop"
+    window = f"camera {camera} - q to stop"
 
     def preview(frame, written: int) -> bool:
         shown = frame.copy()
@@ -60,7 +47,6 @@ def record(camera: int, out: Path, every: int, limit: int, prefix: str) -> int:
 
 
 def _take(capture, out: Path, every: int, limit: int, prefix: str, stem: str, preview):
-    """Keep one frame in `every`, until the source ends, the limit, or preview says stop."""
     out.mkdir(parents=True, exist_ok=True)
     base = _next_index(out, prefix, stem, every)
     if base:
@@ -82,7 +68,6 @@ def _take(capture, out: Path, every: int, limit: int, prefix: str, stem: str, pr
 
 
 def _next_index(out: Path, prefix: str, stem: str, every: int) -> int:
-    """First free frame number after whatever this stem already wrote."""
     highest = -1
     needle = f"{prefix}{stem}_"
     for path in out.glob(f"{needle}*.jpg"):
@@ -95,7 +80,6 @@ def _next_index(out: Path, prefix: str, stem: str, every: int) -> int:
 
 
 def _configure_camera(capture) -> None:
-    # Same settings as the sign camera, so a shoot matches what the car sees.
     settings = (
         ("MJPG", cv.CAP_PROP_FOURCC, cv.VideoWriter_fourcc(*"MJPG")),
         ("1280 wide", cv.CAP_PROP_FRAME_WIDTH, 1280),
@@ -110,8 +94,7 @@ def _configure_camera(capture) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("clips", nargs="*", help="video files; omit when using --record")
     parser.add_argument("--record", type=int, metavar="INDEX",
                         help="record from this camera index instead of a file")

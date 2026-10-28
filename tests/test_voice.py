@@ -1,6 +1,3 @@
-"""Dock prompts: every announcement has words, and speech never blocks or piles up."""
-
-
 import pytest
 
 import voice
@@ -20,7 +17,6 @@ def test_every_announcement_has_words():
 
 
 class FakeSay:
-    """Stands in for `say`: busy until `finish()`."""
     started: list = []
 
     def __init__(self, command, **_):
@@ -61,7 +57,7 @@ def test_speaking_until_the_last_prompt_ends(say):
     speaker.announce(Announcement("released", "A"))
     assert speaker.speaking
     say[0].busy = False
-    assert speaker.speaking                                 # "released" still waits its turn
+    assert speaker.speaking
     speaker.update()
     say[1].busy = False
     assert not speaker.speaking

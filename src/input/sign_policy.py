@@ -1,21 +1,3 @@
-"""Confirmed signs and lights become one number: a throttle scale.
-
-Same shape as `Autonomous.obstacle_scale`: 1.0 leaves the car alone, 0.0
-stops it, and the ramp between them runs from 3 m down to 2 m. On top of the
-scale there is `hold`, which the loop uses to freeze steering while stopped.
-
-Two rules keep this from ever trapping the car or stopping it twice:
-
-  * every hold ends - a stop dwells for a fixed time, a light gate has a 10 s
-    ceiling and dies with a stale snapshot;
-  * a sign is consumed by track id once it has been acted on, and for 3 s
-    after any release nothing close is allowed to start a new one. Ids are
-    never reused, so a consumed id cannot come back.
-
-The policy never steers, and it never acts on a detour or delivery sign; it
-only reports them.
-"""
-
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -32,14 +14,14 @@ _SLOW_DISTANCE_M = 3.0
 _STOP_DISTANCE_M = 2.0
 _SETTLE_S = 0.5
 _DWELL_S = 3.0
-_MAX_HOLD_S = 10.0          # every hold ends
-_MAX_APPROACH_S = 8.0       # an approach that never reaches the line stops where it is
-_STALE_S = 0.4              # a snapshot older than this never acts
-_LOST_S = 1.0               # a committed approach whose track vanishes this long is abandoned
-_LOST_WAITING_S = 2.0       # a light gate whose track vanishes this long while waiting releases
-_REARM_S = 3.0              # after any release, ignore that class this long (same sign still in view)
-_REARM_DISTANCE_M = 2.5     # ...but only things this close; a second sign further up is real
-_PASS_DISTANCE_M = 0.8      # a light first seen closer than this is under the car already: waved through
+_MAX_HOLD_S = 10.0
+_MAX_APPROACH_S = 8.0
+_STALE_S = 0.4
+_LOST_S = 1.0
+_LOST_WAITING_S = 2.0
+_REARM_S = 3.0
+_REARM_DISTANCE_M = 2.5
+_PASS_DISTANCE_M = 0.8
 
 
 class PolicyState(Enum):
@@ -58,8 +40,8 @@ class SignConstraint:
     reason: str = ""
     stale: bool = False
     distance_m: Optional[float] = None
-    detour: Optional[Track] = None      # reported, never acted on
-    delivery: Optional[Track] = None    # nearest delivery sign; .variant says A/B/C or None
+    detour: Optional[Track] = None
+    delivery: Optional[Track] = None
 
 
 class _Commitment:
@@ -94,9 +76,6 @@ class SignPolicy:
         self._released_at: Optional[float] = None
 
     def reset(self) -> None:
-        """E-stop: drop the active approach, gate and hold. What has been
-        consumed stays consumed: an interrupted stop repeats, a completed one
-        does not."""
         self._stop = None
         self._light = None
 
@@ -117,8 +96,6 @@ class SignPolicy:
         constraint.detour = _nearest(tracks, "detour")
         constraint.delivery = _nearest(tracks, "delivery_sign")
 
-        # Most restrictive wins: any hold beats a ramp, a lower scale beats a
-        # higher one. A red light outranks a stop sign for the caption only.
         held = light_state is PolicyState.WAITING_GREEN or stop_state in (PolicyState.HOLDING, PolicyState.DWELLING)
         if held:
             if light_state is PolicyState.WAITING_GREEN:
@@ -152,30 +129,24 @@ class SignPolicy:
             constraint.reason = "stale"
         return constraint
 
-    # ------------------------------------------------------------------
-
     def _update_stop(self, tracks, by_id, actionable, now):
         approach = self._stop
         if approach is not None:
             approach.observe(by_id.get(approach.id), now)
             if approach.hold_since is None:
                 if now - approach.last_seen > _LOST_S:
-                    # Abandoned: nothing consumed, so a respawned id can commit again.
                     logger.info("stop #%d: lost for %.1f s, abandoned", approach.id, _LOST_S)
                     self._stop = approach = None
                 elif approach.distance is not None and approach.distance <= _STOP_DISTANCE_M:
                     approach.hold_since = now
                     logger.info("stop #%d: at the line (%.2f m), holding", approach.id, approach.distance)
                 elif now - approach.committed_at > _MAX_APPROACH_S:
-                    # Never reached the line: the car has stopped short or the
-                    # distance is biased. Stop here rather than crawl forever.
                     approach.hold_since = now
                     logger.warning("stop #%d: %.0f s approaching, still %.2f m - holding here",
                                    approach.id, _MAX_APPROACH_S, approach.distance or -1.0)
             if approach is not None and approach.hold_since is not None:
                 held = now - approach.hold_since
                 if held >= _SETTLE_S + _DWELL_S:
-                    # The sign still in view is this sign, confirmed or not.
                     self._consumed |= {t.id for t in tracks if t.label == "stop"}
                     self._consumed.add(approach.id)
                     self._released_at = now
@@ -214,7 +185,6 @@ class SignPolicy:
             track = by_id.get(gate.id)
             gate.observe(track, now)
             if track is not None and track.light_state is LightState.GREEN:
-                # Cleared, nothing else: it may re-gate if it goes red again.
                 logger.info("light #%d: GREEN, gate cleared", gate.id)
                 self._light = gate = None
             elif stale:
@@ -248,12 +218,9 @@ class SignPolicy:
                 if track.id in self._passed or track.id in self._consumed:
                     continue
                 if track.distance_m <= _PASS_DISTANCE_M:
-                    # Braking would put the car under the light: waved through.
                     logger.info("light #%d: %s first seen at %.2f m, waved through",
                                 track.id, track.light_state.value, track.distance_m)
                     self._passed.add(track.id)
-            # A curve can reveal the light inside the line. A red is a red:
-            # the car stops late rather than not at all.
             candidates = [
                 t for t in actionable
                 if t.label == "traffic_light" and t.light_state in HALT_STATES
@@ -273,8 +240,6 @@ class SignPolicy:
         if self._light is not None:
             return _ramp(self._light.distance), PolicyState.SLOWING, self._light.distance, "red light ahead"
 
-        # Yellow: slow down, keep rolling. The loop floors the throttle at the
-        # crawl speed, so this never stops the car on its own.
         caution = [
             t for t in actionable
             if t.label == "traffic_light" and t.light_state in CAUTION_STATES

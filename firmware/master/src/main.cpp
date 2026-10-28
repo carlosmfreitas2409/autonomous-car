@@ -13,17 +13,7 @@
 #include "telemetry.h"
 
 namespace {
-
-// Bumps PWM frequency from Arduino's default 490 Hz to ~31 kHz, above audible
-// range so motors don't whine. Pokes AVR timer registers directly because there
-// is no Arduino API for changing PWM frequency.
 void configure_high_freq_pwm() {
-  // Each block: phase-correct 8-bit mode + prescaler 1 → ~31 kHz.
-  // Timer 0 (millis/micros) is left untouched. Timer 5 is owned by the buzzer
-  // (square wave on OC5A/pin 46, see buzzer.cpp) so it is configured there, not
-  // here. Timer 2 drives the rear-right motor PWM (pins 9/10) at the Arduino
-  // default ~490 Hz; it can be bumped to 31 kHz too now that tone() is no longer
-  // used, which would also silence that motor's whine.
   TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(WGM10);
   TCCR1B = _BV(CS10);
   TCCR3A = _BV(COM3A1) | _BV(COM3B1) | _BV(COM3C1) | _BV(WGM30);

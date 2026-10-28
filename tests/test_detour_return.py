@@ -1,6 +1,3 @@
-"""DetourReturn on hand-built tracker results: a car held still inside the
-detour (a pickup dock) must not spend the carry it owes the blind exit."""
-
 from types import SimpleNamespace
 
 from input.autonomous import ControlProfile
@@ -16,8 +13,6 @@ def lane(whole=True):
 
 
 def drive(watch, path, seconds, whole=True, holding=None, standing=False):
-    """Feed `seconds` of frames the way the main loop does; `holding` is the
-    controller's hold, counting up from the first frame when given."""
     held = 0.0
     profiles = []
     for _ in range(round(seconds / DT)):
@@ -31,7 +26,6 @@ def drive(watch, path, seconds, whole=True, holding=None, standing=False):
 
 
 def into_the_detour(watch):
-    """Armed at the sign, through the entrance gap, docked once inside."""
     path, _ = drive(watch, Path.DETOUR, 1.0)
     path, _ = drive(watch, path, 0.5, whole=False)
     return drive(watch, path, 1.0)[0]

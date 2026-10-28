@@ -4,4 +4,4 @@ namespace telemetry {
 
 void update();
 
-}  // namespace telemetry
+}

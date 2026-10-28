@@ -1,11 +1,3 @@
-"""The A/B/C reader, against drawn crops.
-
-The gate this module had to clear was: never name the wrong bay. Refusing costs
-a delivery that does not happen and the car reads the sign again from closer;
-naming the wrong one costs a delivery to the wrong place. So most of these
-tests check that a hard case comes back None rather than confident.
-"""
-
 import cv2 as cv
 import pytest
 
@@ -22,8 +14,6 @@ def test_reads_each_variant(variant):
 
 @pytest.mark.parametrize("variant", ["A", "B", "C"])
 def test_reads_each_variant_at_the_floor(variant):
-    # A couple of pixels clear of the floor: the fixture's own margin rounds to
-    # whole pixels, so exactly MIN_CROP_HEIGHT lands a hair under it.
     crop = delivery_sign_crop(variant, height=MIN_CROP_HEIGHT + 4)
     assert read_delivery_variant(crop).variant == variant
 
@@ -36,8 +26,6 @@ def test_counts_the_sides(variant, sides):
 
 @pytest.mark.parametrize("variant,holes", [("A", 1), ("B", 2), ("C", 0)])
 def test_counts_the_counters(variant, holes):
-    """A has one counter, B two, C none - the glyphs are topologically
-    distinct, which is why the hole count needs no threshold."""
     reading = read_delivery_variant(delivery_sign_crop(variant, height=160))
     assert reading.holes == holes
 
@@ -49,8 +37,6 @@ def test_rotation_only_moves_the_phase(rotation):
 
 
 def test_white_background_does_not_leak():
-    """The flood is seeded just inside the sign's own box. On a white wall a
-    seed that misses floods the room instead, and the room is not convex."""
     reading = read_delivery_variant(delivery_sign_crop("B", height=160, background=250))
     assert reading.variant == "B"
 
@@ -72,8 +58,6 @@ def test_blank_crop_refuses():
 
 
 def test_disagreement_refuses_rather_than_picks():
-    """A hexagon carrying a C: six sides say A, the letter says C. There is no
-    such sign, so there is no answer."""
     crop = delivery_sign_crop("A", height=200)
     height, width = crop.shape[:2]
     cv.rectangle(crop, (int(width * 0.3), int(height * 0.3)),

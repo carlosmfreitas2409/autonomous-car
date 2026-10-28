@@ -27,4 +27,4 @@ State state();
 char state_char();
 uint16_t ms_since_last_command();
 
-}  // namespace safety
+}

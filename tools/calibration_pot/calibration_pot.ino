@@ -1,23 +1,3 @@
-// Steering calibration using a 10k linear potentiometer (the red/yellow one)
-// instead of an AS5600 magnetic encoder.
-//
-// Wiring:
-//   pot outer pin 1  -> 5V
-//   pot outer pin 2  -> GND
-//   pot wiper (center) -> PIN_STEER_POT (analog input)
-// Mechanically couple the pot shaft to the steering linkage so it sweeps a
-// good chunk of its travel between full-left and full-right. Avoid running it
-// into its end stops.
-//
-// Commands (Serial Monitor, 115200, newline ending):
-//   r <ms> [pwm]   pulse right
-//   l <ms> [pwm]   pulse left
-//   s              stop now
-//   c              capture current position as center
-//   ml             capture current position as max-left
-//   mr             capture current position as max-right
-//   p              print captured values as config.h snippet
-
 #include <Arduino.h>
 
 constexpr uint8_t PIN_STEER_R_EN = 30;
@@ -25,7 +5,6 @@ constexpr uint8_t PIN_STEER_L_EN = 31;
 constexpr uint8_t PIN_STEER_RPWM = 11;
 constexpr uint8_t PIN_STEER_LPWM = 12;
 
-// Wiper of the 10k pot. A0 on the Mega; change if you wire it elsewhere.
 constexpr uint8_t PIN_STEER_POT = A11;
 
 constexpr uint16_t MAX_PULSE_MS = 500;
@@ -33,7 +12,6 @@ constexpr uint8_t MAX_PWM = 140;
 constexpr uint8_t DEFAULT_PWM = 90;
 constexpr uint16_t ANGLE_PRINT_PERIOD_MS = 500;
 
-// Median-of-N sampling to knock down ADC jitter on the analog read.
 constexpr uint8_t POT_SAMPLES = 9;
 
 bool pulse_active = false;
@@ -50,7 +28,6 @@ uint16_t read_angle() {
   for (uint8_t i = 0; i < POT_SAMPLES; ++i) {
     samples[i] = (uint16_t)analogRead(PIN_STEER_POT);
   }
-  // Insertion sort, then take the middle element.
   for (uint8_t i = 1; i < POT_SAMPLES; ++i) {
     uint16_t key = samples[i];
     int8_t j = (int8_t)i - 1;
@@ -141,7 +118,6 @@ void print_captured() {
   }
 }
 
-// Splits "r 100 80" into argv parts. Returns count.
 uint8_t tokenize(char* line, char* argv[], uint8_t max_args) {
   uint8_t n = 0;
   char* p = line;
@@ -156,7 +132,6 @@ uint8_t tokenize(char* line, char* argv[], uint8_t max_args) {
 }
 
 void handle_line(char* line) {
-  // Trim trailing CR/whitespace.
   for (char* p = line; *p; ++p) {
     if (*p == '\r' || *p == '\n') { *p = '\0'; break; }
   }
@@ -201,7 +176,6 @@ void poll_serial() {
   static uint8_t len = 0;
 
   while (Serial.available()) {
-    // Mid-pulse: any incoming byte aborts immediately.
     if (pulse_active) stop_pulse();
 
     char c = (char)Serial.read();
@@ -214,7 +188,6 @@ void poll_serial() {
     } else if (len < sizeof(buf) - 1) {
       buf[len++] = c;
     } else {
-      // Overflow: drop and reset.
       len = 0;
     }
   }

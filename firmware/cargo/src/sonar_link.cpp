@@ -18,11 +18,10 @@ bool unlock_seen = false;
 uint32_t last_command_ms = 0;
 
 void dispatch() {
-  // Only the two exact commands: a garbled byte must never read as an unlock.
   if (strcmp(line_buf, "K 1") == 0) {
     unlock_seen = true;
   } else if (strcmp(line_buf, "K 0") == 0) {
-    unlock_seen = false;  // an explicit lock ends the lease at once
+    unlock_seen = false;
   } else {
     return;
   }
@@ -60,4 +59,4 @@ bool unlock_requested() {
   return unlock_seen && (millis() - last_command_ms) <= config::UNLOCK_LEASE_MS;
 }
 
-}  // namespace sonar_link
+}

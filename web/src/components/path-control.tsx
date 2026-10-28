@@ -14,7 +14,6 @@ interface PathControlProps {
 
 const PATHS: PathName[] = ['normal', 'straight', 'detour'];
 
-// DetourReturn's stages (path.py), as the loop names them.
 function detourStageText(stage: string) {
   if (stage === 'waiting for the entrance') return 'Aguardando a entrada';
   const inside = /^inside ([\d.]+)s$/.exec(stage);

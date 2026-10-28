@@ -27,20 +27,11 @@ cd web && bun install && bun run build
 Then as usual:
 
 ```sh
-python src/main.py                   # dashboard on http://<cart-ip>:8000/
-python src/main.py --dashboard-port 8080
-python src/main.py --no-dashboard    # the car exactly as before
+python src/main.py                   # dashboard on http://<cart-ip>/
 ```
 
 Without aiohttp, without `web/dist`, or with the port taken, the car starts
 and drives as before. The log says why the dashboard is missing.
-
-**Replay at the desk** (no car, real pipeline):
-
-```sh
-SIGN_CAMERA=clips/light_approach.mp4 python src/main.py --video recordings/day10_stragth.mp4
-open http://localhost:8000/
-```
 
 The car boots stopped. Set the letters, then click Autônomo.
 

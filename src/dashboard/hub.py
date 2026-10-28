@@ -1,16 +1,3 @@
-"""The one place the control loop and the dashboard server meet.
-
-The loop thread only ever does constant-time things here: swap in the newest
-state dict and frame references, and drain a short list of commands. It never waits on a client. The server thread reads
-the same slots and does all the slow work (JSON, JPEG, sockets).
-
-Two rules make the network unable to hurt the car:
-
-- Everything outbound is latest-value: a slow client skips states and frames,
-  nothing queues behind it.
-- E-stop and mode commands are kept in order and never dropped.
-"""
-
 from collections import deque
 from dataclasses import dataclass
 from typing import Optional
@@ -46,8 +33,6 @@ class Hub:
         self._replies: dict[int, deque] = {}
         self._clients = itertools.count(1)
 
-    # --- loop side -------------------------------------------------------
-
     def publish(self, state: dict, drive_frame: Optional[np.ndarray], sign_frame: Optional[np.ndarray]) -> None:
         with self._lock:
             self._state = state
@@ -79,8 +64,6 @@ class Hub:
                 "level": level, "source": source, "text": text,
             })
 
-    # --- server side -----------------------------------------------------
-
     def connect(self) -> int:
         with self._lock:
             client = next(self._clients)
@@ -94,7 +77,6 @@ class Hub:
     def submit(self, command: Command) -> bool:
         with self._lock:
             if len(self._commands) >= _MAX_COMMANDS:
-                # Never drop an e-stop: shed the oldest non-safety command.
                 for queued in self._commands:
                     if queued.type not in ("estop", "mode"):
                         self._commands.remove(queued)
@@ -129,10 +111,6 @@ class Hub:
 
 
 class EventLogHandler(logging.Handler):
-    """Feeds the car's own log lines (mission decisions, path changes, stops,
-    mode changes) into the dashboard's timeline: they already narrate every
-    decision, so the timeline adds no logic of its own."""
-
     _SKIP = ("aiohttp", "asyncio")
 
     def __init__(self, hub: Hub):
@@ -144,5 +122,5 @@ class EventLogHandler(logging.Handler):
             return
         try:
             self._hub.event(record.levelname.lower(), record.name, record.getMessage())
-        except Exception:  # never let the timeline break logging
+        except Exception:
             self.handleError(record)

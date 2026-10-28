@@ -16,7 +16,7 @@ class StripEffect(Enum):
     BLUE = 3
     STROBE = 4
     RAINBOW = 5
-    CYAN = 6            # drawn as SAE J3134 / DRIVE PILOT turquoise (firmware strip.cpp)
+    CYAN = 6
     RED_PULSE = 7
     POLICE = 8
     BLUE_BREATHE = 9
@@ -25,11 +25,10 @@ class StripEffect(Enum):
 
 
 class DockScene(Enum):
-    """What the lamps tell the people at a dock (mission.py decides which)."""
-    WAITING = "waiting"         # docked: take your time, the loading zone is lit
-    CHECKING = "checking"       # released: about to move, the loading zone closes
-    DELIVERED = "delivered"     # unloaded, for a moment
-    PARKED = "parked"           # delivered, ready for the next order
+    WAITING = "waiting"
+    CHECKING = "checking"
+    DELIVERED = "delivered"
+    PARKED = "parked"
 
 
 _SCENE_STRIP = {
@@ -38,43 +37,32 @@ _SCENE_STRIP = {
     DockScene.DELIVERED: StripEffect.GREEN,
     DockScene.PARKED: StripEffect.BLUE_BREATHE,
 }
-# The door projectors light the ground where the attendant works, and the
-# logo with them, while the car stands at a dock.
 _SCENE_LIT = (DockScene.WAITING, DockScene.DELIVERED, DockScene.PARKED)
 
 
 @dataclass
 class LightsOutput:
-    # Front combined housings: turn signal + DRL share a housing but are separate lamps.
     front_left_signal: bool = False
     front_right_signal: bool = False
     front_left_drl: bool = False
     front_right_drl: bool = False
 
-    # Rear 4-in-1: signal wire.
     back_left_signal: bool = False
     back_right_signal: bool = False
 
-    # Rear 4-in-1: dim "running" wire (the lamp's always-on position when running
-    # lights are engaged). Driven by the same relay as the front DRLs.
     back_left_position: bool = False
     back_right_position: bool = False
 
-    # Rear 4-in-1: brake wire. Independent of position — adds brightness on top
-    # of the position level, or lights the lamp directly from off to bright.
     back_left_brake: bool = False
     back_right_brake: bool = False
 
-    # Rear 4-in-1: reverse wire.
     reverse_left: bool = False
     reverse_right: bool = False
 
-    # Front low beam.
     low_beam: bool = False
 
     logo: bool = False
 
-    # Doors projector
     projector: bool = False
 
     strip_effect: StripEffect = StripEffect.OFF
@@ -141,9 +129,6 @@ class LightsController:
         return StripEffect.POLICE if self._speed_test else StripEffect.CYAN
 
     def compute(self) -> LightsOutput:
-        # Stopped for an obstacle: hazards, over the loop's override (Detour,
-        # mission) and the operator's choice; those return once it clears.
-        # A stop sign or red light is a normal stop, so no hazards there.
         if self._obstacle_stopped:
             signal = TurnSignal.HAZARD
         elif self.signal_override is not None:
@@ -152,7 +137,6 @@ class LightsController:
             signal = self.turn_signal
         left_active = signal in (TurnSignal.LEFT, TurnSignal.HAZARD)
         right_active = signal in (TurnSignal.RIGHT, TurnSignal.HAZARD)
-        # The speed test is a show: every lamp on, over the operator's choice.
         show = self._speed_test
         drl = self.drl or show
         lit = show or self._scene in _SCENE_LIT

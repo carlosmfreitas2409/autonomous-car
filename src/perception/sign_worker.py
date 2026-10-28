@@ -1,19 +1,3 @@
-"""Sign perception on its own thread, with its own camera.
-
-The control loop must never wait on inference, a camera read or a drawing
-call. So all of that happens here, on a daemon thread, and the only thing the
-loop ever does is take a lock and read the latest `SignSnapshot`. A snapshot is
-never mutated after it is published; the tracker hands out fresh `Track`
-values, so the loop can hold one for as long as it likes.
-
-A missing model or camera is an ordinary state: the snapshot says so, the pane
-shows a red banner, and the policy sees no tracks. The car drives as before.
-
-`SIGN_CAMERA`, if set, replaces the camera index list. It takes an index or a
-video path, so the whole live stack runs on a clip at a desk. A bench aid, not
-a tuning knob.
-"""
-
 from dataclasses import dataclass, field
 from typing import Optional
 import logging
@@ -31,12 +15,10 @@ from perception.traffic_light import LightState
 logger = logging.getLogger(__name__)
 
 
-# Fixed pane size. The GUI never cares what the camera negotiated.
 DEBUG_WIDTH, DEBUG_HEIGHT = 640, 360
 
 _CAMERA_RETRY_S = 2.0
 
-# Copied from tools/inspect_signs.py: src/ never imports from tools/.
 STATE_COLOUR = {
     LightState.RED: (60, 60, 235),
     LightState.YELLOW: (40, 210, 235),
@@ -57,12 +39,12 @@ BANNER_RED = (0, 0, 160)
 class SignSnapshot:
     tracks: list[Track] = field(default_factory=list)
     frame: Optional[np.ndarray] = None
-    timestamp: float = 0.0          # time.monotonic() of the frame; 0 = never
+    timestamp: float = 0.0
     camera_open: bool = False
     detector_available: bool = False
     status: str = ""
     fps: float = 0.0
-    paused: bool = False            # the speed test: no camera, no model
+    paused: bool = False
 
     def age(self, now: float) -> float:
         if self.timestamp <= 0.0:
@@ -73,11 +55,7 @@ class SignSnapshot:
 def render_overlay(frame: Optional[np.ndarray], tracks: list[Track], *,
                    detector_available: bool, camera_open: bool,
                    status: str = "", fps: float = 0.0) -> np.ndarray:
-    """The 640x360 pane: the camera frame with boxes, or a banner.
 
-    Rejected and unconfirmed tracks are drawn thin and grey with their reason,
-    so a suppressed detection is visible as a rejection rather than absent.
-    """
     if frame is None or frame.size == 0 or not camera_open:
         canvas = np.full((DEBUG_HEIGHT, DEBUG_WIDTH, 3), 24, np.uint8)
         scale, pad_x, pad_y = 1.0, 0, 0
@@ -156,8 +134,6 @@ class SignWorker:
         self._thread.start()
 
     def set_paused(self, paused: bool) -> None:
-        """Paused, the camera is let go and nothing is detected; resumed, it
-        is reopened like after a failed read."""
         if paused:
             self._paused.set()
         else:
@@ -171,8 +147,6 @@ class SignWorker:
         self._stop.set()
         if self._thread.is_alive():
             self._thread.join(timeout=3.0)
-
-    # ------------------------------------------------------------------
 
     def _publish(self, **fields) -> None:
         previous = self.get_snapshot()
@@ -301,15 +275,12 @@ class SignWorker:
 
 
 def _configure_camera(capture: cv.VideoCapture, index) -> None:
-    # AVFoundation ignores some of these silently, so each result is logged.
     settings = (
         ("fourcc MJPG", cv.CAP_PROP_FOURCC, cv.VideoWriter_fourcc(*"MJPG")),
         ("width 1280", cv.CAP_PROP_FRAME_WIDTH, 1280),
         ("height 720", cv.CAP_PROP_FRAME_HEIGHT, 720),
-        # Otherwise the driver queues frames and detections lag the road.
         ("buffersize 1", cv.CAP_PROP_BUFFERSIZE, 1),
         ("autofocus off", cv.CAP_PROP_AUTOFOCUS, 0),
-        # The light reader was measured on this camera's raw colour.
         ("auto white balance off", cv.CAP_PROP_AUTO_WB, 0),
     )
     for name, prop, value in settings:

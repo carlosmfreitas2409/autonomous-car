@@ -1,35 +1,5 @@
 #!/usr/bin/env python3
-"""The retrain gate: pass or fail, non-zero exit on fail.
 
-Three checks, all from things that have actually gone wrong here.
-
-**Read (c) first.** Checks (a) and (b) paste cutouts through the same compositor
-the model trained on, so they mark their own homework: the first model trained
-from this pipeline passed (a) at 0.90-0.95 on lit cutouts while scoring 0.000
-on the real photographs those cutouts were cut from. They catch a *scale*
-regression, which is worth catching, and nothing else. Only (c) touches data
-the training set has never seen.
-
-**(a) Close range.** Every traffic-light cutout, pasted at 40 through 640 px,
-must stay above 0.6 confidence *at every size*. The previous model was trained
-with a 280 px cap and measured 0.97 at 260 px, 0.18 at 400 px and 0.00 at
-500 px - it vanished exactly where the car has to stop, and an averaged metric
-never showed it, because most of the validation set was small. The sign artwork
-gets the same test up to 560 px: the signs had the same cap, at 260 px, and
-this check only looked at the light, so it took the first real delivery photos
-to find it.
-
-**(c) Real photographs.** `traffic_light` recall on `assets/real`, which is
-hand-labelled and never trained on. This is the only check here that can fail
-for the right reason.
-
-**(b) Bare emitters.** A lone lamp, a pair of lamps and an LED bar must not
-reach the runtime threshold. The record has a bare red disc called `stop` at
-0.86 and a green disc called `traffic_light` at 0.63. A vertical stack of three
-lamps is deliberately not probed: that is the light's own silhouette.
-
-    python3 tools/probe_signs.py --model models/signs.onnx --confidence 0.5
-"""
 
 import argparse
 import random
@@ -51,14 +21,11 @@ SIGN_SIZES = (40, 80, 140, 220, 320, 440, 560)
 SIGN_CLASSES = ("delivery_sign", "detour", "stop")
 CLOSE_RANGE_FLOOR = 0.6
 
-# What the model has to manage on photographs it has never seen. The plan's
-# Gate 4 number.
 REAL_RECALL_FLOOR = 0.9
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="models/signs.onnx")
     parser.add_argument("--confidence", type=float, default=0.5,
                         help="the runtime threshold the distractors must not reach")
@@ -172,7 +139,6 @@ def main() -> int:
 
 
 def _real_recall(detector, root: Path, threshold: float):
-    """How many hand-labelled traffic lights the model actually finds."""
     images = sorted(p for p in (root / "images").rglob("*.jpg"))
     found = total = lit_found = lit_total = 0
     for path in images:

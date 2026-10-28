@@ -1,6 +1,3 @@
-"""The lamps and the strip: the dock scenes and what outranks them, and the
-speed test's police show."""
-
 import pytest
 
 from lights import DockScene, LightsController, StripEffect, TurnSignal
@@ -32,7 +29,7 @@ def test_no_scene_is_the_car_as_before():
 
 def test_safety_outranks_the_scene():
     assert lit(DockScene.WAITING, estopped=True).strip_effect is StripEffect.RED_PULSE
-    assert lit(DockScene.WAITING, estopped=True).projector    # the attendant is still there
+    assert lit(DockScene.WAITING, estopped=True).projector
     lights = LightsController()
     lights.signal_override = TurnSignal.LEFT
     lights.update(0.0, estopped=False, autonomous=True, obstacle_stopped=True, scene=DockScene.CHECKING)

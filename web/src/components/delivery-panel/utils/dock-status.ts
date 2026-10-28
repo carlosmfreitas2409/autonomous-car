@@ -15,8 +15,6 @@ export interface DockStatus {
 
 const LID_RELEASES = 'Fechar a tampa libera o caminhão';
 
-// The dashboard only reflects the release: the lid (or the tuner, or the
-// PS5's Cross) gives it, never this page.
 export function dockStatus(state: CartState): DockStatus | null {
   const { mission, cargo } = state;
   const dock = mission.dock;
@@ -46,7 +44,6 @@ export function dockStatus(state: CartState): DockStatus | null {
   if (dock.role && isFailed && dock.check_failed) {
     line = CHECK_FAILED_TEXT[dock.check_failed];
     tone = 'stop';
-    // Shut again, the lid releases without the weight check (mission.py).
     hint = isPickup ? 'Carregue e feche a tampa de novo' : 'Retire a carga e feche a tampa de novo';
   } else if (dock.role && cargo && !cargo.lid_closed) {
     line = 'Feche a tampa quando terminar';

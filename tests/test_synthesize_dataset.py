@@ -1,10 +1,3 @@
-"""The compositor's stage-fixture distractors.
-
-The fixtures are the one negative taken from the venue itself rather than
-drawn, and they are only worth anything if they load and actually land in the
-frame - a silently empty folder would retrain the same spotlight confusion.
-"""
-
 import random
 import sys
 from pathlib import Path
@@ -36,8 +29,6 @@ def test_fixtures_are_pasted_when_given():
 
 
 def test_no_fixtures_keeps_the_old_distractors():
-    """Called without fixtures - as tools/probe_signs.py does - the rng stream
-    and so every frame is exactly what it was before fixtures existed."""
     a = np.full((720, 1280, 3), 30, np.uint8)
     b = a.copy()
     draw_distractors(a, random.Random(3))

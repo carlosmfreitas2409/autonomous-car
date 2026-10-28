@@ -26,7 +26,6 @@ float reading(uint8_t age) {
 bool init() {
   hx711.begin(config::PIN_SCALE_DT, config::PIN_SCALE_SCK);
   hx711.set_scale(config::SCALE_COUNTS_PER_GRAM);
-  // tare() waits for the HX711 with no timeout: a missing one would hang the node.
   if (!hx711.wait_ready_timeout(config::SCALE_READY_TIMEOUT_MS)) return false;
   hx711.tare(config::SCALE_TARE_SAMPLES);
   tared = true;
@@ -68,4 +67,4 @@ bool fault() {
   return !tared || (millis() - last_reading_ms) > config::SCALE_FAULT_MS;
 }
 
-}  // namespace scale
+}

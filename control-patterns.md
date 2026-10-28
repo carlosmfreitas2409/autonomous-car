@@ -248,8 +248,6 @@ Live, in this order: Normal lap; Straight lap A/B (`--record --log`); straight t
 | Camera height, pitch, FOV, one checkerboard clip | the `car` camera preset, `k1` |
 | Loop fps of `src/main.py` against `bb5853e` | the hold/release constants are in seconds; the chained scan and band cost CPU |
 
-Replay: `python src/main.py --video clips/detour_exit.mov` (add `--flip` for the mirrored entry clip), `--record out.mp4 --log run.csv` to capture a run, `--camera N` to pick the camera.
-
 ---
 
 ## Pickup and Delivery

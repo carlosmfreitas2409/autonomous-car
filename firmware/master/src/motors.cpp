@@ -14,7 +14,7 @@ struct DriveBridge {
   uint8_t l_en;
   uint8_t rpwm;
   uint8_t lpwm;
-  bool left_side;  // true = left-hand wheel (inner on a left turn)
+  bool left_side;
 };
 
 constexpr uint8_t BRIDGE_COUNT = 4;
@@ -43,15 +43,13 @@ void write_all_pwm(int16_t value) {
   }
 }
 
-// Electronic differential: slow the inner-side wheels (the side being steered
-// toward) so they stop scrubbing against the tighter arc they actually trace.
 void write_drive_with_differential(int16_t base) {
-  const float steer = steering::normalized_position();  // [-1,1], + = left
+  const float steer = steering::normalized_position();
   const float mag = steer < 0.0f ? -steer : steer;
   float inner_factor = 1.0f - config::DRIVE_DIFF_GAIN * mag;
   if (inner_factor < config::DRIVE_DIFF_MIN_FACTOR) inner_factor = config::DRIVE_DIFF_MIN_FACTOR;
 
-  const bool left_is_inner = steer > 0.0f;  // left turn -> left wheels inner
+  const bool left_is_inner = steer > 0.0f;
   for (uint8_t i = 0; i < BRIDGE_COUNT; ++i) {
     const float factor = (bridges[i].left_side == left_is_inner) ? inner_factor : 1.0f;
     write_bridge(i, (int16_t)(base * factor));
@@ -65,7 +63,7 @@ void write_all_enable(bool on) {
   }
 }
 
-}  // namespace
+}
 
 void init() {
   for (uint8_t i = 0; i < BRIDGE_COUNT; ++i) {
@@ -105,10 +103,6 @@ void disable() {
 }
 
 void update() {
-  // Asymmetric slew: ramp up slowly (gentle on the gearbox + avoids brownouts),
-  // ramp down fast so estop and watchdog stops feel crisp. Rate is chosen by the
-  // change in *speed magnitude* so a direction change ramps down fast toward zero
-  // before ramping the opposite direction up slowly.
   const int16_t target_mag = target_pwm < 0 ? -target_pwm : target_pwm;
   const int16_t current_mag = current_pwm < 0 ? -current_pwm : current_pwm;
   const bool same_direction = (target_pwm >= 0) == (current_pwm >= 0);
@@ -132,4 +126,4 @@ void emergency_stop() {
   disable();
 }
 
-}  // namespace motors
+}

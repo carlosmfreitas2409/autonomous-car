@@ -1,6 +1,5 @@
 import type { CartState } from '@/types';
 
-// A cart driving its pickup leg, every source healthy: tests change what they need.
 export const cartState = (): CartState => ({
   type: 'state',
   version: 2,

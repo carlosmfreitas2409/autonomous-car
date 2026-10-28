@@ -1,9 +1,3 @@
-"""The mission against a scripted lap: exit 1 (A inside), exit 2 (B inside,
-reached only straight past exit 1, since detour 1 rejoins beyond it), C on the
-main road, round again. The script follows the mission's own path
-requests, so a test reads as the drive the car would make, including the ones
-where a sign is missed or a detour is taken by mistake."""
-
 import dataclasses
 import itertools
 
@@ -31,12 +25,6 @@ def track(id, label, distance, variant=None, confirmed=True):
 
 
 class Drive:
-    """The car on the scripted track: a clock, a path and a log of what it did.
-    With `auto_release` someone at every dock releases the truck as soon as
-    it docks; `clear` is what the sonar says about the way ahead, `cargo`
-    what the cargo node does (None: not connected), `quiet` whether the
-    truck's voice is silent."""
-
     def __init__(self, pickup, delivery, auto_release=True):
         self.mission = Mission()
         self.mission.configure(pickup, delivery)
@@ -73,7 +61,6 @@ class Drive:
         return command
 
     def dock_at(self, letter, sign_id=None):
-        """Drive up to `letter` until the car docks there."""
         sign_id = next(self._ids) if sign_id is None else sign_id
         distance = ACT - 0.1
         while self.mission.dock is None:
@@ -88,8 +75,6 @@ class Drive:
             self.frame()
 
     def sign(self, label, variant=None, start=4.0, end=0.5):
-        """One sign from `start` to `end` metres. The car only moves when the
-        mission lets it, and never slower than a crawl."""
         sign_id = next(self._ids)
         distance = start
         for _ in range(2000):
@@ -108,10 +93,8 @@ class Drive:
         took = forced or self.path is Path.DETOUR
         self.log.append(f"exit {number}: {'detour' if took else 'straight'}")
         if self.path is not Path.DETOUR:
-            # Outside Detour the lane camera sees the mouth go by (ForkWatch).
             self.frame(fork_passed=True)
         if took:
-            # DetourReturn sends the path home once the car is inside.
             self.gap(1.0)
             self.path = Path.STRAIGHT
             letter = "A" if number == 1 else "B"
@@ -124,10 +107,6 @@ class Drive:
         self.gap(4.0)
 
     def laps(self, count=3, missed=(), forced=(), unreadable=(), phantom=(), start=None):
-        """Drive `count` laps, from the start line or parked at the letter
-        `start`. Faults are sets of (lap, place): place is an exit number, or
-        "C". Detour 1 rejoins past exit 2's mouth, so exit 2 is only met
-        straight past exit 1; every way round passes C."""
         lap, place = 0, 1 if start in (None, "C") else "C"
         while lap < count and not self.done:
             if (lap, place) in phantom:
@@ -149,8 +128,6 @@ class Drive:
 
 PAIRS = [(p, d) for p in "ABC" for d in "ABC" if p != d]
 
-
-# --- the route -------------------------------------------------------------
 
 @pytest.mark.parametrize("pickup,delivery,route", [
     ("A", "B", ["exit 1: detour", "A: pickup", "exit 1: straight", "exit 2: detour", "B: delivery"]),
@@ -191,7 +168,6 @@ def test_plan_route_from_a_parked_dock(pickup, delivery, start, route):
 
 
 def park_at(letter):
-    """A drive that has just delivered at `letter`."""
     drive = Drive("B" if letter == "A" else "A", letter).laps()
     assert drive.done and drive.mission.parked
     return drive
@@ -208,20 +184,12 @@ def test_next_order_leaves_from_where_it_was_delivered(start, pickup, delivery):
     assert drive.log == plan_route(pickup, delivery, start)
 
 
-# --- failures become a delay -----------------------------------------------
-
 def test_phantom_sign_before_exit_1_costs_nothing():
-    # A phantom detour sign puts the count one ahead, so exit 1's sign is taken
-    # for exit 2's. That Detour waits for the mouth after the phantom: exit 1's,
-    # so it is armed past exit 1 and the car takes exit 2 for B after all.
     drive = Drive("B", "C").laps(phantom={(0, 1)})
     assert drive.log == ["exit 1: straight", "exit 2: detour", "B: pickup", "C: delivery"]
 
 
 def test_wrong_detour_read_as_a_is_corrected():
-    # The count says exit 2 at exit 1's sign, so exit 1 is entered for B. Reading
-    # A puts the count back on exit 1, and B comes on the next lap - the live
-    # 2026-10-07 loop, where A used to say "exit 2 next" and it never ended.
     drive = Drive("B", "C")
     drive.mission.next_exit = 2
     drive.laps(forced={(0, 1)})
@@ -229,8 +197,6 @@ def test_wrong_detour_read_as_a_is_corrected():
 
 
 def test_after_a_the_next_sign_is_exit_1_again():
-    # Live 2026-10-07, pickup A, delivery B: detour 1 rejoins past exit 2's
-    # mouth, so the sign after A is exit 1's, and it must be passed straight.
     drive = Drive("A", "B")
     drive.exit(1)
     assert drive.mission.stage is Stage.DELIVERY
@@ -242,16 +208,12 @@ def test_after_a_the_next_sign_is_exit_1_again():
 
 
 def test_missed_exit_1_sign_costs_one_wrong_detour():
-    # Exit 2's sign is counted as exit 1 and entered for A; reading B inside
-    # fixes the count and A is picked up on the next lap.
     drive = Drive("A", "B").laps(missed={(0, 1)})
     assert drive.log == ["exit 1: straight", "exit 2: detour", "exit 1: detour", "A: pickup",
                          "exit 1: straight", "exit 2: detour", "B: delivery"]
 
 
 def test_detour_entered_by_mistake_costs_nothing():
-    # The car wanders into exit 2 although the mission said straight: B is not
-    # the target, so nothing stops, and reading B agrees with the count.
     drive = Drive("C", "A").laps(forced={(0, 2)})
     assert drive.log == ["exit 1: straight", "exit 2: detour", "C: pickup", "exit 1: detour", "A: delivery"]
 
@@ -262,13 +224,9 @@ def test_unread_letter_is_retried_next_lap():
 
 
 def test_double_counted_sign_is_corrected_by_c():
-    # A phantom sign after exit 2 would make exit 1 look like exit 2; C in
-    # between resets the count.
     drive = Drive("C", "A").laps(phantom={(0, "C")})
     assert drive.log == plan_route("C", "A")
 
-
-# --- what counts as a sign -------------------------------------------------
 
 def test_unconfirmed_and_far_signs_are_ignored():
     drive = Drive("A", "B")
@@ -292,7 +250,7 @@ def test_flickering_detour_sign_is_decided_once():
     assert drive.mission.next_exit == 2
     for _ in range(10):
         drive.frame()
-    drive.frame(track(2, "detour", 2.0))   # same sign back under a new id
+    drive.frame(track(2, "detour", 2.0))
     assert drive.mission.next_exit == 2
 
 
@@ -304,31 +262,25 @@ def test_stale_snapshot_decides_nothing():
 
 
 def test_no_sign_is_decided_while_inside_a_detour():
-    # Detour still armed (DetourReturn has not sent it home): a sign out here
-    # waits, and is decided once the path is home if it is still in range.
     drive = Drive("B", "A")
     drive.path = Path.DETOUR
     command = drive.frame(track(1, "detour", 2.5))
     assert command.path is None and drive.mission.next_exit == 1
     drive.path = Path.STRAIGHT
     command = drive.frame(track(1, "detour", 2.4))
-    assert command.path is None                # target B is not in exit 1: already straight
+    assert command.path is None
     assert drive.mission.next_exit == 2
 
 
 def test_back_to_back_exits_with_both_signs_in_view():
-    # record1_signs.mov: exit 2's sign is in view at 4.4 m while exit 1's is
-    # still at 1.25 m, and in view without a break from there on.
     drive = Drive("B", "A")
-    for step in range(60):                     # exit 1's sign alone, 2.5 m -> 1.3 m
+    for step in range(60):
         drive.frame(track(1, "detour", 2.5 - 0.02 * step))
-    for step in range(25):                     # both in view
+    for step in range(25):
         drive.frame(track(1, "detour", 1.3 - 0.016 * step), track(2, "detour", 4.4 - 0.04 * step))
     assert drive.mission.next_exit == 2 and drive.path is Path.STRAIGHT
-    for step in range(30):                     # exit 2's sign alone, into range
+    for step in range(30):
         drive.frame(track(2, "detour", 3.4 - 0.03 * step))
-    # Decided, but exit 1's mouth is not behind the car yet: arming Detour
-    # here would take exit 1.
     assert drive.mission.next_exit == 1
     assert drive.path is Path.STRAIGHT
     drive.frame(track(2, "detour", 2.4), fork_passed=True)
@@ -336,24 +288,22 @@ def test_back_to_back_exits_with_both_signs_in_view():
 
 
 def test_waiting_detour_is_dropped_when_its_sign_goes_by():
-    # The mouth before it never showed (ForkWatch missed it): arming after the
-    # sign has gone by would come after this exit's own mouth.
     drive = Drive("B", "A")
-    drive.frame(track(1, "detour", 2.5))       # exit 1: straight
+    drive.frame(track(1, "detour", 2.5))
     drive.frame(track(1, "detour", 1.0))
-    drive.frame(track(2, "detour", 2.9))       # exit 2: detour, waiting
+    drive.frame(track(2, "detour", 2.9))
     assert drive.path is Path.STRAIGHT and drive.mission.next_exit == 1
     drive.gap(2.0)
-    drive.frame(fork_passed=True)              # exit 2's own mouth
+    drive.frame(fork_passed=True)
     assert drive.path is Path.STRAIGHT
     assert drive.mission.next_exit == 1
 
 
 def test_spaced_exits_arm_detour_at_the_sign():
     drive = Drive("B", "A")
-    drive.frame(track(1, "detour", 2.5))       # exit 1: straight
+    drive.frame(track(1, "detour", 2.5))
     drive.gap(4.0)
-    drive.frame(fork_passed=True)              # its mouth, long before the next sign
+    drive.frame(fork_passed=True)
     drive.gap(4.0)
     drive.frame(track(2, "detour", 2.9))
     assert drive.path is Path.DETOUR
@@ -363,13 +313,11 @@ def test_lost_sign_found_again_under_a_new_id_is_not_a_new_exit():
     drive = Drive("B", "A")
     for step in range(10):
         drive.frame(track(1, "detour", 2.8 - 0.05 * step))
-    drive.gap(1.5)                             # the tracker drops it...
-    drive.frame(track(2, "detour", 2.0))       # ...and finds it again, closer
+    drive.gap(1.5)
+    drive.frame(track(2, "detour", 2.0))
     assert drive.mission.next_exit == 2
     assert drive.path is Path.STRAIGHT
 
-
-# --- the stop --------------------------------------------------------------
 
 def test_pickup_docks_and_waits_as_long_as_it_takes():
     drive = Drive("C", "A", auto_release=False)
@@ -403,7 +351,6 @@ def test_release_signals_checks_the_way_then_leaves():
                and c.scene is DockScene.CHECKING for c in checking)
     assert checking[0].announce.key == "released"
     assert len(checking) * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
-    # Still signalling left on the first frames of motion, then clear.
     assert after[moving].state is MissionState.LEAVING and after[moving].turn_signal is TurnSignal.LEFT
     assert after[moving].scene is None
     assert drive.mission.stage is Stage.DELIVERY and drive.mission.dock is None
@@ -415,7 +362,7 @@ def test_departure_waits_for_the_voice_to_finish():
     drive.dock_at("C")
     drive.mission.release(drive.now)
     assert drive.frame().announce.key == "released"
-    drive.quiet = False                                     # "Liberado. Afaste-se..." playing
+    drive.quiet = False
     drive.gap(5.0)
     assert all(c.hold and c.state is MissionState.CHECKING and "announcing" in c.reason
                for c in drive.commands[-50:])
@@ -438,7 +385,6 @@ def test_someone_in_front_holds_the_departure():
     assert [c.announce.key for c in blocked if c.announce] == ["released", "blocked"]
     assert "clear" in blocked[-1].reason
 
-    # A moment clear does not count: the 2 s start again after every echo.
     drive.clear = True
     drive.gap(_DEPART_CLEAR_S - 0.5)
     drive.clear = False
@@ -455,7 +401,7 @@ def test_wait_and_estop_need_a_new_release():
     drive = Drive("C", "A", auto_release=False)
     sign_id = drive.dock_at("C")
     dock = drive.mission.dock
-    assert drive.mission.hold_departure() is not None       # nothing to hold yet
+    assert drive.mission.hold_departure() is not None
     drive.mission.release(drive.now)
     assert drive.frame().state is MissionState.CHECKING
     assert drive.mission.hold_departure() is None
@@ -464,11 +410,11 @@ def test_wait_and_estop_need_a_new_release():
 
     drive.mission.release(drive.now)
     drive.frame()
-    drive.mission.reset()                                   # e-stop
+    drive.mission.reset()
     for _ in range(50):
         command = drive.frame(track(sign_id, "delivery_sign", STOP - 0.1, "C"))
     assert command.state is MissionState.DOCKED and command.hold
-    assert drive.mission.dock is dock                       # the same dock, not a new approach
+    assert drive.mission.dock is dock
     assert drive.mission.stage is Stage.PICKUP
 
 
@@ -476,14 +422,14 @@ def test_release_away_from_a_dock_is_refused():
     assert Mission().release(BASE) is not None
     drive = Drive("C", "A", auto_release=False)
     drive.frame()
-    assert drive.mission.release(drive.now) is not None     # driving
+    assert drive.mission.release(drive.now) is not None
     command = drive.frame(track(1, "delivery_sign", 2.6, "C"))
     assert command.state is MissionState.SLOWING
-    assert drive.mission.release(drive.now) is not None     # slowing
+    assert drive.mission.release(drive.now) is not None
     assert drive.frame(track(1, "delivery_sign", 2.5, "C")).state is MissionState.SLOWING
     drive.dock_at("C", sign_id=1)
     assert drive.mission.release(drive.now) is None
-    assert drive.mission.release(drive.now) is not None     # already released
+    assert drive.mission.release(drive.now) is not None
 
 
 def test_delivery_waits_then_parks_ready_for_the_next_order():
@@ -531,7 +477,7 @@ def test_half_made_order_while_parked_stays_parked():
     assert drive.mission.stage is Stage.DONE and drive.mission.parked
     command = drive.frame()
     assert command.hold and command.state is MissionState.DONE
-    drive.mission.configure(None, None)                     # forgets the dock
+    drive.mission.configure(None, None)
     assert drive.mission.stage is Stage.IDLE and not drive.mission.parked
     assert not drive.frame().hold
 
@@ -546,8 +492,6 @@ def test_lost_letter_abandons_the_approach():
     assert drive.mission.stage is Stage.PICKUP
 
 
-# --- cargo compartment -----------------------------------------------------
-
 LOADED = 300
 
 
@@ -556,8 +500,6 @@ def cargo(grams=0, lid=True, stable=True, fault=False):
 
 
 def lid_cycle(drive, grams):
-    """Someone lifts the lid, loads or unloads to `grams` and shuts it: the
-    frame it shuts on."""
     drive.cargo = dataclasses.replace(drive.cargo, grams=grams, lid_closed=False)
     drive.frame()
     drive.cargo = dataclasses.replace(drive.cargo, lid_closed=True)
@@ -565,7 +507,6 @@ def lid_cycle(drive, grams):
 
 
 def leave(drive, seconds=10.0):
-    """Frames until the car moves off (or `seconds` pass): those it held."""
     held = []
     for _ in range(round(seconds / DT)):
         command = drive.frame()
@@ -585,7 +526,6 @@ def test_compartment_unlocks_only_while_waiting_at_a_dock():
     drive.gap(5.0)
     assert drive.commands[-1].state is MissionState.DOCKED and drive.mission.unlock
 
-    # Lifted: the lock lets go, the latch catches as the lid shuts.
     drive.cargo = cargo(LOADED, lid=False)
     drive.gap(5.0)
     assert drive.commands[-1].state is MissionState.DOCKED and not drive.mission.unlock
@@ -605,7 +545,6 @@ def test_shutting_the_lid_releases_and_records_the_manifest():
     drive.dock_at("C")
     assert drive.commands[-1].announce.key == "docked_pickup_lid"
     drive.gap(_REMIND_S + 1.0)
-    # A lid never lifted releases nothing.
     assert all(c.state is MissionState.DOCKED for c in drive.commands[-100:])
     assert [c.announce.key for c in drive.commands[-100:] if c.announce] == ["remind_pickup_lid"]
 
@@ -657,7 +596,7 @@ def test_empty_pickup_shut_twice_leaves_and_says_so_only_then():
     assert lid_cycle(drive, 0).announce.key == "empty"
     assert drive.mission.unlock
     drive.gap(5.0)
-    lid_cycle(drive, 0)                                     # still nothing on board
+    lid_cycle(drive, 0)
     leave(drive)
     assert drive.mission.stage is Stage.DELIVERY
     spoken = [c.announce.key for c in drive.commands[start:] if c.announce]
@@ -698,7 +637,7 @@ def test_delivery_shut_twice_still_loaded_parks_there():
     start = len(drive.commands)
     assert lid_cycle(drive, LOADED).announce.key == "still_loaded"
     assert drive.mission.unlock
-    command = lid_cycle(drive, LOADED)                      # the load left on board
+    command = lid_cycle(drive, LOADED)
     assert command.state is MissionState.DONE and command.announce.key == "delivered"
     drive.gap(5.0)
     assert all(c.hold for c in drive.commands[start:])
@@ -800,8 +739,6 @@ def test_leaving_a_parked_dock_checks_the_lid_but_never_unlocks():
     assert len(held) * DT == pytest.approx(_DEPART_CLEAR_S, abs=1.5 * DT)
     assert drive.mission.stage is Stage.PICKUP
 
-
-# --- inactive --------------------------------------------------------------
 
 def test_letters_picked_one_at_a_time_start_the_run():
     mission = Mission()

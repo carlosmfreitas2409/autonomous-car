@@ -20,4 +20,4 @@ uint8_t distance_cm(uint8_t index);
 State state();
 char state_char();
 
-}  // namespace obstacle
+}

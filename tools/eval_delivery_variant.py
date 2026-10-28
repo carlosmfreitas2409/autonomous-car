@@ -1,30 +1,5 @@
 #!/usr/bin/env python3
-"""Settle letters-versus-silhouettes with numbers, and set the crop floor.
 
-The brief says the letter fails before the silhouette does; the older write-up
-says the opposite; two pilots run while planning this phase disagreed with each
-other. The entire difference between them was how the sign face got segmented,
-which is the actual finding. So both cues are built, and this decides the
-ranking by measurement.
-
-Each artwork is rendered at a ladder of apparent heights **through the training
-set's own degradation functions** - imported from tools/synthesize_dataset.py,
-never reimplemented, because the thing measured and the thing trained on have
-to be the same thing - onto real backgrounds, then cropped with per-edge box
-jitter, because a detector's box is never exactly the sign.
-
-Non-correct answers are split in two, and only one of them is a safety number:
-
-    refused   the reader said "I do not know". Costs a delivery that does not
-              happen; the car drives closer and asks again.
-    wrong     the reader named the wrong bay, confidently. Costs a delivery to
-              the wrong place.
-
-    python3 tools/eval_delivery_variant.py --trials 40
-
-The crossover it prints is MIN_CROP_HEIGHT in
-src/perception/delivery_variant.py.
-"""
 
 import argparse
 import random
@@ -45,24 +20,14 @@ from synthesize_dataset import (  # noqa: E402
 
 HEIGHTS = (16, 20, 24, 28, 34, 40, 48, 60, 80, 110, 160, 224)
 VARIANTS = ("A", "B", "C")
-JITTER = 0.04           # per edge, as a fraction of the box
+JITTER = 0.04
 
-# What the fused reader has to clear for the variant to be worth reading at a
-# given size, and the size the plan wants it to clear them by. All three are
-# the gate's numbers, not this run's.
 TARGET_ACCURACY = 0.95
 TARGET_WRONG = 0.02
 GATE_HEIGHT = 40
 
 
 def sample(artwork, height, background_path, rng):
-    """One rendered, degraded, jittered crop at this apparent height.
-
-    The sign is always placed wholly inside the frame. The compositor is happy
-    to hang one over the edge, which is right for training, but a half-visible
-    polygon is a question about framing rather than about whether A can be told
-    from B at thirty pixels.
-    """
     frame = background_frame(background_path, rng)
     frame_h, frame_w = frame.shape[:2]
     inset = int(height * 0.8)
@@ -88,8 +53,7 @@ def sample(artwork, height, background_path, rng):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--trials", type=int, default=40, help="per variant per height")
     parser.add_argument("--artwork", default="assets/sign_cutouts/delivery_sign")
     parser.add_argument("--backgrounds", nargs="+", default=["dataset/backgrounds"])
@@ -164,10 +128,6 @@ def _report(tally) -> None:
               f"{row['fused_refused'] / n:10.2f}"
               f"{row['fused_wrong'] / n:8.2f}")
 
-    # Pooled over every height at or above the candidate, rather than requiring
-    # each row to clear the bar on its own: at 180 trials a row's standard
-    # error is about 0.016, so a single unlucky row two standard errors low
-    # would otherwise move the floor by a whole step.
     floor = None
     for height in sorted(tally):
         taller = [tally[h] for h in sorted(tally) if h >= height]

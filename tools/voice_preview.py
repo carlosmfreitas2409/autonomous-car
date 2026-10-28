@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""Hear the dock prompts exactly as the car says them (src/voice.py).
 
-    python tools/voice_preview.py                   # every prompt, the car's voice
-    python tools/voice_preview.py released blocked  # just these
-    python tools/voice_preview.py --voice Luciana   # try a `say` voice instead
-    python tools/voice_preview.py --list            # the Brazilian voices installed
-    python tools/voice_preview.py --save .context/voice   # .aiff files to play later
-
-The car speaks in the Mac's system voice: System Settings > Accessibility >
-Spoken Content > System voice, Portuguese (Brazil), pick a Siri voice there.
-`say -v` cannot name Siri voices, so --list does not show them.
-"""
 
 import argparse
 import shutil
@@ -22,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from voice import TEXT, brazilian_voices  # noqa: E402
 
-parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+parser = argparse.ArgumentParser()
 parser.add_argument("keys", nargs="*", help=f"prompts to say (default all): {', '.join(TEXT)}")
 parser.add_argument("--voice", help="a `say` voice name instead of the Mac's system voice")
 parser.add_argument("--letter", default="A", help="the dock letter in the prompts (default A)")

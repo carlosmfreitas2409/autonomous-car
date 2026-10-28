@@ -28,4 +28,4 @@ uint8_t read_cm(uint8_t index) {
   return (uint8_t)cm;
 }
 
-}  // namespace ultrasonic
+}

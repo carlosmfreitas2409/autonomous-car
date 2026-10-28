@@ -1,14 +1,3 @@
-"""What the cart tells the dashboard, and what the dashboard may ask.
-
-`build_state` turns the loop's own objects into one JSON-ready dict. It is a
-pure function of what the loop already computed: nothing here perceives,
-decides or estimates anything the car does not already know. A slice whose
-source is absent is None (or reports itself offline), never a made-up value.
-
-`parse_command` validates one browser message. Mirror of both lives in
-`web/src/types.ts`; bump CONTRACT_VERSION on any breaking change.
-"""
-
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -23,21 +12,14 @@ from path import HOME_PATH, Path
 
 CONTRACT_VERSION = 3
 
-# The loop does not measure speed: there is no encoder on the car. Once a
-# straight has been timed at a known PWM, put the m/s at full PWM here and
-# the dashboard shows an estimate, labelled as one. None shows output only.
 EST_MPS_AT_FULL_PWM: Optional[float] = None
 
 _EXITS = (1, 2)
 
-# What each stage's sliders start at, for the dashboard's "restore".
 _STAGE_DEFAULTS = {Challenge.DELIVERY: Config(), Challenge.SPEED: SPEED_TEST}
 
 
 def layout() -> dict:
-    """The track as the mission understands it: the exits in driving order
-    and where each letter is. Letters outside every detour sit on the main
-    road after the last exit (see mission.py). The map draws only this."""
     return {
         "exits": list(_EXITS),
         "after": {str(k): _exit_after(k, False) for k in _EXITS},
@@ -46,14 +28,6 @@ def layout() -> dict:
 
 
 def segment(mission: Mission, path: Path, carrying: bool) -> Optional[dict]:
-    """Where the car is, as far as the mission's exit count says. Only known
-    while a mission is running: an idle mission counts nothing.
-
-    While the Detour is armed, or its profile is still carried through the
-    merge, the car is in (or entering) the detour of the exit just decided,
-    or of the next one if none has been yet; otherwise it is on the main road
-    heading for `next_exit`.
-    """
     if mission.stage is Stage.IDLE:
         return None
     if path is Path.DETOUR or carrying:
@@ -63,8 +37,6 @@ def segment(mission: Mission, path: Path, carrying: bool) -> Optional[dict]:
 
 
 def last_decision(mission: Mission) -> Optional[dict]:
-    """The choice made at the latest detour sign, with that sign's track id:
-    `next` has already moved on to the following exit by then."""
     if mission.last_decision is None:
         return None
     sign, exit_number, wanted = mission.last_decision
@@ -72,7 +44,6 @@ def last_decision(mission: Mission) -> Optional[dict]:
 
 
 def next_decision(mission: Mission) -> Optional[dict]:
-    """The choice the mission will make at the next detour sign."""
     target = mission.target
     if target is None:
         return None
@@ -82,8 +53,6 @@ def next_decision(mission: Mission) -> Optional[dict]:
 
 
 def route_progress(mission: Mission) -> int:
-    """Index of the current step in `mission.route`: exit steps are passed
-    one per decision, the pickup step once the stage moved on to delivery."""
     decisions = mission.decisions
     for index, step in enumerate(mission.route):
         if step.startswith("exit "):
@@ -99,8 +68,6 @@ def route_progress(mission: Mission) -> int:
 
 
 def dock(mission: Mission) -> Optional[dict]:
-    """Where the car stands waiting for a release, as the mission holds it.
-    `since` is on the loop's clock, like the state's `t`."""
     current = mission.dock
     if current is None:
         return None
@@ -116,7 +83,6 @@ def dock(mission: Mission) -> Optional[dict]:
 
 
 def cargo_state(cargo: Optional[CargoReading]) -> Optional[dict]:
-    """The compartment as the cargo node reports it; None with no node."""
     if cargo is None:
         return None
     return {"grams": cargo.grams, "stable": cargo.stable, "lid_closed": cargo.lid_closed,
@@ -156,8 +122,6 @@ def _signal(output: Optional[LightsOutput]) -> Optional[str]:
 
 
 def light_settings(controller: LightsController) -> dict:
-    """What the operator chose, as opposed to what the lamps show: the car
-    overrides the signal and the strip while it needs them."""
     return {
         "turn_signal": controller.turn_signal.value,
         "drl": controller.drl,
@@ -178,10 +142,6 @@ def build_state(*, now: float, fps: float, estopped: bool, manual: bool,
                 lights_controller: Optional[LightsController] = None,
                 tuning: Optional[dict] = None, cargo: Optional[CargoReading] = None,
                 challenge: Challenge = Challenge.DELIVERY) -> dict:
-    """One state message. `perc` is None while e-stopped (the drive camera is
-    not read then); `roi` is (x0, x1) as fractions of the frame width. `stop`
-    is status.stop_cause's (source, text), None while nothing stops the car.
-    `tuning` is the stage's own PID and speeds, as is every default."""
     defaults = _STAGE_DEFAULTS[challenge]
     fw = None
     if telemetry is not None:
@@ -217,8 +177,6 @@ def build_state(*, now: float, fps: float, estopped: bool, manual: bool,
             "rows": [[int(y), int(x), bool(both)] for y, x, both in perc.row_centers],
             "frame": [int(width), int(height)],
             "roi_center_x": roi_center,
-            # What the camera sees further up the frame, for drawing only:
-            # (row, left x, right x) per band row and the width profile.
             "band": [[int(y), int(left), int(right)] for y, left, right in getattr(perc, "band_edges", ())],
             "width_profile": None if getattr(perc, "width_profile", None) is None
             else [_round(perc.width_profile[0], 5), _round(perc.width_profile[1], 2)],
@@ -317,8 +275,6 @@ def build_state(*, now: float, fps: float, estopped: bool, manual: bool,
             "serial_open": serial_open,
             "drive_camera": perc is not None or estopped,
         },
-        # The throttle on straights (also the manual stick's full scale) and
-        # on the sharpest curves, as the loop holds them.
         "speed": None if tuning is None else {
             "base": _round(tuning["base_speed"]),
             "min": _round(tuning["min_speed"]),
@@ -329,7 +285,6 @@ def build_state(*, now: float, fps: float, estopped: bool, manual: bool,
             "defaults": {gain: getattr(defaults, gain) for gain in PID_MAX},
             "max": PID_MAX,
         },
-        # The firmware's battery gauge; None until a `B` line has arrived.
         "battery": None if battery is None else {
             "percent": battery.percent,
             "volts": _round(battery.volts, 2),
@@ -338,15 +293,12 @@ def build_state(*, now: float, fps: float, estopped: bool, manual: bool,
     }
 
 
-# --- commands --------------------------------------------------------------
-
 _PATHS = {p.value: p for p in Path}
 _CHALLENGES = {c.value: c for c in Challenge}
 _SIGNALS = {s.value: s for s in TurnSignal}
 _STRIPS = {"auto": None, **{e.name.lower(): e for e in StripEffect}}
 _LIGHT_SWITCHES = ("drl", "low_beam", "logo", "projector")
 _SPEEDS = {"base": "base_speed", "min": "min_speed"}
-# The tuner's slider ranges.
 PID_MAX = {"kp": 0.1, "ki": 0.05, "kd": 0.1}
 
 
@@ -361,14 +313,12 @@ class Command:
 def _clamp(value: Any, low: float = -1.0) -> Optional[float]:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    if value != value:  # NaN
+    if value != value:
         return None
     return max(low, min(1.0, float(value)))
 
 
 def parse_command(message: Any) -> Optional[Command]:
-    """A validated command, or None for anything malformed. Unknown types are
-    rejected rather than ignored, so a typo shows up as a nack."""
     if not isinstance(message, dict):
         return None
     kind = message.get("type")
@@ -399,8 +349,6 @@ def parse_command(message: Any) -> Optional[Command]:
             return None
         return Command("mission", id=command_id, args={"pickup": pickup, "delivery": delivery})
     if kind == "dock":
-        # Only "wait": the release is given at the dock (the lid), or by the
-        # tuner or the PS5, never from the dashboard.
         action = message.get("action")
         if action != "wait":
             return None
@@ -434,8 +382,6 @@ def parse_command(message: Any) -> Optional[Command]:
 
 
 def _parse_lights(message: dict, command_id: Optional[int]) -> Optional[Command]:
-    """Any subset of the operator's light settings, keyed by the
-    LightsController attribute each one sets."""
     args: dict[str, Any] = {}
     if "turn_signal" in message:
         if message["turn_signal"] not in _SIGNALS:

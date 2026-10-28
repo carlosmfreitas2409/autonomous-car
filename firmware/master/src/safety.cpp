@@ -13,7 +13,7 @@ namespace {
 State current_state = State::ESTOP;
 uint32_t last_command_ms = 0;
 
-}  // namespace
+}
 
 void init() {
   current_state = State::ESTOP;
@@ -38,8 +38,6 @@ void update() {
   if (elapsed > config::WATCHDOG_TIMEOUT_MS && current_state == State::RUN) {
     current_state = State::WATCHDOG_IDLE;
     motors::set_throttle(0);
-    // Freeze target at the current angle so wheels stop where they are
-    // instead of snapping back to center.
     steering::freeze_target_at_current();
   }
 }
@@ -83,4 +81,4 @@ uint16_t ms_since_last_command() {
   return elapsed > 0xFFFF ? 0xFFFF : (uint16_t)elapsed;
 }
 
-}  // namespace safety
+}

@@ -32,7 +32,7 @@ void silence() {
   beeping = false;
 }
 
-}  // namespace
+}
 
 void init() {
   pinMode(config::PIN_BUZZER, OUTPUT);
@@ -65,4 +65,4 @@ void update(bool active) {
   }
 }
 
-}  // namespace buzzer
+}

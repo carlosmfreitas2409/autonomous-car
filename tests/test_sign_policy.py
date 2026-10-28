@@ -1,6 +1,3 @@
-"""The policy against hand-built snapshots: ramps, holds, consume-once,
-re-arm, gates and every way a hold is allowed to end."""
-
 import pytest
 
 from input.sign_policy import _SLOW_DISTANCE_M as SLOW
@@ -22,7 +19,6 @@ def light(id=1, distance=(SLOW + STOP) / 2, state=LightState.RED, **kw):
     return track(id=id, label="traffic_light", distance=distance, state=state, **kw)
 
 
-# Timestamp 0 means "never published", so every test clock starts here.
 BASE = 100.0
 
 
@@ -36,7 +32,6 @@ def step(policy, snapshot, now):
 
 
 def feed(policy, tracks, start, end, step_s=0.1):
-    """Run the same tracks from start to end; return the last constraint."""
     constraint = None
     t = start
     while t <= end + 1e-9:
@@ -44,8 +39,6 @@ def feed(policy, tracks, start, end, step_s=0.1):
         t += step_s
     return constraint
 
-
-# --- stop sign -------------------------------------------------------------
 
 @pytest.mark.parametrize("distance,scale", [(SLOW, 1.0), ((SLOW + STOP) / 2, 0.5),
                                             (STOP + 0.2, 0.2 / (SLOW - STOP))])
@@ -90,7 +83,6 @@ def test_every_stop_id_in_view_at_release_is_consumed():
     policy = SignPolicy()
     feed(policy, [track(id=1, distance=STOP)], 0.0, 3.4)
     step(policy, snap(track(id=1, distance=STOP), track(id=2, distance=STOP + 0.1, confirmed=False), now=3.5), 3.5)
-    # Id 2 becomes confirmed later and well after the re-arm window: still consumed.
     c = feed(policy, [track(id=1, distance=STOP), track(id=2, distance=STOP + 0.1)], 7.0, 8.0)
     assert c.state is PolicyState.CLEAR
 
@@ -98,13 +90,10 @@ def test_every_stop_id_in_view_at_release_is_consumed():
 def test_rearm_window_blocks_near_new_ids_only():
     policy = SignPolicy()
     feed(policy, [track(id=1, distance=STOP)], 0.0, 3.5)
-    # Id 1 gone, a fresh id at 2.3 m inside the window: ignored.
     c = step(policy, snap(track(id=7, distance=2.3), now=4.0), 4.0)
     assert c.state is PolicyState.CLEAR
-    # A second sign further up the road is real.
     c = step(policy, snap(track(id=8, distance=2.9), now=4.1), 4.1)
     assert c.state is PolicyState.SLOWING
-    # After the window, the near one commits too.
     policy = SignPolicy()
     feed(policy, [track(id=1, distance=STOP)], 0.0, 3.5)
     c = step(policy, snap(track(id=7, distance=2.3), now=6.6), 6.6)
@@ -116,7 +105,6 @@ def test_abandoned_approach_leaves_released_at_untouched():
     step(policy, snap(track(id=1, distance=STOP + 0.6), now=0.0), 0.0)
     c = step(policy, snap(now=1.2), 1.2)
     assert c.state is PolicyState.CLEAR
-    # A respawned id nearby commits at once: no re-arm window was started.
     c = step(policy, snap(track(id=2, distance=STOP + 0.4), now=1.3), 1.3)
     assert c.state is PolicyState.SLOWING
 
@@ -147,10 +135,8 @@ def test_reset_keeps_consumed_but_drops_an_active_hold():
     step(policy, snap(track(id=1, distance=STOP), now=0.0), 0.0)
     policy.reset()
     c = step(policy, snap(track(id=1, distance=STOP), now=0.1), 0.1)
-    assert c.hold  # an interrupted stop repeats
+    assert c.hold
 
-
-# --- snapshot health -------------------------------------------------------
 
 def test_stale_snapshot_is_clear_and_releases_an_open_gate():
     policy = SignPolicy()
@@ -160,7 +146,6 @@ def test_stale_snapshot_is_clear_and_releases_an_open_gate():
     assert c.state is PolicyState.WAITING_GREEN
     c = step(policy, snap(light(distance=STOP), now=1.0), 1.6)
     assert c.stale and c.state is PolicyState.CLEAR and c.scale == 1.0 and not c.hold
-    # Consumed: fresh snapshots of the same id do not re-gate.
     c = step(policy, snap(light(distance=(SLOW + STOP) / 2), now=2.0), 2.0)
     assert c.state is PolicyState.CLEAR
 
@@ -172,8 +157,6 @@ def test_no_camera_or_no_model_does_not_change_driving():
     c = step(policy, snap(now=5.0, detector=False), 5.0)
     assert c.scale == 1.0 and not c.hold
 
-
-# --- traffic light ---------------------------------------------------------
 
 def test_unverified_or_unknown_light_never_slows():
     policy = SignPolicy()
@@ -202,7 +185,6 @@ def test_yellow_slows_but_never_holds():
     c = step(policy, snap(light(distance=(SLOW + STOP) / 2, state=LightState.YELLOW)), 0.0)
     assert c.scale == pytest.approx(0.5) and c.state is PolicyState.SLOWING and not c.hold
     assert c.reason == "yellow light ahead"
-    # Right at the line, still no hold: the loop floors this at the crawl speed.
     c = feed(policy, [light(distance=STOP, state=LightState.YELLOW)], 0.1, 12.0)
     assert not c.hold
 
@@ -220,13 +202,11 @@ def test_light_first_seen_under_the_car_is_waved_through():
     policy = SignPolicy()
     c = step(policy, snap(light(distance=0.7)), 0.0)
     assert c.scale == 1.0
-    # Even when it later reads in range (distance jitter), it stays passed.
     c = step(policy, snap(light(distance=STOP + 0.2), now=0.1), 0.1)
     assert c.scale == 1.0
 
 
 def test_light_revealed_inside_the_line_holds_at_once():
-    """A curve can show the light only at 1.3 m: a red is still a red."""
     policy = SignPolicy()
     c = step(policy, snap(light(distance=STOP - 0.2)), 0.0)
     assert c.hold and c.state is PolicyState.WAITING_GREEN
@@ -267,7 +247,6 @@ def test_unknown_while_waiting_stays_held_until_the_ceiling():
     assert c.hold and c.state is PolicyState.WAITING_GREEN
     c = step(policy, snap(light(distance=STOP, state=LightState.UNKNOWN), now=10.0), 10.0)
     assert not c.hold and c.state is PolicyState.CLEAR
-    # Consumed after the ceiling: it does not gate again.
     c = step(policy, snap(light(distance=(SLOW + STOP) / 2), now=10.1), 10.1)
     assert c.state is PolicyState.CLEAR
 
@@ -281,8 +260,6 @@ def test_committed_light_lost_while_waiting_releases_after_two_seconds():
     c = step(policy, snap(now=2.1), 2.1)
     assert not c.hold
 
-
-# --- composition -----------------------------------------------------------
 
 def test_hold_beats_ramp_when_both_present():
     policy = SignPolicy()
@@ -308,8 +285,6 @@ def test_detour_and_delivery_are_reported_not_acted_on():
 
 
 def test_approach_that_never_reaches_the_line_stops_and_releases():
-    """A ramp the car cannot follow (it stalls above 2 m) must still end in
-    a bounded stop, not a permanent crawl."""
     policy = SignPolicy()
     c = feed(policy, [track(distance=STOP + 0.4)], 0.0, 7.9)
     assert c.state is PolicyState.SLOWING

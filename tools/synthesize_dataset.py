@@ -1,58 +1,5 @@
 #!/usr/bin/env python3
-"""Composite a YOLO training set out of sign cutouts and real backgrounds.
 
-Compositing rather than hand-labelling, because the paste location *is* the
-label: labelling costs nothing and box tightness is exact. What it buys in
-volume it has to earn back in honesty, so three things here are not optional.
-
-**Every scale.** The most expensive mistake in this project's record was a
-280 px cap on the light - confidence measured 0.97 at 260 px, 0.18 at 400 px
-and 0.00 at 500 px, so the housing vanished exactly where the car has to stop.
-It happened twice: the signs were capped at 260 px on the belief that they were
-15 cm, and the printed ones are 43 cm - ~224 px at the 2 m stop line, ~450 px
-at 1 m. Round 5 found real delivery signs at 0.97 up to ~245 px and not at all
-from ~330 px, and pasted stop and delivery artwork scored 0.00 at 480 px. The
-top of each range is the object at the policy's 0.8 m pass distance: ~560 px
-for a sign, 640 for the 50 cm housing.
-
-**A lit lamp lights the room, not just itself.** The first model trained from
-this file scored 0.96 on its own pasted cutouts and **0.000** on the real photo
-those cutouts were cut from. Same pixels, different surroundings: keep the real
-housing and replace the scene around it and detection comes back at 0.96;
-restore the real scene out to one box-width and it drops to 0.00. What the
-model had never seen was a housing drowning in its own spill, because `bloom()`
-only ever touched the cutout. `scene_glow` is the fix.
-
-**Distractors that are deliberately not signs.** A model trained on clean
-rooms has never seen an empty scene, concludes a sign is always present
-somewhere, and picks whatever is most sign-like - which at an exhibition is a
-stage lamp, a phone screen or a person. The record has a bare red disc called
-`stop` at 0.86 and a green disc called `traffic_light` at 0.63. Half the frames
-here carry unlabelled emitters, and one in six carries no sign at all.
-
-Emitters are not the whole of it. The venue's stage fixtures, switched off,
-are a pale disc with dark marks inside - which at 20-80 px is what a delivery
-sign is too - and round-4 called them `delivery_sign` at up to 0.95 on the car.
-`assets/distractor_cutouts/` holds the real fixtures, cut from photographs of
-the venue's pillars, and they are pasted unlabelled among the other clutter.
-
-**A box that is the sign face or the lamp housing and nothing else.** Never the
-post. Phase-2 distance comes from real_height / pixel_height, which is only
-constant if the box always bounds the same physical object, and the state
-reader locates lamp cells inside the box, which only works if the box is the
-housing.
-
-    python3 tools/synthesize_dataset.py --count 4000 --preview 24
-
-Real frames matter more than any of this. `assets/clip_labels/` holds
-hand-verified boxes for the one clip where the light was filmed in the dark
-venue; those frames are mixed in directly, and the person walking through them
-is an unlabelled negative for free.
-
-`degrade_frame`, `warp_cutout` and `render_onto` are imported by
-tools/eval_delivery_variant.py: the thing measured and the thing trained on
-have to be the same thing, so they are written once, here.
-"""
 
 import argparse
 import json
@@ -63,13 +10,10 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 
-# Class order. This is what ends up in the ONNX metadata, and
-# src/perception/sign_detection.py's KNOWN_LABELS must match it.
 CLASSES = ("delivery_sign", "detour", "stop", "traffic_light")
 
 FRAME_SIZE = (1280, 720)
 
-# Apparent height in pixels, per class. See the module docstring.
 PASTE_HEIGHT = {
     "traffic_light": (22, 640),
     "delivery_sign": (22, 560),
@@ -81,52 +25,24 @@ NO_SIGN_SHARE = 1 / 6
 DISTRACTOR_SHARE = 0.5
 VAL_SHARE = 0.15
 
-# Share of output frames taken from real labelled footage rather than composited.
 REAL_SHARE = 0.2
 
-# ...and how many of those are a real patch shrunk into another scene rather
-# than the whole frame re-cropped. See real_patch_paste.
 PATCH_PASTE_SHARE = 0.5
 
-# The venue is darker than every room these backgrounds were shot in: the
-# photographs average 103 grey against the backgrounds' 138, and only 0.5 % of
-# backgrounds are as dark as the median venue photo. The background is darkened
-# *before* the lamp is pasted, never after, because a dark room with a bright
-# lamp in it is the thing to reproduce - darkening afterwards dims the lamp too.
 DARKEN = (0.30, 1.05)
 
-# The stage fixtures, pasted as clutter: in how many of the frames that carry
-# distractors, and at what apparent height. The car saw them at 20-35 px and
-# the current model confuses them most at 24-80 px; 160 px is a pillar passed
-# close by. Never stacked in a column, although that is how they hang: a
-# vertical run of discs is the traffic light's own silhouette.
 FIXTURE_SHARE = 0.5
 FIXTURE_HEIGHT = (12, 160)
 
-# What each lamp throws onto the room, in BGR, keyed by the cutout's own name.
 LIT_COLOUR = {"red": (55, 60, 235), "yellow": (60, 215, 240), "green": (95, 220, 105)}
 
-# How far the spill reaches, in housing heights, and how hard it hits.
 GLOW_REACH = (1.1, 3.0)
 GLOW_STRENGTH = (0.25, 0.75)
 
-# How much of the whole frame the lamp veils, at its strongest (a housing that
-# fills the frame). Scales down with apparent size.
 GLOW_VEIL = (0.05, 0.30)
 
 
-# --------------------------------------------------------------------------
-# the pieces the eval imports too
-# --------------------------------------------------------------------------
-
 def warp_cutout(bgra: np.ndarray, rng: random.Random, extra: np.ndarray = None):
-    """Rotate and perspective-warp a cutout, keeping its alpha exact.
-
-    The car sees signs from the side and from below, never square on. The warp
-    is applied to the alpha as well, so the box stays tight on whatever shape
-    comes out. `extra` rides through the same transform: it carries the
-    housing's own alpha for a lamp whose halo has grown the visible one.
-    """
     height, width = bgra.shape[:2]
     corners = np.float32([[0, 0], [width, 0], [width, height], [0, height]])
     jitter = 0.16 * min(width, height)
@@ -152,14 +68,6 @@ def warp_cutout(bgra: np.ndarray, rng: random.Random, extra: np.ndarray = None):
 
 
 def bloom(bgra: np.ndarray, rng: random.Random) -> np.ndarray:
-    """Blow out the bright part of a cutout and let it spill past its edge.
-
-    This is what the camera does to a lit lamp: the core clips to white and the
-    colour survives only in a halo outside the housing. A model trained on
-    clean cutouts has never seen it and misses every lit light - which is
-    exactly what the previous model did, scoring 0.000-0.005 on the three
-    photos where a lamp was on.
-    """
     strength = rng.uniform(0.35, 1.0)
     bgr = bgra[:, :, :3].astype(np.float32)
     alpha = bgra[:, :, 3].astype(np.float32) / 255.0
@@ -173,17 +81,11 @@ def bloom(bgra: np.ndarray, rng: random.Random) -> np.ndarray:
     tint = bgr * (1 - glow) + 255.0 * glow
     out = bgra.copy()
     out[:, :, :3] = np.clip(tint + hot[:, :, None] * 60 * strength, 0, 255).astype(np.uint8)
-    # The halo reaches past the housing, so the alpha grows with it.
     out[:, :, 3] = np.clip(alpha * 255 + halo * 200 * strength, 0, 255).astype(np.uint8)
     return out
 
 
 def lit_lamp(name: str):
-    """Which lamp is on in this cutout, and what colour it throws.
-
-    The cutouts are named for it - `red_l20`, `off_head_far` - so the compositor
-    knows without having to look at the pixels.
-    """
     head = name.split("_")[0].lower()
     if head not in LIT_COLOUR:
         return None
@@ -191,28 +93,9 @@ def lit_lamp(name: str):
 
 
 def scene_glow(frame: np.ndarray, box, cell: int, colour, rng: random.Random) -> None:
-    """Light the room the way the lamp in `box` would.
-
-    A real lamp does not stop at its own housing. It does two things the first
-    version of this file did neither of:
-
-      * throws colour and brightness onto the wall, the floor and the post for
-        a couple of housing heights around itself - measured on the venue
-        photographs, the wall a housing-width from a lit red lamp is bright
-        pink, not wall-coloured;
-      * veils the *whole frame*. A bright source in a cheap lens scatters
-        light across the entire image, lifting the black level and flattening
-        contrast everywhere, not just nearby.
-
-    Even with both, composited lamps stay easier than real ones - measured
-    against the model that misses 87 % of real lit photos, this synthesis costs
-    it 15 %. It narrows the gap; it does not close it. The real frames mixed in
-    by `load_clip_samples` are what carries the rest.
-    """
     x0, y0, x1, y1 = box
     height = max(1, y1 - y0)
     centre_x = (x0 + x1) / 2.0
-    # The lit cell sits about a sixth, a half or five sixths of the way down.
     centre_y = y0 + height * (0.18, 0.5, 0.82)[cell]
 
     reach = height * rng.uniform(*GLOW_REACH)
@@ -228,13 +111,9 @@ def scene_glow(frame: np.ndarray, box, cell: int, colour, rng: random.Random) ->
         falloff = np.clip(1.0 - distance ** 2, 0.0, 1.0) ** rng.uniform(1.2, 2.2)
         falloff = (falloff * strength)[:, :, None]
         region = frame[top:bottom, left:right].astype(np.float32)
-        # Add light rather than replace it: a lamp brightens what is already there.
         frame[top:bottom, left:right] = np.clip(
             region * (1 - falloff) + np.maximum(region, tint) * falloff, 0, 255).astype(np.uint8)
 
-    # Veiling glare over everything, scaled by how much of the frame the lamp
-    # fills - a housing 400 px tall dominates the picture, one 40 px tall does
-    # not.
     fill = np.clip(height / frame_h, 0.0, 1.0)
     veil = rng.uniform(*GLOW_VEIL) * fill
     if veil > 0.01:
@@ -244,16 +123,7 @@ def scene_glow(frame: np.ndarray, box, cell: int, colour, rng: random.Random) ->
 
 def render_onto(frame: np.ndarray, bgra: np.ndarray, height: int,
                 rng: random.Random, position=None, box_alpha: np.ndarray = None):
-    """Warp a cutout to an apparent height and paste it. Returns its box.
 
-    The box covers the sign face or the lamp housing - never the post, because
-    the artwork has none and the light cutouts were cut at the housing, and
-    never the halo either. A bloomed lamp spills light several radii past its
-    housing; if the box followed that, the housing's apparent height would
-    change with how bright the lamp is, and phase-2 distance is
-    real_height / pixel_height. `box_alpha` is the housing's own alpha, which
-    the halo never touches.
-    """
     if box_alpha is None:
         box_alpha = bgra[:, :, 3]
     warped, warped_box_alpha = warp_cutout(bgra, rng, extra=box_alpha)
@@ -289,25 +159,13 @@ def render_onto(frame: np.ndarray, bgra: np.ndarray, height: int,
 
 def degrade_frame(frame: np.ndarray, rng: random.Random,
                   gentle: bool = False) -> np.ndarray:
-    """Everything between the scene and the file: optics, sensor, codec.
 
-    Exposure and gamma first because the venue is dark and the car's camera
-    will push it, then blur - motion or defocus, not both - then sensor noise,
-    then JPEG. In that order, because that is the order a camera does it in.
-
-    `gentle` is for frames that are already photographs. They arrive with the
-    real camera's exposure, blur and compression already in them, and putting
-    the full synthetic range on top double-counts it: a red-lit stage pushed
-    another 1.45x in gain and shifted again in white balance comes out as a
-    white rectangle with a box around it, which teaches nothing.
-    """
     out = frame.astype(np.float32)
 
     gain = rng.uniform(0.85, 1.15) if gentle else rng.uniform(0.55, 1.45)
     gamma = rng.uniform(0.92, 1.10) if gentle else rng.uniform(0.75, 1.35)
     out = 255.0 * np.power(np.clip(out * gain / 255.0, 0, 1), gamma)
 
-    # White balance drifts: the hall is warm, daylight is not.
     spread = (0.97, 1.04) if gentle else (0.9, 1.12)
     cast = np.float32([rng.uniform(*spread) for _ in range(3)])
     out = np.clip(out * cast, 0, 255)
@@ -338,17 +196,6 @@ def degrade_frame(frame: np.ndarray, rng: random.Random,
 
 
 def draw_distractors(frame: np.ndarray, rng: random.Random, fixtures=()) -> None:
-    """Bright things that are emphatically not signs, and carry no label.
-
-    A vertical stack of three lamps is never drawn: that is the traffic
-    light's own silhouette, and teaching the model it is a negative would
-    teach it to miss the thing it exists to find. Pairs are drawn, because a
-    pair is what a stage rig actually looks like.
-
-    `fixtures` are real stage fixtures from assets/distractor_cutouts/, pasted
-    one at a time and darkened like the backgrounds, since the photographs they
-    were cut from were shot with the hall lights on.
-    """
     frame_h, frame_w = frame.shape[:2]
     if fixtures and rng.random() < FIXTURE_SHARE:
         for _ in range(rng.randint(1, 3)):
@@ -362,21 +209,21 @@ def draw_distractors(frame: np.ndarray, rng: random.Random, fixtures=()) -> None
         kind = rng.random()
         colour = rng.choice([(40, 40, 255), (40, 220, 255), (60, 230, 90),
                              (255, 255, 255), (255, 190, 120)])
-        if kind < 0.45:                                    # a lamp, or two
+        if kind < 0.45:
             radius = rng.randint(6, 90)
             cx, cy = rng.randint(0, frame_w), rng.randint(0, frame_h)
             count = rng.choice((1, 1, 2))
             step = rng.randint(2, 4) * radius
             for index in range(count):
                 _glowing_disc(frame, cx, cy + index * step, radius, colour, rng)
-        elif kind < 0.7:                                   # an LED bar
+        elif kind < 0.7:
             width = rng.randint(20, 240)
             height = max(3, int(width * rng.uniform(0.04, 0.25)))
             x, y = rng.randint(0, frame_w), rng.randint(0, frame_h)
             overlay = frame.copy()
             cv.rectangle(overlay, (x, y), (x + width, y + height), colour, -1)
             cv.addWeighted(overlay, rng.uniform(0.5, 1.0), frame, rng.uniform(0.0, 0.5), 0, frame)
-        else:                                              # a screen
+        else:
             width = rng.randint(30, 260)
             height = int(width * rng.uniform(0.5, 1.8))
             x, y = rng.randint(0, frame_w), rng.randint(0, frame_h)
@@ -402,18 +249,7 @@ def _glowing_disc(frame, cx, cy, radius, colour, rng):
     frame[:] = np.clip(blended * (1 - core) + 255.0 * core, 0, 255).astype(np.uint8)
 
 
-# --------------------------------------------------------------------------
-# real footage - worth more than everything above it
-# --------------------------------------------------------------------------
-
 def load_clip_samples(directory: Path) -> list:
-    """Hand-verified frames from the clips, decoded once.
-
-    These are the only examples in the project of a lit lamp in the dark hall
-    it will actually be driven in, at a range of distances, with a person
-    walking through frame. Everything above this line is an approximation of
-    them.
-    """
     samples = []
     for manifest in sorted(directory.glob("*.json")):
         spec = json.loads(manifest.read_text())
@@ -437,16 +273,6 @@ def load_clip_samples(directory: Path) -> list:
 
 
 def load_labelled_folders(root: Path) -> list:
-    """Hand-labelled stills, as (frame, [(label, box), ...]).
-
-    Every box in a frame is carried together, never one at a time. A frame with
-    a light *and* a stop sign in it that was cropped around only the light
-    would teach that the stop sign is background - the same "an unlabelled sign
-    is not a sign" mistake the backgrounds rule exists to prevent.
-
-    A label file with no boxes is kept too: it is a frame of the venue with
-    nothing in it, which is the most direct negative there is.
-    """
     images_root, labels_root = root / "images", root / "labels"
     if not images_root.exists():
         return []
@@ -475,13 +301,6 @@ def load_labelled_folders(root: Path) -> list:
 
 
 def real_sample(frame, boxes, rng: random.Random):
-    """One real frame, re-cropped and re-scaled so the object is not always the
-    same size. Returns the frame and every box still inside it, or None.
-
-    The window is chosen around one box but *all* of them are carried through,
-    and any that the crop cut into is dropped along with the crop - a half a
-    sign with a whole sign's label is worse than no sample at all.
-    """
     if not boxes:
         return None
     frame_h, frame_w = frame.shape[:2]
@@ -497,10 +316,6 @@ def real_sample(frame, boxes, rng: random.Random):
     if wx1 - wx0 < 32 or wy1 - wy0 < 32:
         return None
 
-    # Grow the window to the output's aspect ratio before cropping. Resizing a
-    # window of some other shape into FRAME_SIZE stretches everything in it,
-    # and a traffic light wider than it is tall is not a traffic light - it
-    # also breaks phase-2 distance, which divides by box height.
     aspect = FRAME_SIZE[0] / FRAME_SIZE[1]
     centre_x, centre_y = (wx0 + wx1) / 2, (wy0 + wy1) / 2
     half_w, half_h = (wx1 - wx0) / 2, (wy1 - wy0) / 2
@@ -508,7 +323,6 @@ def real_sample(frame, boxes, rng: random.Random):
         half_w = half_h * aspect
     else:
         half_h = half_w / aspect
-    # Keep it inside the frame without changing its shape.
     half_w = min(half_w, frame_w / 2, (frame_h / 2) * aspect)
     half_h = half_w / aspect
     centre_x = float(np.clip(centre_x, half_w, frame_w - half_w))
@@ -532,8 +346,6 @@ def real_sample(frame, boxes, rng: random.Random):
         inside_h = min(by1, wy1) - max(by0, wy0)
         if inside_w <= 0 or inside_h <= 0:
             continue
-        # Anything the window clipped is dropped: a partial object carrying a
-        # whole object's box teaches a box that is not the object.
         if inside_w * inside_h < 0.92 * (bx1 - bx0) * (by1 - by0):
             continue
         moved = ((bx0 - wx0) * scale_x, (by0 - wy0) * scale_y,
@@ -549,22 +361,6 @@ def real_sample(frame, boxes, rng: random.Random):
 
 
 def real_patch_paste(samples: list, backgrounds: list, rng: random.Random):
-    """Put a real object, with its real surroundings, smaller into another room.
-
-    `real_sample` can only ever make an object *larger*, because it crops into a
-    frame and blows the crop up - it cannot zoom out past the frame's edge. With
-    every new still being a close-up, that left the 90-180 px band at 10 % of
-    training boxes, and round 3 duly went from 4/8 to 1/8 on the eval's distant
-    photos while fixing close range.
-
-    So a patch is lifted instead - the object plus a couple of box-widths of the
-    scene around it, which is where its spill lives - and pasted at a smaller
-    apparent size onto a different background. That spill is the thing an alpha
-    cutout throws away and the thing round 1 died without, so this is a better
-    small-object sample than a cutout paste, not a worse one. The patch is
-    feathered at its edge; it is a real light in a real room either side of the
-    seam.
-    """
     for _ in range(12):
         frame, boxes = samples[rng.randrange(len(samples))]
         if not boxes:
@@ -580,7 +376,6 @@ def real_patch_paste(samples: list, backgrounds: list, rng: random.Random):
         frame_h, frame_w = frame.shape[:2]
         if px0 < 0 or py0 < 0 or px1 > frame_w or py1 > frame_h:
             continue
-        # A second object inside the patch would travel unlabelled.
         if any(other is not boxes[0] and not (b[2] <= px0 or b[0] >= px1 or b[3] <= py0 or b[1] >= py1)
                for other, b in ((o, o[1]) for o in boxes if o[1] != (x0, y0, x1, y1))):
             continue
@@ -604,18 +399,11 @@ def real_patch_paste(samples: list, backgrounds: list, rng: random.Random):
         region = canvas[at_y:at_y + new_h, at_x:at_x + new_w].astype(np.float32)
         patch = patch.astype(np.float32)
 
-        # Match the patch's brightness to the scene it is joining, measured at
-        # the rim where the two meet rather than in the middle, which is the
-        # lamp. Without it a patch off a red stage dropped into a lit classroom
-        # is a rectangle of the wrong exposure, and a rectangle is a shortcut
-        # the detector will learn instead of the object.
         rim = max(1, int(0.12 * min(new_h, new_w)))
         patch_rim = float(np.median(np.concatenate([patch[:rim].ravel(), patch[-rim:].ravel()])))
         scene_rim = float(np.median(np.concatenate([region[:rim].ravel(), region[-rim:].ravel()])))
         patch = np.clip(patch * float(np.clip((scene_rim + 12) / (patch_rim + 12), 0.45, 2.2)), 0, 255)
 
-        # Radial, not rectangular: a square feather still leaves four straight
-        # edges for the model to find.
         yy, xx = np.mgrid[0:new_h, 0:new_w]
         radius = np.hypot((xx - new_w / 2) / (new_w / 2), (yy - new_h / 2) / (new_h / 2))
         alpha = np.clip(1.0 - (radius - 0.45) / 0.55, 0.0, 1.0) ** 1.5
@@ -631,12 +419,6 @@ def real_patch_paste(samples: list, backgrounds: list, rng: random.Random):
 
 
 def clip_negative_crops(samples: list, rng: random.Random, count: int) -> list:
-    """Frames from the same footage with the light provably cropped out.
-
-    The person who walks through this clip is why the first model called a
-    hoodie a `delivery_sign` at 0.93 in 38 % of its frames. Here he is, at the
-    venue, in the dark, carrying no label at all.
-    """
     crops = []
     if not samples:
         return crops
@@ -648,7 +430,6 @@ def clip_negative_crops(samples: list, rng: random.Random, count: int) -> list:
             continue
         x0 = min(b[1][0] for b in boxes); x1 = max(b[1][2] for b in boxes)
         frame_h, frame_w = frame.shape[:2]
-        # Take a slab from whichever side of the housing has the most room.
         gaps = [("left", 0, x0), ("right", x1, frame_w)]
         side, low, high = max(gaps, key=lambda g: g[2] - g[1])
         if high - low < 120:
@@ -660,10 +441,6 @@ def clip_negative_crops(samples: list, rng: random.Random, count: int) -> list:
         crops.append(cv.resize(frame[cy0:cy1, cx0:cx1], FRAME_SIZE))
     return crops
 
-
-# --------------------------------------------------------------------------
-# the dataset
-# --------------------------------------------------------------------------
 
 def load_cutouts(root: Path) -> dict:
     cutouts = {}
@@ -708,7 +485,6 @@ def background_frame(path: Path, rng: random.Random, darken: bool = True) -> np.
     image = cv.imread(str(path))
     if image is None:
         return np.full((FRAME_SIZE[1], FRAME_SIZE[0], 3), 40, np.uint8)
-    # A random crop, so 519 frames are not 519 identical framings.
     height, width = image.shape[:2]
     scale = rng.uniform(0.6, 1.0)
     crop_w, crop_h = int(width * scale), int(height * scale)
@@ -724,14 +500,11 @@ def background_frame(path: Path, rng: random.Random, darken: bool = True) -> np.
 
 
 def make_sample(frame, cutouts, rng):
-    """Paste zero or one sign and return its YOLO line, if any."""
     if rng.random() < NO_SIGN_SHARE:
         return None
     label = rng.choice([c for c in CLASSES if cutouts[c]])
     name, cutout = rng.choice(cutouts[label])
     low, high = PASTE_HEIGHT[label]
-    # Uniform in log height: without it, three quarters of the samples land in
-    # the top octave and the far-away sizes never get trained.
     height = int(round(np.exp(rng.uniform(np.log(low), np.log(high)))))
     housing_alpha = cutout[:, :, 3].copy()
     lamp = lit_lamp(name) if label == "traffic_light" else None
@@ -753,8 +526,7 @@ def yolo_line(label: str, box, shape) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=4000)
     parser.add_argument("--out", default="dataset/synth")
     parser.add_argument("--cutouts", default="assets/sign_cutouts")
@@ -816,8 +588,6 @@ def main() -> int:
         sample = None
         from_real = False
         if clip_samples and rng.random() < args.real_share:
-            # Half the real samples are shrunk into another scene, which is the
-            # only way a close-up still can contribute a distant object.
             made = (real_patch_paste(clip_samples, backgrounds, rng)
                     if rng.random() < PATCH_PASTE_SHARE else None)
             if made is None:
@@ -834,12 +604,9 @@ def main() -> int:
             frame = negatives[rng.randrange(len(negatives))].copy()
         else:
             frame = background_frame(rng.choice(backgrounds), rng)
-            # Distractors first: they are clutter in the scene, and drawing them
-            # last would occasionally paint over the sign while its label stayed.
             if rng.random() < DISTRACTOR_SHARE:
                 draw_distractors(frame, rng, fixtures)
             sample = make_sample(frame, cutouts, rng)
-        # Real photographs get a light touch; see degrade_frame.
         frame = degrade_frame(frame, rng, gentle=from_real)
 
         lines = []
@@ -852,8 +619,6 @@ def main() -> int:
 
         name = f"{index:06d}"
         cv.imwrite(str(out / "images" / split / f"{name}.jpg"), frame)
-        # Empty files on purpose: an image with no sign is a negative, and
-        # ultralytics only counts it as one if the label file exists.
         (out / "labels" / split / f"{name}.txt").write_text("\n".join(lines) + ("\n" if lines else ""))
 
         if args.preview and index < args.preview:

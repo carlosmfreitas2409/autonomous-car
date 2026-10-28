@@ -1,53 +1,3 @@
-"""Pickup and delivery: which way to go at each detour sign, and where to stop.
-
-The track is a loop with two exits a few metres apart: exit 1 (A inside its
-detour), then exit 2 (B inside its detour), then C on the main road, and round
-again. Exit 2's mouth sits just past exit 1's, so detour 1 rejoins the road
-beyond it: exit 2 is only reached by going straight at exit 1, and every other
-way leads round to exit 1 again. Both detour signs look alike and nothing
-marks a new lap, so the mission counts: `next_exit` starts at 1 (the car starts
-before exit 1) and moves on at every detour sign by `_exit_after`.
-
-At a detour sign the rule is local: enter only if the current target - the
-pickup until it has been collected, then the delivery - is the letter inside
-this exit. On a fixed cycle, taking the first chance at each target in order
-is already the shortest route, so there is no route table.
-
-A letter read up close is the one absolute position fix there is: A means
-detour 1, B means detour 2, C means the main road after exit 2 - and from all
-three the next exit is exit 1. Each letter sign resets `next_exit` once, so a
-missed or double-counted detour sign costs one wrong detour or one extra lap,
-never a mission that is lost for good.
-
-Nothing here acts on a single frame or on a far sign: only confirmed tracks
-(3 of the last 5 frames, sign_tracker.py) with a committed letter (3 of the
-last 5 readings) count, and only within `_ACT_DISTANCE_M`.
-
-At the target letter the car docks and waits for as long as loading or
-unloading takes: only the person at the dock knows when it is done, so they
-release the truck (dashboard, tuner or PS5 Cross), as a dock attendant turns
-the dock light green for a driver. Released at a pickup, it signals left,
-finishes saying it is leaving, and waits for the sonar to read the way ahead
-clear for `_DEPART_CLEAR_S` before it pulls away; released at a delivery it parks there, ready for the next
-order, which leaves from that dock instead of from the start line.
-
-With the cargo node connected (cargo.py) the compartment is part of the
-handshake. It unlocks while the truck waits at a pickup or delivery dock,
-until the lid is lifted, and never anywhere else. Closing the lid again is
-the release. Before it leaves, the truck checks its own load: the lid closed,
-then the weight - something on board after a pickup, nothing after a
-delivery. Weight is a check, never the trigger: only the person at the dock
-knows when a load is complete. A failed weight check sends the truck back to
-waiting, and a second release at that dock overrides it (the attendant knows
-best). No cargo node, no checks: the handshake above, unchanged.
-
-Like `SignPolicy`, the mission never steers: it returns a throttle scale, a
-hold, a one-shot path request, an optional turn signal, the dock's light scene
-and a one-shot announcement, and the loop applies them. With no letters
-configured it returns the neutral command and the car drives exactly as
-before.
-"""
-
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -64,46 +14,29 @@ logger = logging.getLogger(__name__)
 
 LETTERS = ("A", "B", "C")
 
-# Which exit's detour holds each letter; C is on the main road.
 LETTER_EXIT = {"A": 1, "B": 2, "C": None}
 
 
 
 def _exit_after(exit_number: int, entered: bool) -> int:
-    """The exit met next. Detour 1 rejoins the road past exit 2's mouth
-    (live 2026-10-07: after A the next sign was exit 1's again), so only
-    going straight at exit 1 reaches exit 2."""
     return 2 if exit_number == 1 and not entered else 1
 
 
-# The next exit implied by reading a letter: inside detour 1, inside detour 2
-# and at C alike, the road leads round to exit 1.
 _EXIT_AFTER_LETTER = {"A": _exit_after(1, True), "B": _exit_after(2, True), "C": 1}
 
-# Same distances as the stop sign: nothing further than this is acted on, and
-# the approach ramps from here down to a stop at _STOP_DISTANCE_M.
 _ACT_DISTANCE_M = 3.0
 _STOP_DISTANCE_M = 1.5
-_LOST_S = 1.0               # a committed approach whose track vanishes this long is abandoned
-_MAX_APPROACH_S = 8.0       # an approach that never reaches the line stops where it is
-_STALE_S = 0.4              # a snapshot older than this decides nothing
-# A detour sign that turns up under a new track id is the one already decided
-# - the tracker lost it and found it again - if that one was seen this
-# recently and the new one is no farther than it was. Two exits can sit a few
-# metres apart, with both signs in view at once: the second is farther away.
+_LOST_S = 1.0
+_MAX_APPROACH_S = 8.0
+_STALE_S = 0.4
 _SAME_SIGN_S = 2.0
 _SAME_SIGN_M = 0.5
-# Released, the way ahead must read clear this long - counted once the voice
-# has finished - before the car pulls away: the left signal's warning, and
-# the attendant's time to step back.
 _DEPART_CLEAR_S = 2.0
-_LEAVING_S = 2.0            # the left signal kept on this long after pulling away
-_REMIND_S = 30.0            # a docked truck repeats what it is waiting for this often
-_DELIVERED_S = 3.0          # the "delivered" light before the parked one
-# Below this the compartment counts as empty: the scale's drift and the
-# vibration of a stopped car stay well under it.
+_LEAVING_S = 2.0
+_REMIND_S = 30.0
+_DELIVERED_S = 3.0
 _EMPTY_G = 20
-_SETTLE_S = 3.0             # a reading that never settles is judged as it stands after this
+_SETTLE_S = 3.0
 
 
 class Stage(Enum):
@@ -117,38 +50,32 @@ class MissionState(Enum):
     IDLE = "idle"
     DRIVING = "driving"
     SLOWING = "slowing"
-    DOCKED = "docked"           # waiting for the release
-    CHECKING = "checking"       # released, waiting for the way ahead to clear
+    DOCKED = "docked"
+    CHECKING = "checking"
     LEAVING = "leaving"
-    DONE = "done"               # delivered, parked, ready for the next order
+    DONE = "done"
 
 
 @dataclass(frozen=True)
 class Announcement:
-    key: str        # what happened, see voice.py
-    letter: str     # the dock it happened at
+    key: str
+    letter: str
 
 
 @dataclass
 class MissionCommand:
     scale: float = 1.0
     hold: bool = False
-    path: Optional[Path] = None                 # one-shot request, applied by the loop
-    turn_signal: Optional[TurnSignal] = None    # None: no opinion
+    path: Optional[Path] = None
+    turn_signal: Optional[TurnSignal] = None
     state: MissionState = MissionState.IDLE
     reason: str = ""
-    scene: Optional[DockScene] = None           # the lights at a dock
-    announce: Optional[Announcement] = None     # one-shot, on the frame it happens
-    # CHECKING only, what holds the released car: "announcing", "lid",
-    # "weighing", "clearing" or "blocked". `reason` says the same in words.
+    scene: Optional[DockScene] = None
+    announce: Optional[Announcement] = None
     check: Optional[str] = None
 
 
 class Dock:
-    """Where the car stands waiting for a release. `role` is the stage the
-    release completes: PICKUP (loaded), DELIVERY (unloaded), or None for a
-    new order leaving from where the last one was delivered."""
-
     def __init__(self, letter: str, track_id: Optional[int], role: Optional[Stage], now: float):
         self.letter = letter
         self.track_id = track_id
@@ -158,9 +85,6 @@ class Dock:
         self.clear_since: Optional[float] = None
         self.announced_at: Optional[float] = None
         self.blocked_announced = False
-        # The compartment: lifted since the truck docked or was last
-        # released, the weight check that failed (an announcement key), and
-        # a release after that failure, which skips the weight from then on.
         self.lid_opened = False
         self.check_failed: Optional[str] = None
         self.override = False
@@ -196,11 +120,8 @@ class _Approach:
 
 
 def plan_route(pickup: str, delivery: str, start: Optional[str] = None) -> list[str]:
-    """The decisions the mission expects to make, in order, from the start
-    line, or from the letter `start` where the car is parked."""
     steps: list[str] = []
     next_exit = 1 if start is None else _EXIT_AFTER_LETTER[start]
-    # From inside either detour the way back to exit 1 passes C.
     c_ahead = start is not None and LETTER_EXIT[start] is not None
     here = start
     for target, role in ((pickup, "pickup"), (delivery, "delivery")):
@@ -209,7 +130,6 @@ def plan_route(pickup: str, delivery: str, start: Optional[str] = None) -> list[
             continue
         here = target
         while True:
-            # A letter outside every detour (C) is on the main road after exit 2.
             if LETTER_EXIT[target] is None and c_ahead:
                 steps.append(f"{target}: {role}")
                 c_ahead = False
@@ -217,7 +137,6 @@ def plan_route(pickup: str, delivery: str, start: Optional[str] = None) -> list[
             exit_number = next_exit
             enter = LETTER_EXIT[target] == exit_number
             steps.append(f"exit {exit_number}: {'detour' if enter else 'straight'}")
-            # Every way back round to exit 1 passes C.
             next_exit = _exit_after(exit_number, enter)
             c_ahead = next_exit == 1
             if enter:
@@ -231,9 +150,7 @@ class Mission:
         self._pickup: Optional[str] = None
         self._delivery: Optional[str] = None
         self.route: list[str] = []
-        # Where the last delivery left the car: (letter, sign track id).
         self._spot: Optional[tuple[str, Optional[int]]] = None
-        # The cargo node's latest status; None when it is not connected.
         self._cargo: Optional[CargoReading] = None
         self._quiet = True
         self._restart(Stage.IDLE)
@@ -245,22 +162,18 @@ class Mission:
         self._dock_at_spot = False
         self._delivered_at: Optional[float] = None
         self._last_state = MissionState.IDLE
-        self.decisions = 0          # detour signs decided since the run started (route progress)
-        self.last_decision: Optional[tuple[int, int, Path]] = None  # (sign id, exit, path) of the latest
+        self.decisions = 0
+        self.last_decision: Optional[tuple[int, int, Path]] = None
         self._approach: Optional[_Approach] = None
         self._consumed: set[int] = set()
         self._fixed: set[int] = set()
         self._decided: set[int] = set()
-        # The last decided detour sign: its ids, nearest distance, last seen.
         self._sign_ids: set[int] = set()
         self._sign_distance = float("inf")
         self._sign_seen = float("-inf")
-        # Exits decided straight whose mouth the lane camera has not shown
-        # yet, and a Detour decided while one of them is still ahead.
         self._forks_ahead = 0
         self._pending_exit: Optional[int] = None
         self._leaving_until: Optional[float] = None
-        # The manifest: what the scale read as the truck left its pickup.
         self.manifest_g: Optional[int] = None
 
     @property
@@ -281,22 +194,13 @@ class Mission:
 
     @property
     def parked(self) -> bool:
-        """Held where the last delivery left it, not yet released: a new order
-        can be given without an e-stop, and leaves from here."""
         return self._spot is not None and (self.dock is None or self.dock.released_at is None)
 
     @property
     def parked_at(self) -> Optional[str]:
-        """The letter `parked` holds the car at, else None."""
         return self._spot[0] if self.parked else None
 
     def configure(self, pickup: Optional[str], delivery: Optional[str]) -> None:
-        """Start a new run, or stay idle while either letter is missing. A
-        half-made choice is kept: the operator picks the two letters one at a
-        time. Parked after a delivery, the run starts at that dock and the car
-        stays held until the order is complete; clearing both letters forgets
-        the dock (the car may have been carried off). The caller decides when
-        a change is allowed."""
         self._pickup = pickup if pickup in LETTERS else None
         self._delivery = delivery if delivery in LETTERS else None
         if self._pickup is None and self._delivery is None:
@@ -311,7 +215,6 @@ class Mission:
         self.route = plan_route(self._pickup, self._delivery, start)
         self._restart(Stage.PICKUP)
         if self._spot is not None:
-            # Leaving from this dock: its sign has been read and stays behind.
             self._dock_at_spot = True
             if self._spot[1] is not None:
                 self._fixed.add(self._spot[1])
@@ -320,22 +223,17 @@ class Mission:
                     " -> ".join(self.route))
 
     def reset(self) -> None:
-        """E-stop: drop the approach in progress and any release, so the car
-        needs releasing again. A dock is kept: the car has not moved."""
         self._approach = None
         self._leaving_until = None
         if self.dock is not None:
             self.dock.unrelease()
 
     def release(self, now: float) -> Optional[str]:
-        """The person at the dock says loading or unloading is done. Returns
-        why it was refused, or None."""
         if self.dock is None:
             return "not at a dock"
         if self.dock.released_at is not None:
             return "already released"
         self.dock.released_at = now
-        # Taken back to waiting, the lid has to be lifted again to release.
         self.dock.lid_opened = False
         if self.dock.check_failed is not None and not self.dock.override:
             self.dock.override = True
@@ -344,7 +242,6 @@ class Mission:
         return None
 
     def hold_departure(self) -> Optional[str]:
-        """"Wait": a released car that has not left goes back to waiting."""
         if self.dock is None or self.dock.released_at is None:
             return "not leaving a dock"
         self.dock.unrelease()
@@ -353,17 +250,12 @@ class Mission:
 
     @property
     def unlock(self) -> bool:
-        """The compartment may open: waiting at a pickup or delivery dock,
-        until the lid has been lifted (it latches again as it shuts). The loop
-        passes it on only while the car cannot move."""
         dock = self.dock
         return (dock is not None and dock.role is not None and dock.released_at is None
                 and not dock.lid_opened)
 
     @property
     def scene(self) -> Optional[DockScene]:
-        """The dock's lights while the loop is not asking (e-stopped): the
-        people at the dock are still there."""
         if self.dock is not None:
             return DockScene.WAITING
         if self.stage is Stage.DONE and self._spot is not None:
@@ -373,11 +265,6 @@ class Mission:
     def update(self, snapshot: SignSnapshot, path: Path, now: float,
                fork_passed: bool = False, clear: bool = True,
                cargo: Optional[CargoReading] = None, quiet: bool = True) -> MissionCommand:
-        """`fork_passed`: `path.ForkWatch` saw the car drive past a detour's
-        mouth on the main road since the last call. `clear`: the sonar sees
-        nothing ahead; only read while a released car waits to pull away.
-        `cargo`: the compartment, None without the cargo node; only read at
-        a dock. `quiet`: nothing is being said to the people at the dock."""
         self._cargo = cargo
         self._quiet = quiet
         command = self._update(snapshot, path, now, fork_passed, clear)
@@ -409,17 +296,12 @@ class Mission:
         command.path = decided or request
         return command
 
-    # ------------------------------------------------------------------
-
     def _fix_position(self, tracks: list[Track]) -> None:
-        # Once per track id (ids are never reused): C still in view as the car
-        # reaches exit 1's sign must not undo that sign's count.
         for track in tracks:
             if (track.label != "delivery_sign" or track.variant not in _EXIT_AFTER_LETTER
                     or track.id in self._fixed or not _within(track, _ACT_DISTANCE_M)):
                 continue
             self._fixed.add(track.id)
-            # Every letter stands past the mouths behind it.
             self._forks_ahead = 0
             fixed = _EXIT_AFTER_LETTER[track.variant]
             if fixed != self.next_exit:
@@ -428,8 +310,6 @@ class Mission:
                 self.next_exit = fixed
 
     def _follow_sign(self, snapshot, stale, now) -> None:
-        """Keep up with the last decided sign. A stale snapshot counts as it
-        still being in view: letting it expire there would decide it twice."""
         for track in snapshot.tracks:
             if track.id in self._sign_ids:
                 self._sign_seen = now
@@ -439,13 +319,6 @@ class Mission:
             self._sign_seen = now
 
     def _follow_forks(self, fork_passed, now) -> Optional[Path]:
-        """Arm a waiting Detour once the mouth before it is behind the car.
-
-        Exits a few metres apart: the second sign is decided while the car is
-        still level with the first exit's mouth. Right-edge anchoring there
-        would follow the first detour's line, and DetourReturn would take that
-        mouth for the entrance and send the path home before the second one.
-        """
         if fork_passed and self._forks_ahead:
             self._forks_ahead -= 1
             logger.info("mission: a mouth passed on the main road, %d still ahead", self._forks_ahead)
@@ -454,8 +327,6 @@ class Mission:
                 self._pending_exit = None
                 return Path.DETOUR
         if self._pending_exit is not None and now - self._sign_seen > _LOST_S:
-            # Its sign is behind the car and the mouth before it never showed:
-            # arming now would come after this exit's own mouth.
             logger.warning("mission: exit %d's sign passed before the mouth before it was seen - "
                            "straight on, next lap", self._pending_exit)
             self._pending_exit = None
@@ -463,8 +334,6 @@ class Mission:
         return None
 
     def _decide_detour(self, tracks, path, now) -> Optional[Path]:
-        # Inside a detour until DetourReturn sends the path home: no sign
-        # out here belongs to the next exit yet.
         if path is Path.DETOUR:
             return None
 
@@ -560,7 +429,6 @@ class Mission:
         if dock.role is Stage.DELIVERY:
             return self._deliver(now)
         if dock.role is Stage.PICKUP and self._pickup == self._delivery:
-            # Loaded and unloaded at the same dock: nothing to drive.
             logger.info("mission: picked up at %s, delivering here", dock.letter)
             self.stage = Stage.DELIVERY
             self.dock = Dock(dock.letter, dock.track_id, Stage.DELIVERY, now)
@@ -568,15 +436,11 @@ class Mission:
             command.announce = Announcement(self._dock_key("docked", Stage.DELIVERY), dock.letter)
             return command
 
-        # "Leaving" is only said once the checks have passed: a pickup that
-        # weighs empty waits again, and a delivery never leaves.
         announce = None
         if not dock.departure_announced:
             dock.departure_announced = True
             announce = Announcement(self._dock_key("released"), dock.letter)
         if not self._quiet:
-            # Still telling the people at the dock that it is leaving: the
-            # wait for a clear way starts once they have heard it all.
             dock.clear_since = None
             return self._checking(dock, "announcing", "announcing the departure", announce)
         if clear:
@@ -586,7 +450,6 @@ class Mission:
                 return self._depart(now)
         else:
             dock.clear_since = None
-            # From the frame after "released", which it would otherwise replace.
             if not dock.blocked_announced and announce is None:
                 dock.blocked_announced = True
                 announce = Announcement("blocked", dock.letter)
@@ -613,8 +476,6 @@ class Mission:
                               reason=f"leaving {dock.letter}, {waiting}")
 
     def _follow_lid(self, dock: Dock, now: float) -> None:
-        """Lifted and shut again while the truck waits at a pickup or a
-        delivery: the load is in (or out), and that is the release."""
         cargo = self._cargo
         if cargo is None or dock.role is None or dock.released_at is not None:
             return
@@ -627,9 +488,6 @@ class Mission:
             self.release(now)
 
     def _check_cargo(self, dock: Dock, now: float) -> Optional[MissionCommand]:
-        """The truck's own checks once released: the lid shut, then the
-        weight, judged once. A command while they hold the truck, None once
-        they pass (or with no cargo node to check with)."""
         cargo = self._cargo
         if cargo is None:
             return None
@@ -638,7 +496,6 @@ class Mission:
             dock.weighing_since = None
             announce = None
             if not dock.lid_announced:
-                # Instead of "released": the truck is not about to move.
                 dock.lid_announced = True
                 announce = Announcement("close_lid", dock.letter)
             return self._checking(dock, "lid", "waiting for the lid to close", announce)
@@ -668,7 +525,6 @@ class Mission:
         return command
 
     def _dock_key(self, what: str, role: Optional[Stage] = None) -> str:
-        """The dock's prompt: with the compartment it talks about the lid."""
         return what + ("" if role is None else f"_{role.value}") + ("_lid" if self._cargo is not None else "")
 
     def _depart(self, now: float) -> MissionCommand:

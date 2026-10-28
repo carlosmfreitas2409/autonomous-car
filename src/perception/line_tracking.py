@@ -8,70 +8,24 @@ import numpy as np
 from config import Config
 
 
-# How fast the learned lane width adapts to the current curve (EMA factor).
-# Shared by the scalar half-width the two-edge scan falls back on and by the
-# per-row width profile the anchored scan places its centers with.
 _WIDTH_EMA_ALPHA = 0.2
 
-# Frames that taught the width profile before an anchored scan may use it.
 _CALIBRATION_FRAMES = 30
 
-# The lane has a width once the measured width has sat within this tolerance
-# for this many frames in a row. That is also when the width is learned:
-# nothing is assumed about how wide a lane is, only that a lane that is
-# steadily some width *is* that width, while a width that is still changing
-# (a fork opening, a merge) is nobody's lane yet and teaches nothing.
 _STEADY_FRAMES = 15
 _STEADY_TOLERANCE = 0.03
 
-# Only rows that agree with the frame's median width to this tolerance teach
-# it. The far row reaches across a gap a good second before the others do;
-# one such row in five is harmless to the median but not to a line fit.
 _ROW_AGREEMENT = 0.10
 
-# Band rows: the frame between this fraction of its height and the top of the
-# ROI, sampled every `_BAND_STEP` rows. On this camera (wide angle, looking
-# steeply down) the lane spans ~90 % of the frame at the far ROI row and the
-# near rows almost never see a line, so the ROI alone has one both-lines row
-# per frame and cannot fit a width-vs-row line. The band above it sees both
-# lines in every main-road frame. It only ever measures the lane; it never
-# steers.
 _BAND_TOP = 0.35
 _BAND_STEP = 12
 
-# Anchored modes, other-edge fallback only: a thin white run hugging the
-# frame edge is the lens, not tape. The lens puts a bright streak 6-11 px
-# wide along the last ~20 px of the frame's right edge; deep in the U-turn,
-# with the outer line above the ROI, it was the only "edge" the fallback
-# found: full right from garbage, then a hard left the moment the real line
-# clipped the far row (day6_detour f921-929). Rejected, those frames are a
-# hold instead. Thinness alone is not enough (a tape line measures 13-40 px
-# across a 710-960 px lane here, down to 1.5 % of it far away), nor is the
-# position alone (a line leaving the frame sits there too), so a fallback
-# hit is dropped only when it is both narrower than `_MIN_LINE_RUN_RATIO` of
-# the lane width and within `_FRAME_EDGE_RATIO` of the frame width from the
-# edge. The anchored edge itself is exempt: at the fork the peeling line's
-# last thin remnant keeps the wheel climbing to full lock before the hold
-# starts. AUTO is untouched.
 _MIN_LINE_RUN_RATIO = 0.02
 _FRAME_EDGE_RATIO = 0.03
 
-# Far reading: when the ROI is blind (no row, or a minority of rows) in LEFT
-# anchoring, the same anchored scan runs on the rows above it, every
-# `_BAND_STEP` rows, up to where the width profile says the lane is still
-# wider than `_FAR_MIN_WIDTH` of its width at the ROI (closer to the horizon
-# the linear profile no longer holds). The nearest rows that resolve, one ROI
-# height of them, are read like the ROI: offset of their median centre and
-# the slope of a line through them. On the 90-degree detour exit (lap_a5/a6,
-# 2026-10-13) the outer line sat above the ROI for 6.5 s while the DETOUR
-# hold kept full lock and the car turned far past 90 degrees; this reading
-# said full lock on the driver's own line (detour14) and eased to 0.05-0.7
-# once the car had over-rotated. LEFT only: at the entrance (RIGHT) the
-# junction's V of tape made it jump between full left and full right.
 _FAR_MIN_WIDTH = 0.2
 _FAR_MIN_ROWS = 3
 
-# Colour of the single edge followed in an anchored mode (BGR).
 _ANCHOR_COLOR = (255, 128, 0)
 _BAND_COLOR = (90, 90, 160)
 
@@ -81,12 +35,6 @@ def _median_or_none(values) -> Optional[float]:
 
 
 def _theil_sen(points):
-    """(slope, intercept) of x against y, robust to one bad point in five.
-
-    The far scan row regularly catches an edge that is not the lane, and one
-    such row is enough to flatten a least-squares slope across five rows.
-    `points` are (y, x) pairs at two or more distinct y.
-    """
     slopes = [
         (x2 - x1) / (y2 - y1)
         for i, (y1, x1) in enumerate(points)
@@ -105,14 +53,6 @@ def _ema_pair(prev, new, alpha):
 
 
 class LaneAnchor(Enum):
-    """Which lane edge the tracker follows.
-
-    AUTO is the two-edge scan (the midpoint between the first white pixel on
-    each side). LEFT and RIGHT place every row's center one half-lane inside
-    that edge, using a lane width learned per image row. See `path.py` for
-    which one the operator's path choice selects.
-    """
-
     AUTO = "auto"
     LEFT = "left"
     RIGHT = "right"
@@ -126,37 +66,20 @@ class LineTrackingResult:
     lane_curvature: Optional[float]
     lane_state: str = ""
     anchor: LaneAnchor = LaneAnchor.AUTO
-    # Anchored modes only: per row that saw the other edge, measured width over
-    # the width the lane has steadily had. About 1.0 on a whole lane. Empty in AUTO.
     width_ratios: tuple[float, ...] = ()
-    # Telemetry and controller gating only; nothing below feeds the offset.
     rows_found: int = 0
     both_rows: int = 0
     profile_ready: bool = False
-    # An anchored frame that found fewer than two rows: the offset is
-    # reported, but the tracker's memory did not move and the curvature is
-    # None. The DETOUR control profile ignores such frames while it is holding.
     provisional: bool = False
-    # (row y, center x, both edges seen) for every resolved scan row.
     row_centers: tuple[tuple[int, int, bool], ...] = ()
-    # Band rows above the ROI that measured the lane this frame.
     band_rows: int = 0
-    # LEFT anchoring with a blind ROI only: offset and curvature read on the
-    # rows above the ROI, in the ROI's units (raw, not smoothed). None
-    # otherwise. Only the DETOUR control profile steers on it, during a hold.
     far_offset: Optional[int] = None
     far_curvature: Optional[float] = None
-    # Display only, never read back: (row y, left x, right x) for every band
-    # row that saw a line, -1 for a side with none (a fork's open side), and
-    # the width profile `width = a*y + b` the anchored scan places its centers
-    # with. The dashboard draws the lane from them; nothing here feeds the
-    # offset or the controller.
     band_edges: tuple[tuple[int, int, int], ...] = ()
     width_profile: Optional[tuple[float, float]] = None
 
     @property
     def width_ratio(self) -> Optional[float]:
-        """Median of `width_ratios`, or None when no row saw both edges."""
         return _median_or_none(self.width_ratios)
 
 
@@ -168,18 +91,6 @@ class LineTracker:
         self._smoothed_curvature: Optional[float] = None
         self._band_edges: tuple[tuple[int, int, int], ...] = ()
 
-        # Lane width as a function of the image row, `width = a*y + b`. On a
-        # flat road with a fixed camera perspective makes that exactly linear.
-        # One number for every row tilts the single-edge centerline, and the
-        # curvature fit turns the tilt into a fake bend worth 40 px of steering
-        # error, nearly full lock, applied constantly.
-        #
-        # `_calibration_profile` is the shape learned at bootstrap and then
-        # frozen; it only normalises widths so "steady" can be judged.
-        # `_width_profile` is the working width, relearned whenever the lane is
-        # steadily some width: the main lane, a detour, whatever is there.
-        #
-        # Both are camera geometry, not lane state: `reset()` keeps them.
         self._calibration_profile: Optional[tuple[float, float]] = None
         self._width_profile: Optional[tuple[float, float]] = None
         self._calibration = 0
@@ -189,17 +100,9 @@ class LineTracker:
         self._norm_history: deque = deque(maxlen=_STEADY_FRAMES)
         self._steady_run = 0
 
-        # Telemetry: anchored frames whose center had to be clamped back into
-        # the ROI so the next scan starts inside the frame.
         self.clamped_frames = 0
 
     def reset(self) -> None:
-        """Forget the lane, keep the camera geometry.
-
-        A frame-read failure or a `--video` rewind must not turn a Detour into
-        an 8 s LOST hold while the profile recalibrates. Recalibration is the
-        operator's call: restart the tuner on a straight.
-        """
         self._prev_track_center = None
         self._smoothed_center = None
         self._half_lane_width = None
@@ -213,11 +116,6 @@ class LineTracker:
 
     def process(self, frame: np.ndarray, params: Config, anchor: LaneAnchor = LaneAnchor.AUTO,
                 learn: bool = True) -> LineTrackingResult:
-        """`learn=False` reads the lane but teaches the width nothing: a car
-        standing still (an obstacle, a sign, a pickup) sees one picture for
-        seconds, every width in it looks steady, and an obstacle's edge in view
-        could be learned as a lane line, to be driven on once the car resumes.
-        """
         self._learning = learn
         ratio = params.downscale_ratio
         height = round(frame.shape[0] / ratio)
@@ -256,11 +154,6 @@ class LineTracker:
         far_offset: Optional[int] = None
         far_curvature: Optional[float] = None
         if self._anchor_side is LaneAnchor.AUTO or not self.profile_ready:
-            # Anchoring on one edge needs the lane geometry to place the center
-            # from, so the two-edge scan runs until enough frames have taught
-            # it. It also runs whenever AUTO is selected. Rows are resolved
-            # with the previous frame's scalar width first, then the width is
-            # learned: that ordering is the working path, byte for byte.
             centers, center_ys, widths, samples, lane_state = self._scan_auto(*scan_args)
             self._learn_width(widths)
             both_rows = len(samples)
@@ -293,8 +186,6 @@ class LineTracker:
         lane_curvature: Optional[float] = None
 
         if centers and provisional:
-            # One row is a bearing, not a lane: report where it points but do
-            # not let it move the smoothing, the scan origin or the curvature.
             raw_x = int(np.median(centers))
             lane_offset = raw_x - roi_center_x
             cv.line(debug, (raw_x, roi_y0), (raw_x, roi_y1), (0, 128, 255), 1)
@@ -302,8 +193,6 @@ class LineTracker:
             track_center_x = int(np.median(centers))
             self._prev_track_center = track_center_x
             if self._anchor_side is not LaneAnchor.AUTO:
-                # An anchored center is one edge plus half a lane and can land
-                # outside the frame; the next frame's scan must start inside it.
                 clamped = max(roi_x0, min(roi_x1 - 1, track_center_x))
                 if clamped != track_center_x:
                     self.clamped_frames += 1
@@ -319,14 +208,8 @@ class LineTracker:
 
             cv.line(debug, (smoothed_x, roi_y0), (smoothed_x, roi_y1), (0, 0, 255), 2)
 
-            # Curvature = lateral trend of the centerline across the ROI height,
-            # expressed as the slope dx/dy (x-pixels per y-pixel). As a ratio it
-            # is resolution-independent. A positive value means the lane bends
-            # right ahead, anticipating the bend before the car reaches it.
             if len(center_ys) >= 2 and len(set(center_ys)) >= 2:
                 fit = np.polyfit(center_ys, centers, 1)
-                # scan_ys increase downward (near the car is the larger y), so
-                # negate to make "x shift looking further ahead" positive-for-right.
                 raw_curvature = -float(fit[0])
 
                 if self._smoothed_curvature is None:
@@ -361,24 +244,12 @@ class LineTracker:
             width_profile=self._width_profile,
         )
 
-    # --- anchor state ----------------------------------------------------
-
     def _begin_anchor(self, side: LaneAnchor) -> None:
-        # The working width carries over: it is the lane the car is in. It is
-        # deliberately not swapped when the anchor changes: through the U-turn
-        # after a merge only the outer line is in view, and the width the car
-        # last steadily measured is the only width there is.
         self._anchor_side = side
         self._norm_history.clear()
         self._steady_run = 0
 
     def _anchored_frame(self, scan_args, band_samples, width):
-        """One anchored frame: single-edge centers, with the two-edge midpoint
-        as the fail-safe for when neither edge is anywhere in this frame.
-
-        Returns centers, their rows, the state label, the width ratios, the
-        provisional flag and the number of rows that measured the lane.
-        """
         centers, center_ys, ratios, samples, rows = self._scan_anchored(*scan_args, width)
         name = f"anchor-{self._anchor_side.value}"
 
@@ -394,24 +265,14 @@ class LineTracker:
             return centers, center_ys, name, (), False, 0
 
         if len(centers) < 2:
-            # Coming out of a blind stretch the first thing the ROI meets is a
-            # line clipping one corner of it: on detour_exit.mov twelve one-row
-            # frames read -7 to -73 px (full left) while the car still had to
-            # hold full lock. Such a frame yields an offset (this camera's
-            # normal main road is two rows, so a one-row frame must not stop
-            # the car in Straight) but teaches nothing and moves nothing.
             return centers, center_ys, f"{name} provisional", tuple(ratios), True, len(samples)
 
         self._learn_when_steady(samples, band_samples)
         return centers, center_ys, name, tuple(ratios), False, len(samples)
 
-    # --- lane geometry ---------------------------------------------------
-
     def _learn_width(self, widths) -> None:
         if not self._learning:
             return
-        # Learn the half-lane-width from frames where both lanes are visible so
-        # the single-lane estimate stays calibrated to the current curve.
         if widths:
             measured_half = float(np.median(widths)) / 2.0
             if self._half_lane_width is None:
@@ -421,27 +282,11 @@ class LineTracker:
 
     @staticmethod
     def _geometry_samples(roi_samples, band_samples):
-        """The rows that teach the width profile this frame.
-
-        The ROI rows are where centres are placed, so when they can fit a
-        line by themselves (two distinct heights) they are the reference.
-        The band only extends the fit when the ROI cannot: on this camera
-        the main road has one both-lines ROI row per frame, while the old
-        track's camera sees the horizon inside the band and its rows there
-        are not the lane.
-        """
         if len({y for y, _ in roi_samples}) >= 2:
             return roi_samples
         return roi_samples + band_samples
 
     def _learn_geometry(self, roi_samples, band_samples, ref_y: int) -> bool:
-        """Bootstrap: one frame toward the width profile. Returns whether it counted.
-
-        The frame's own fit must have a positive slope (perspective widens
-        the lane toward the car) and the width it predicts at the far ROI row
-        must have been steady for `_STEADY_FRAMES`: a camera still being
-        placed, or a fork sliding past, must not calibrate.
-        """
         if not self._learning:
             return False
         fit = self._fit_width_profile(self._geometry_samples(roi_samples, band_samples), roi_samples)
@@ -455,13 +300,6 @@ class LineTracker:
         return True
 
     def _learn_when_steady(self, roi_samples, band_samples) -> None:
-        """Post-bootstrap learning, AUTO or anchored, ROI and band alike.
-
-        Samples are (y, width) rows that measured the lane this frame. The
-        width is relearned only once it has been steady, from the rows that
-        agree with the frame's median; a frame with nothing to measure ends
-        the steady run.
-        """
         if not self._learning:
             return
         if self._calibration_profile is None:
@@ -472,8 +310,6 @@ class LineTracker:
             self._norm_history.clear()
             return
 
-        # Steadiness is judged against the calibration shape, which never
-        # moves, so learning the width does not itself look like a change.
         norms = [w / self._profile_width_at(self._calibration_profile, y) for y, w in samples]
         norm = float(np.median(norms))
         self._norm_history.append(norm)
@@ -497,14 +333,6 @@ class LineTracker:
 
     @staticmethod
     def _fit_width_profile(samples, roi_samples=()):
-        """This frame's `width = a*y + b`, or None when the rows cannot fit one.
-
-        Perspective always widens the lane toward the car, so a fit that does
-        not is junk (two rows on the wrong things) and teaches nothing. When
-        ROI rows are among the samples the intercept is re-anchored on them:
-        a band fit over-predicts the near rows by 2-5 % under this lens's
-        barrel distortion, and the near rows are where centres are placed.
-        """
         if len({y for y, _ in samples}) < 2:
             return None
         slope, intercept = _theil_sen(samples)
@@ -520,25 +348,11 @@ class LineTracker:
         return max(2.0, a * y + b)
 
     def _half_width_at(self, y: int) -> float:
-        """Half the lane width the working profile expects at image row `y`.
-
-        Falls back to the scalar width when no profile exists, which is the
-        only case that still carries the tilt.
-        """
         if self._width_profile is None:
-            # A single scan row sitting on a white pixel measures a zero width.
             return max(1.0, self._half_lane_width or 1.0)
         return self._profile_width_at(self._width_profile, y) / 2.0
 
-    # --- scans -----------------------------------------------------------
-
     def _scan_auto(self, binary, debug, scan_ys, scan_origin, roi_x0, roi_x1, height):
-        """Scan every row outward from the same origin and split the two lines.
-
-        Returns the centers, their rows, the both-lines widths (what the scalar
-        EMA learns from), the both-lines rows as (y, left_x, right_x) for the
-        geometry, and the lane_state label.
-        """
         centers = []
         center_ys = []
         widths = []
@@ -593,14 +407,6 @@ class LineTracker:
         return centers, center_ys, widths, samples, f"{label} {count}/{rows}"
 
     def _scan_band(self, binary, debug, scan_origin, width, height, roi_y0):
-        """Measure the lane in the rows above the ROI. Returns (y, width) samples.
-
-        Rows are chained upward from the scan origin: each row's midpoint is
-        the next row's origin, so the band follows the lane into a bend.
-        Rows whose two hits belong to the same white blob (the origin sat on
-        a line) are skipped. The band never produces a center; it only tells
-        the geometry how wide the lane is where the ROI cannot see both lines.
-        """
         rows = list(range(round(_BAND_TOP * height), roi_y0, _BAND_STEP))
         self._band_edges = ()
         if len(rows) < 2:
@@ -632,14 +438,6 @@ class LineTracker:
         return samples
 
     def _read_far(self, binary, debug, scan_origin, roi_x0, roi_x1, roi_y0, roi_y1, height, width):
-        """(offset, curvature) of the anchored lane on the rows above the ROI,
-        or None when fewer than `_FAR_MIN_ROWS` of them resolve.
-
-        The rows are walked near-to-far by the same anchored scan the ROI uses,
-        so it keeps the line the ROI last followed. Only the nearest ROI height
-        of resolved rows is read: farther up, a bend ahead pulls the centre
-        towards it and says "turn" when the car is already turning too much.
-        """
         ref_width = 2.0 * self._half_width_at((roi_y0 + roi_y1) // 2)
         far_ys = [
             y for y in range(0, roi_y0, _BAND_STEP)
@@ -665,43 +463,19 @@ class LineTracker:
         return center_x - (roi_x0 + roi_x1) // 2, -slope
 
     def _scan_anchored(self, binary, debug, scan_ys, scan_origin, roi_x0, roi_x1, height, width):
-        """Follow a single lane edge, placing the center one half-lane inside it.
-
-        Rows are walked near-to-far and each one starts its scan from the
-        previous row's center, so once the chain is inside a detour it keeps
-        finding that detour's edge instead of the line that reappears across
-        the wedge. Two guards on the chain:
-
-        - an edge that jumps *inward* by more than half a lane from the row
-          before is not this line (a reflection inside the lane, or the other
-          line when the lane sweeps across the image); the row is dropped;
-        - a row where the anchored edge is missing but the other edge sits
-          within a lane of the chain uses that edge instead, so a bend that
-          takes the inner line out of the frame does not empty the far rows.
-
-        The anchored edge is searched all the way to the frame edge: at a
-        fork the peeling line sits in the last 13-22 px the ROI slider cuts
-        off. The other edge keeps the ROI bounds; it is only scanned to
-        measure the lane and never moves an anchored row's center. Returns
-        centers, their rows, the width ratios, the (y, width) samples behind
-        them, and the row count.
-        """
         left = self._anchor_side is LaneAnchor.LEFT
-        found = []          # (row_y, edge_x, other_x)
+        found = []
         fallback_centers = []
         fallback_ys = []
         rows = 0
         chain_x = scan_origin
         prev_edge_x: Optional[int] = None
 
-        # scan_ys increase downward, so the last row is the one nearest the car.
         for sy in scan_ys[::-1]:
             if sy < 0 or sy >= height:
                 continue
             rows += 1
             row_y = int(sy)
-            # A single-edge center can land outside the ROI, so the next row's
-            # scan has to start from a column that is inside it.
             origin = max(roi_x0, min(roi_x1 - 1, chain_x))
             half = self._half_width_at(row_y)
 
@@ -755,9 +529,6 @@ class LineTracker:
 
     @staticmethod
     def _line_or_none(binary, row_y: int, x: int, step: int, min_run: float) -> int:
-        """`x`, or -1 when the white run starting there (extending in `step`,
-        measured to the frame edge past any ROI bound) is both shorter than
-        `min_run` and inside the frame-edge margin: the lens streak."""
         if x == -1:
             return -1
         row = binary[row_y]
@@ -775,7 +546,6 @@ class LineTracker:
 
     @staticmethod
     def _first_white_left(binary, row_y: int, origin: int, bound: int) -> int:
-        """First white pixel at or left of `origin`, stopping before `bound`."""
         for i in range(origin, bound, -1):
             if binary[row_y, i] == 255:
                 return i
@@ -783,7 +553,6 @@ class LineTracker:
 
     @staticmethod
     def _first_white_right(binary, row_y: int, origin: int, bound: int) -> int:
-        """First white pixel at or right of `origin`, stopping before `bound`."""
         for i in range(origin, bound, 1):
             if binary[row_y, i] == 255:
                 return i

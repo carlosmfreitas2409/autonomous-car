@@ -1,39 +1,12 @@
-// Bench tester for the cargo compartment node (firmware/cargo): load cell,
-// lid switch, solenoid lock and the serial link to the sonar node, one at a time.
-//
-// Targets the cargo ESP32 with the same wiring as firmware/cargo (the pins
-// below match firmware/cargo/src/config.h). Arduino IDE: board "ESP32 Dev
-// Module", library "HX711" by Bogdan Necula. Reflash firmware/cargo after.
-//
-// Prints a status line every 500 ms:
-//   weight 123.4 g (stable) | lid closed | lock off | link tx 12 rx 30 (last K 0)
-//
-// --- Serial commands (115200 baud, newline-terminated) ---
-//   t                      tare (empty the compartment first)
-//   <grams>                calibrate with that known mass on the scale, e.g. "500";
-//                          prints SCALE_COUNTS_PER_GRAM for firmware/cargo/src/config.h
-//   u                      unlock (pin LOW) until `l`, the lid opens, or 60 s pass
-//   l                      lock (coil off)
-//   p <ms>                 one full-power pulse, at most 2000 ms
-//   c                      toggle sending `C` status lines at 10 Hz: the sonar node
-//                          turns them into CAN 0x180 and the master's monitor shows
-//                          them; `K 1` / `K 0` typed in the master's monitor come back
-//                          (CAN 0x181, then the sonar node) and switch the lock
-//   ?                      help
-//
-// The lock is driven like the original bench sketch: GPIO 2, LOW = powered
-// (unlocked), HIGH = off (locked). The coil is not rated to stay powered for
-// long, so the 60 s cap stays on whatever you type.
-
 #include <Arduino.h>
 #include <HX711.h>
 
-constexpr uint8_t PIN_LINK_TX = 32;       // to the sonar node's RX2 (GPIO 16)
-constexpr uint8_t PIN_LINK_RX = 33;       // from the sonar node's TX2 (GPIO 17)
+constexpr uint8_t PIN_LINK_TX = 32;
+constexpr uint8_t PIN_LINK_RX = 33;
 constexpr uint8_t PIN_SCALE_DT = 26;
 constexpr uint8_t PIN_SCALE_SCK = 25;
-constexpr uint8_t PIN_LID = 13;           // switch to 3V3, 10k pull-down: HIGH = closed
-constexpr uint8_t PIN_LOCK = 2;           // LOW = unlocked, HIGH = locked (also the board LED)
+constexpr uint8_t PIN_LID = 13;
+constexpr uint8_t PIN_LOCK = 2;
 
 constexpr uint32_t LOCK_MAX_ON_MS = 60000;
 constexpr uint32_t PRINT_PERIOD_MS = 500;
@@ -206,7 +179,6 @@ void handle(String cmd) {
 }
 
 void setup() {
-  // Locked before anything else: a low pin is an open lock.
   digitalWrite(PIN_LOCK, HIGH);
   pinMode(PIN_LOCK, OUTPUT);
 

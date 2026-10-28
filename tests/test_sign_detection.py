@@ -1,9 +1,3 @@
-"""The ONNX wrapper's arithmetic and its behaviour with no model at all.
-
-A fresh clone has no models/signs.onnx - training happens on another machine -
-so "the detector is missing" has to be an ordinary state, not a crash.
-"""
-
 import numpy as np
 import pytest
 
@@ -18,8 +12,6 @@ def test_missing_model_is_not_an_error():
 
 
 def test_class_list_matches_the_compositor():
-    """tools/synthesize_dataset.py writes class indices in this order and bakes
-    the names into the ONNX metadata; a mismatch relabels every detection."""
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))

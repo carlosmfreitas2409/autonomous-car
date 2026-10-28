@@ -11,10 +11,9 @@ namespace {
 uint32_t last_send_ms = 0;
 uint32_t last_debug_ms = 0;
 
-}  // namespace
+}
 
 void setup() {
-  // Locked before anything else: a low pin is an open lock.
   lock::init();
 
   Serial.begin(config::SERIAL_BAUD);
@@ -40,7 +39,6 @@ void loop() {
     sonar_link::send_status(scale::grams(), scale::stable(), lid::closed(), lock::unlocked(), scale::fault());
   }
 
-  // The same line on this node's own USB, for a look without the sonar node.
   if ((now - last_debug_ms) >= config::DEBUG_PERIOD_MS) {
     last_debug_ms = now;
     Serial.printf("C %d %d %d %d %d\n", scale::grams(), scale::stable(), lid::closed(),

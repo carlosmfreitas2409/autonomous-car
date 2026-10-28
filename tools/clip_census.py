@@ -1,30 +1,3 @@
-"""Read-only census of what the lane tracker sees on a clip or recording.
-
-Runs the real `LineTracker` and the real `Autonomous` controller over a video
-for any operator Path and prints, per clip, what was seen and what would have
-been commanded: which scan rows resolved, how many rows saw both lines, the
-lane_state mix, offset / curvature / PID-error quantiles, every LOST and
-provisional run, the controller's stop events, band visibility above the ROI,
-and a timeline. Nothing here steers or writes to the tracker; it only reads.
-
-Usage:
-    .venv/bin/python tools/clip_census.py CLIP [CLIP ...]
-        [--flip CLIP]...                 mirror that clip (detour_entry.mov was recorded mirrored)
-        [--path normal|straight|detour]  anchor/profile for the whole clip (default normal)
-        [--path detour@0,normal@12.5]    or a schedule: Detour from t=0 s, Normal from t=12.5 s
-        [--fps F]                        override the container fps (time axis and controller dt)
-        [--limit N]                      stop after N frames
-        [--csv OUT.csv]                  per-frame rows (one file; clips are concatenated)
-        [--rows]                         per-frame timeline instead of one line per 0.5 s
-        [--roi X0,X1,Y0,Y1]              ROI fractions (defaults from Config)
-        [--scan-lines N]                 scan rows (default from Config)
-
-Examples:
-    .venv/bin/python tools/clip_census.py clips/detour_exit.mov --path detour
-    .venv/bin/python tools/clip_census.py clips/detour_entry.mov --flip clips/detour_entry.mov --path straight
-    .venv/bin/python tools/clip_census.py assets/road.mov --limit 600 --csv /tmp/road.csv
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -49,12 +22,8 @@ from perception import line_tracking  # noqa: E402
 from perception.line_tracking import LineTracker  # noqa: E402
 
 FALLBACK_FPS = 28.3
-# |PID error| at which Kp alone saturates steering (1.0 / 0.0231 ~ 43 px).
 FULL_LOCK_ERROR_PX = 43.0
 TIMELINE_STEP_S = 0.5
-
-
-# --- per-frame record ------------------------------------------------------
 
 
 @dataclass
@@ -74,7 +43,6 @@ class FrameRecord:
     profile: str
     provisional: bool
     band_rows: int
-    # Not in the CSV: raw per-row data for the stats sections.
     row_indices: tuple[int, ...] = ()
     row_both: tuple[int, ...] = ()
     band_samples: tuple[tuple[int, int], ...] = ()
@@ -88,11 +56,7 @@ CSV_FIELDS = [
 ]
 
 
-# --- pure helpers ----------------------------------------------------------
-
-
 def parse_path_schedule(spec: str) -> list[tuple[float, Path]]:
-    """'detour@0,normal@12.5' -> [(0.0, DETOUR), (12.5, NORMAL)]; 'normal' -> [(0.0, NORMAL)]."""
     schedule = []
     for item in spec.split(","):
         item = item.strip()
@@ -134,7 +98,6 @@ def pid_error(offset: Optional[int], curvature: Optional[float]) -> Optional[flo
 
 
 def find_runs(flags: Sequence[bool]) -> list[tuple[int, int]]:
-    """[(start_index, length)] for every maximal run of True."""
     runs = []
     start = None
     for i, flag in enumerate(flags):
@@ -166,7 +129,6 @@ def state_token(lane_state: str) -> str:
 
 
 def transitions(values: Sequence[Optional[str]]) -> list[tuple[int, Optional[str], Optional[str]]]:
-    """(index, from, to) every time the value changes."""
     out = []
     prev = None
     for i, value in enumerate(values):
@@ -183,7 +145,6 @@ def band_slope(samples: Sequence[tuple[int, int]]) -> Optional[float]:
 
 
 def scan_rows(params: Config, frame_shape) -> tuple[list[int], int, int, int]:
-    """The tracker's downscaled scan rows and (width, height, roi_y0) for its frame geometry."""
     ratio = params.downscale_ratio
     height = round(frame_shape[0] / ratio)
     width = round(frame_shape[1] / ratio)
@@ -194,7 +155,6 @@ def scan_rows(params: Config, frame_shape) -> tuple[list[int], int, int, int]:
 
 
 def preprocess(frame: np.ndarray, params: Config) -> np.ndarray:
-    """The tracker's binary image, byte for byte (see LineTracker.process)."""
     ratio = params.downscale_ratio
     height = round(frame.shape[0] / ratio)
     width = round(frame.shape[1] / ratio)
@@ -208,9 +168,6 @@ def preprocess(frame: np.ndarray, params: Config) -> np.ndarray:
 
 def band_row_ys(height: int, roi_y0: int) -> list[int]:
     return list(range(round(line_tracking._BAND_TOP * height), roi_y0, line_tracking._BAND_STEP))
-
-
-# --- census ------------------------------------------------------------------
 
 
 @dataclass
@@ -269,7 +226,6 @@ def run_census(clip: str, schedule, params: Config, fps_override: Optional[float
 
         t = index * dt
         path = path_at(schedule, t)
-        # Band visibility from the same origin the tracker's scan uses this frame.
         scan_origin = tracker._prev_track_center if tracker._prev_track_center is not None else width // 2
         binary = preprocess(frame, params)
         scratch = np.zeros((height, width, 3), dtype=np.uint8)
@@ -306,9 +262,6 @@ def run_census(clip: str, schedule, params: Config, fps_override: Optional[float
         params=params, records=records, calibration_frame=calibration_frame,
         width_profile=tracker._width_profile, clamped_frames=tracker.clamped_frames, band_ys=band_ys,
     )
-
-
-# --- report ------------------------------------------------------------------
 
 
 def fmt(value, digits=1, width=0) -> str:
@@ -365,7 +318,6 @@ def report(c: Census, rows: bool) -> None:
         print("no frames read")
         return
 
-    # 2. per-row edge classes
     print(f"\nPer-row resolution (0 = far, {p.scan_lines - 1} = near)")
     print(f"  {'row':>3} {'resolved':>9} {'both':>9}")
     resolved = Counter(i for r in recs for i in r.row_indices)
@@ -373,18 +325,15 @@ def report(c: Census, rows: bool) -> None:
     for i in range(p.scan_lines):
         print(f"  {i:>3} {pct(resolved[i], n):>9} {pct(both[i], n):>9}")
 
-    # 3. both_rows / rows_found histograms
     print_histogram("both_rows histogram", Counter(r.both_rows for r in recs), n, range(p.scan_lines + 1))
     print_histogram("rows_found histogram", Counter(r.rows_found for r in recs), n, range(p.scan_lines + 1))
 
-    # 4. lane_state histogram
     print_histogram("lane_state histogram (first token)", Counter(state_token(r.lane_state) for r in recs), n)
     full_states = Counter(r.lane_state for r in recs)
     print("  most common full labels:")
     for label, count in full_states.most_common(6):
         print(f"    {label!r:<40} {count:6d}  {pct(count, n)}")
 
-    # 5. quantiles
     print("\nQuantiles (frames with an offset)")
     print(f"  {'':<10} {'p5':>8} {'p50':>8} {'p95':>8} {'min':>8} {'max':>8}")
     series = {
@@ -403,7 +352,6 @@ def report(c: Census, rows: bool) -> None:
     saturated = sum(1 for e in errors if abs(e) >= FULL_LOCK_ERROR_PX)
     print(f"  |pid_error| >= {FULL_LOCK_ERROR_PX:g} px (full lock at Kp {p.kp}): {saturated}/{len(errors)} = {pct(saturated, len(errors))} of offset frames, {pct(saturated, n)} of all frames")
 
-    # 6. LOST runs, provisional runs, stop events
     print_runs("LOST runs (lane_offset is None)", find_runs([r.offset is None for r in recs]), recs, c.fps)
     print_runs("Provisional runs", find_runs([r.provisional for r in recs]), recs, c.fps)
     stops = [(i, prev, new) for i, prev, new in transitions([r.stop_reason for r in recs]) if i > 0 or new is not None]
@@ -415,7 +363,6 @@ def report(c: Census, rows: bool) -> None:
     stopped = sum(1 for r in recs if r.stop_reason is not None)
     print(f"frames with a stop_reason: {stopped}  {pct(stopped, n)}")
 
-    # 7. band visibility
     print(f"\nBand visibility (rows y={c.band_ys[0] if c.band_ys else '-'}..{c.band_ys[-1] if c.band_ys else '-'} step {line_tracking._BAND_STEP}, {len(c.band_ys)} rows, downscaled px)")
     print_histogram("band rows with both lines per frame", Counter(r.band_rows for r in recs), n, range(len(c.band_ys) + 1))
     two_plus = sum(1 for r in recs if r.band_rows >= 2)
@@ -431,7 +378,6 @@ def report(c: Census, rows: bool) -> None:
     pooled = [s for r in recs for s in r.band_samples]
     print(f"  width-vs-row slope, pooled least squares: {fmt(float(np.polyfit([y for y, _ in pooled], [w for _, w in pooled], 1)[0]) if len({y for y, _ in pooled}) >= 2 else None, 4)} px/row")
 
-    # 8. timeline
     print("\nTimeline" + (" (every frame)" if rows else f" (every {TIMELINE_STEP_S:g} s)"))
     print(f"  {'t':>6} {'fr':>5} {'path':<8} {'lane_state':<36} {'rf':>2} {'br':>2} {'off':>5} {'curv':>7} {'err':>7} {'steer':>6} {'thr':>5} {'hold':>5} profile")
     step = 1 if rows else max(1, round(TIMELINE_STEP_S * c.fps))
@@ -450,9 +396,6 @@ def write_csv(path: str, censuses: Sequence[Census]) -> None:
                 writer.writerow([c.file] + [getattr(r, f) for f in CSV_FIELDS])
 
 
-# --- main --------------------------------------------------------------------
-
-
 def same_file(a: str, b: str) -> bool:
     try:
         return os.path.samefile(a, b)
@@ -461,7 +404,7 @@ def same_file(a: str, b: str) -> bool:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    ap = argparse.ArgumentParser()
     ap.add_argument("clips", nargs="+")
     ap.add_argument("--flip", action="append", default=[], metavar="CLIP", help="mirror this clip horizontally")
     ap.add_argument("--path", type=parse_path_schedule, default=parse_path_schedule("normal"), help="normal|straight|detour or a schedule like detour@0,normal@12.5")

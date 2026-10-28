@@ -7,4 +7,4 @@ void update();
 
 bool closed();
 
-}  // namespace lid
+}

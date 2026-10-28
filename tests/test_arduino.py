@@ -1,6 +1,3 @@
-"""The master's serial lines: the cargo node's `C` among the sonar's `S`, and
-the cargo node counted as gone once its lines stop."""
-
 import pytest
 
 import arduino

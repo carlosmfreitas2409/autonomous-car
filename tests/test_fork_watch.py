@@ -1,6 +1,3 @@
-"""ForkWatch on hand-built tracker results: a mouth is the lane going
-unmeasured and then measured again, each for _RETURN_GAP_S."""
-
 from types import SimpleNamespace
 
 from path import _RETURN_GAP_S, ForkWatch, Path

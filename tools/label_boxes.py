@@ -1,23 +1,5 @@
 #!/usr/bin/env python3
-"""Draw boxes on images and write YOLO labels.
 
-About 250 images, almost all of them with a single object in frame. The round
-trip through Roboflow or CVAT - upload, wait, configure a project, export, work
-out which zip layout it chose this time - costs more than these hundred and
-fifty lines. `--prefill` turns the job into accept-or-fix.
-
-Keys
-    1-4         pick the class
-    drag        add a box in the current class
-    u           undo the last box
-    c           clear this image
-    n / p       next / previous image
-    s           save now (saving also happens on every move)
-    q / ESC     quit
-
-    python3 tools/label_boxes.py --images 'assets/real/images/**/*.jpg'
-    python3 tools/label_boxes.py --images 'assets/real/images/**/*.jpg' --prefill models/signs.onnx
-"""
 
 import argparse
 import glob
@@ -67,8 +49,6 @@ def write_labels(path: Path, boxes, shape) -> None:
     for index, x0, y0, x1, y1 in boxes:
         cx, cy = (x0 + x1) / 2 / width, (y0 + y1) / 2 / height
         lines.append(f"{index} {cx:.6f} {cy:.6f} {(x1 - x0) / width:.6f} {(y1 - y0) / height:.6f}")
-    # Written even when empty: an image with nothing in it is a negative, and
-    # both the eval and ultralytics only count it as one if the file exists.
     path.write_text("\n".join(lines) + ("\n" if lines else ""))
 
 
@@ -96,8 +76,7 @@ def draw(frame, boxes, current, name, index, total, scale):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--images", required=True, help="glob, e.g. 'assets/real/images/**/*.jpg'")
     parser.add_argument("--images-root", default="assets/real/images")
     parser.add_argument("--labels-root", default="assets/real/labels")

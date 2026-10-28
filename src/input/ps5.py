@@ -5,15 +5,12 @@ import pygame
 from path import HOME_PATH, Path
 
 
-_STICK_AXIS = 0  # Left stick X
-_RTRIGGER_AXIS = 5  # R2 (DualSense via SDL2 on macOS)
+_STICK_AXIS = 0
+_RTRIGGER_AXIS = 5
 _LTRIGGER_AXIS = 4
 _YBUTTON_AXIS = 3
-_BBUTTON = 1  # Circle (DualSense via SDL2 on macOS)
-_CROSS_BUTTON = 0  # releases the truck at a dock (mission.py)
-# Shoulder buttons, SDL2 GameController mapping (consistent with Triangle 3 /
-# Circle 1 above). Verify with `tools/ps5_buttons.py` before trusting them:
-# main.py also logs every button press by index.
+_BBUTTON = 1
+_CROSS_BUTTON = 0
 _L1_BUTTON = 9
 _R1_BUTTON = 10
 _TRIGGER_DEADZONE = 0.05
@@ -84,7 +81,6 @@ class PS5Controller:
         return toggled
 
     def poll_release(self) -> bool:
-        """Cross went down: loading or unloading is done, release the truck."""
         if not self._update():
             self._cross_was_pressed = False
             return False
@@ -95,15 +91,6 @@ class PS5Controller:
         return released
 
     def poll_path_buttons(self) -> Optional[Path]:
-        """Edge-triggered like the toggles: R1 arms the Detour, L1 goes home.
-
-        The Detour returns home by itself once the car is inside it (see
-        `path.DetourReturn`); L1 is the manual override.
-
-        Two stateless buttons cannot desync from the GUI radio, so there is no
-        toggle here; pressing R1 twice is still Detour. Both pressed on the
-        same frame: home wins.
-        """
         if not self._update():
             self._l1_was_pressed = False
             self._r1_was_pressed = False
@@ -122,7 +109,6 @@ class PS5Controller:
         return None
 
     def poll_button_presses(self) -> list[int]:
-        """Indices of every button that went down since the last call (for the log)."""
         if not self._update():
             self._buttons_were_pressed = set()
             return []

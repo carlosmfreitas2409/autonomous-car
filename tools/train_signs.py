@@ -1,26 +1,5 @@
 #!/usr/bin/env python3
-"""Fine-tune YOLO on the synthetic set and export one ONNX file.
 
-Runs on the training box (Ryzen 7 5700X, RTX 3060), never on the Mac: this is
-the only file in the project that imports ultralytics, and ultralytics brings
-torch, which is ~2.5 GB. The hand-off between the two machines is one file,
-`models/signs.onnx`. The dataset, the weights and the run logs stay here and
-are gitignored.
-
-Train both sizes. On a 3060 that is one extra unattended run, so there is no
-reason to guess which is better:
-
-    python3 tools/train_signs.py --base yolov8n.pt --name signs_n
-    python3 tools/train_signs.py --base yolov8s.pt --name signs_s
-
-then copy both ONNX files to the Mac and let tools/eval_signs.py and
-tools/probe_signs.py pick the winner on measured real-photo recall at
-acceptable latency. A sign camera does not need 30 fps - it needs to not miss
-the light.
-
-`imgsz` is 640 and is not a parameter. At 320 the traffic light was missed
-outright.
-"""
 
 import argparse
 import shutil
@@ -31,8 +10,7 @@ OPSET = 12
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--data", default="dataset/synth/data.yaml")
     parser.add_argument("--base", default="yolov8n.pt")
     parser.add_argument("--name", default="signs")
@@ -66,9 +44,6 @@ def main() -> int:
         amp=True,
         name=args.name,
         project="runs",
-        # The compositor already varies scale, perspective, exposure, blur and
-        # noise deliberately and per class. Letting ultralytics do it again on
-        # top would undo the per-class paste sizes, which are the point.
         degrees=0.0, translate=0.05, scale=0.1, shear=0.0, perspective=0.0,
         mosaic=0.0, mixup=0.0, hsv_h=0.010, hsv_s=0.3, hsv_v=0.3,
     )

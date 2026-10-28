@@ -1,5 +1,3 @@
-"""The dashboard contract, hub and server, without a camera or a car."""
-
 import asyncio
 import json
 import math
@@ -59,8 +57,6 @@ def _state(estopped=True, manual=False, perc=None, mission=None, telemetry=None,
         tuning=tuning, cargo=cargo, challenge=challenge,
     )
 
-
-# --- contract --------------------------------------------------------------
 
 def test_state_is_json_and_carries_every_slice():
     state = _state(perc=_perc())
@@ -167,13 +163,11 @@ def test_segment_next_decision_and_progress_follow_the_mission():
     assert segment(m, Path.STRAIGHT, False) == {"kind": "main", "towards": 1}
     assert next_decision(m) == {"exit": 1, "take": "detour", "target": "A"}
     assert route_progress(m) == 0
-    # The exit-1 sign was decided: the car is entering detour 1, which comes
-    # back before exit 1.
     m.next_exit, m.decisions, m.last_decision = 1, 1, (7, 1, Path.DETOUR)
     assert segment(m, Path.DETOUR, False) == {"kind": "detour", "exit": 1}
     assert segment(m, Path.STRAIGHT, True) == {"kind": "detour", "exit": 1}
     assert segment(m, Path.STRAIGHT, False) == {"kind": "main", "towards": 1}
-    assert route_progress(m) == 1  # "A: pickup"
+    assert route_progress(m) == 1
 
 
 def test_decided_names_the_sign_the_mission_just_decided():
@@ -184,7 +178,6 @@ def test_decided_names_the_sign_the_mission_just_decided():
                         detector_available=True, fps=9.8)
     assert m.update(sign, Path.STRAIGHT, 50.0).path is Path.DETOUR
     mission = _state(mission=m)["mission"]
-    # `next` has moved on (detour 1 comes back before exit 1); `decided` still says what sign 7 meant.
     assert mission["decided"] == {"sign": 7, "exit": 1, "take": "detour"}
     assert mission["next"]["exit"] == 1
 
@@ -289,8 +282,6 @@ def test_state_carries_the_operators_light_settings_apart_from_the_lamps():
     assert _state()["lights"]["settings"] is None
 
 
-# --- firmware line, bearing --------------------------------------------------
-
 def test_t_line_parses_seven_and_eight_fields():
     seven = parse_telemetry("T 512 500 120 -30 W 640", 1.0)
     assert (seven.throttle_pwm, seven.state, seven.ms_since_command, seven.fault) == (120, "W", 640, None)
@@ -322,8 +313,6 @@ def test_bearing_is_zero_on_axis_and_half_fov_at_the_edge():
     assert bearing_deg(0, 1280, hfov) == pytest.approx(-31.65)
 
 
-# --- hub -------------------------------------------------------------------
-
 def test_hub_never_drops_an_estop():
     hub = Hub()
     for _ in range(64):
@@ -332,8 +321,6 @@ def test_hub_never_drops_an_estop():
     commands = hub.drain_commands()
     assert commands[-1].type == "estop" and len(commands) == 64
 
-
-# --- server ----------------------------------------------------------------
 
 aiohttp = pytest.importorskip("aiohttp")
 
@@ -358,7 +345,6 @@ def test_server_streams_state_video_and_routes_commands(tmp_path):
             state = await _next(viewer, "state")
             assert state["lane"]["state"] == "both 3/5"
 
-            # Every console commands; the loop acks what it applies.
             other = await session.ws_connect(base + "/ws/control")
             await viewer.send_json({"type": "mode", "mode": "manual", "id": 1})
             await other.send_json({"type": "estop", "engaged": True, "id": 2})

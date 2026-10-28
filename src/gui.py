@@ -121,17 +121,14 @@ class TunerGUI:
         self._estop_toggle = True
 
     def poll_estop_toggle(self) -> bool:
-        """The e-stop button was clicked since the last call."""
         toggled, self._estop_toggle = self._estop_toggle, False
         return toggled
 
     def poll_mode_toggle(self) -> bool:
-        """The mode button was clicked since the last call."""
         toggled, self._mode_toggle = self._mode_toggle, False
         return toggled
 
     def update_drive(self, estopped: bool, manual: bool):
-        """Show the loop's e-stop and mode on the two buttons."""
         self._stopped = estopped
         dpg.set_item_label(self._tags["mode"], "Manual Mode" if manual else "Autonomous Mode")
         dpg.set_item_label(self._tags["estop"], "Resume" if estopped else "Emergency Stop")
@@ -336,12 +333,10 @@ class TunerGUI:
         self._tuning_request[key] = value
 
     def poll_tuning_request(self) -> dict[str, float]:
-        """The PID and speed sliders moved since the last call, keyed like Config."""
         request, self._tuning_request = self._tuning_request, {}
         return request
 
     def update_tuning(self, tuning: dict[str, float]):
-        """Show the loop's PID gains and speeds, whichever console set them."""
         if tuning == self._shown_tuning:
             return
         self._shown_tuning = dict(tuning)
@@ -349,7 +344,6 @@ class TunerGUI:
             dpg.set_value(self._tags[key], value)
 
     def read_params(self) -> Config:
-        """Every tuner slider but the PID and speeds, which the loop holds."""
         return Config(
             block_size=dpg.get_value(self._tags["block_size"]),
             threshold_constant=dpg.get_value(self._tags["threshold_c"]),
@@ -411,8 +405,6 @@ class TunerGUI:
             self._lights.strip_effect = _STRIP_EFFECT_LABELS[value]
 
     def update_lights(self, controller: LightsController):
-        """Show the light settings, whichever console set them. Only on a
-        change, so a click still on its way through a callback is not undone."""
         shown = (controller.turn_signal, controller.drl, controller.low_beam,
                  controller.logo, controller.projector, controller.strip_effect)
         if shown == self._shown_lights:
@@ -436,38 +428,27 @@ class TunerGUI:
         dpg.set_value(self._tags["tel_stop"], f"Stop: {stop_reason or '--'}")
         dpg.configure_item(self._tags["tel_stop"], color=(255, 80, 80) if stop_reason else (150, 150, 150))
 
-    # --- stage -----------------------------------------------------------
-
     def _on_challenge(self, _sender, value):
         self._challenge_request = _CHALLENGE_LABELS[value]
 
     def poll_challenge_request(self) -> Challenge | None:
-        """The stage the operator clicked since the last call, if any."""
         request, self._challenge_request = self._challenge_request, None
         return request
 
     def update_challenge(self, challenge: Challenge):
-        """Show the loop's stage (a change it refused snaps back). The speed
-        test has no path choice and no mission."""
         dpg.set_value(self._tags["challenge"], _CHALLENGE_NAMES[challenge])
         enabled = challenge is Challenge.DELIVERY
         for key in ("path", "pickup", "delivery"):
             dpg.configure_item(self._tags[key], enabled=enabled)
 
-    # --- path ------------------------------------------------------------
-
     def _on_path(self, _sender, value):
         self._path_request = _PATH_LABELS[_path_item_name(value)]
 
     def poll_path_request(self) -> Path | None:
-        """The path the operator clicked since the last call, if any."""
         request, self._path_request = self._path_request, None
         return request
 
     def update_path_status(self, path: Path, profile_ready: bool, lane_state: str):
-        """Show the loop's path on the radio. Colour the label: orange while
-        the Detour is armed, red when an anchored path was selected before the
-        tracker has a lane width."""
         dpg.set_value(self._tags["path"], _path_item_label(_PATH_NAMES[path]))
         tag = self._tags["path_label"]
         if path is not Path.NORMAL and not profile_ready:
@@ -481,7 +462,6 @@ class TunerGUI:
             dpg.configure_item(tag, color=_PATH_COLOR_IDLE)
 
     def update_sonar(self, reading, guard):
-        """Show what the sonar guard decided and every sensor's echo."""
         tag = self._tags["tel_sonar"]
         if reading is None:
             dpg.set_value(tag, "Sonar: no data")
@@ -497,8 +477,6 @@ class TunerGUI:
         dpg.configure_item(tag, color=color)
 
     def update_cargo(self, cargo: CargoReading | None):
-        """The compartment as the cargo node reports it; "--" without one.
-        "Open compartment" only works e-stopped, with a cargo node."""
         dpg.configure_item(self._tags["open_cargo"], enabled=cargo is not None and self._stopped)
         tag = self._tags["tel_cargo"]
         if cargo is None:
@@ -513,8 +491,6 @@ class TunerGUI:
         dpg.configure_item(tag, color=colour)
 
     def update_signs(self, snapshot: SignSnapshot, constraint: SignConstraint, applied: bool, why: str = "manual"):
-        # The worker publishes at ~10 fps and this loop runs at ~30: only
-        # upload a frame once.
         if snapshot.frame is not None and snapshot.timestamp != self._signs_uploaded_at:
             dpg.set_value(self._tags["tex_signs"], _frame_to_texture(snapshot.frame))
             self._signs_uploaded_at = snapshot.timestamp
@@ -553,11 +529,7 @@ class TunerGUI:
             lines.append(_detail(track))
         dpg.set_value(self._tags["signs_detail"], "\n".join(lines[:6]))
 
-    # --- mission ---------------------------------------------------------
-
     def _on_mission_letters(self, sender, value):
-        # The clicked value, not dpg.get_value: callbacks run on DearPyGui's
-        # thread and `update_mission` may already have snapped the radio back.
         letter = None if value == _NO_LETTER else value
         pickup, delivery = self._shown_letters
         if sender == self._tags["pickup"]:
@@ -567,30 +539,24 @@ class TunerGUI:
         self._mission_request = (pickup, delivery)
 
     def poll_mission_request(self) -> tuple[str | None, str | None] | None:
-        """The (pickup, delivery) letters the operator picked since the last
-        call, if any; None stands for "-"."""
         request, self._mission_request = self._mission_request, None
         return request
 
     def _on_dock(self, _sender):
-        # The action the button showed when it was clicked.
         self._dock_request = self._dock_action
 
     def _on_open(self, _sender):
         self._open_request = True
 
     def poll_open_request(self) -> bool:
-        """"Open compartment" clicked since the last call."""
         request, self._open_request = self._open_request, False
         return request
 
     def poll_dock_request(self) -> str | None:
-        """"release" or "wait", clicked since the last call."""
         request, self._dock_request = self._dock_request, None
         return request
 
     def update_mission(self, mission: Mission, command: MissionCommand, applied: bool, why: str = "manual"):
-        """Show the mission's letters (a change it refused snaps back) and state."""
         self._shown_letters = (mission.pickup, mission.delivery)
         dpg.set_value(self._tags["pickup"], mission.pickup or _NO_LETTER)
         dpg.set_value(self._tags["delivery"], mission.delivery or _NO_LETTER)
@@ -629,7 +595,6 @@ class TunerGUI:
 
 
 def _path_item_label(name: str) -> str:
-    """Radio item text; the home path is marked so the GUI and L1 always agree."""
     return f"{name} (home)" if _PATH_LABELS[name] is HOME_PATH else name
 
 

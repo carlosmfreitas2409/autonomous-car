@@ -70,14 +70,14 @@ void handle_lights(char* args) {
   }
 
   uint8_t mask = 0;
-  if (atol(first) != 0) mask |= (uint8_t)(1u << 0);  // left
-  if (!parse_bit_token(save, 1, mask) ||             // right
-      !parse_bit_token(save, 2, mask) ||             // drl
-      !parse_bit_token(save, 3, mask) ||             // low beam
-      !parse_bit_token(save, 4, mask) ||             // brake
-      !parse_bit_token(save, 5, mask) ||             // reverse
-      !parse_bit_token(save, 6, mask) ||             // logo
-      !parse_bit_token(save, 7, mask)) {             // projector
+  if (atol(first) != 0) mask |= (uint8_t)(1u << 0);
+  if (!parse_bit_token(save, 1, mask) ||
+      !parse_bit_token(save, 2, mask) ||
+      !parse_bit_token(save, 3, mask) ||
+      !parse_bit_token(save, 4, mask) ||
+      !parse_bit_token(save, 5, mask) ||
+      !parse_bit_token(save, 6, mask) ||
+      !parse_bit_token(save, 7, mask)) {
     Serial.println(F("ERR L"));
     return;
   }
@@ -91,8 +91,6 @@ void handle_lights(char* args) {
   }
 }
 
-// K <unlock 0|1>: the host asks the cargo node to unlock (a lease the host
-// renews every frame). Never forwarded while the wheels are driven.
 void handle_cargo(char* args) {
   char* save = nullptr;
   char* tok = strtok_r(args, " \t", &save);

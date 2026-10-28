@@ -49,7 +49,7 @@ void refresh_leds() {
   }
 }
 
-}  // namespace
+}
 
 void init() {
   for (uint8_t i = 0; i < config::BATT_LED_COUNT; i++) {
@@ -77,4 +77,4 @@ float volts() { return filtered_volts; }
 
 float percent() { return filtered_pct; }
 
-}  // namespace battery
+}

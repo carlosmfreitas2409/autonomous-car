@@ -39,8 +39,6 @@ export function PhoneLayout({ link, isShort }: PhoneLayoutProps) {
   const dock = state?.mission.dock;
   const dockKey = dock ? `${dock.letter}@${dock.since}` : null;
 
-  // A truck that docks opens its card once for the person at the dock; they
-  // may close it again.
   useEffect(() => {
     if (dockKey) setTab('delivery');
   }, [dockKey]);

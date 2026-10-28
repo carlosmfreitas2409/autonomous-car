@@ -1,29 +1,3 @@
-// Simple motor tester for the autonomous car drive system.
-//
-// Targets an Arduino Mega with up to 4 BTS7960 H-bridges (one per wheel).
-// Steering is NOT included here — use the steering calibration sketch
-// instead, since it needs the angle sensor and careful tuning.
-//
-// Each bridge has 4 pins: R_EN, L_EN, R_PWM, L_PWM. R_EN+L_EN must both
-// be HIGH for the bridge outputs to be active; driving them LOW puts the
-// outputs in high-Z (true hardware disable / e-stop).
-//
-// --- Serial commands (115200 baud, newline-terminated) ---
-//   fl | fr | rl | rr      select a motor
-//   all                    select all motors
-//   e                      enable (EN pins HIGH) for selected
-//   d                      disable (EN pins LOW) for selected
-//   f                      spin selected forward at current speed (auto-enables)
-//   b                      spin selected backward at current speed (auto-enables)
-//   s                      stop selected (PWM=0, EN stays HIGH so motor brakes)
-//   x                      EMERGENCY STOP: PWM=0 + EN=LOW on ALL motors
-//   + / -                  change speed by 15 PWM units (0-255)
-//   <number>               set speed directly, e.g. "120"
-//   ?                      print status + help
-//
-// Unconnected motors just sit silent — safe to test only the ones
-// you have wired up.
-
 #include <Arduino.h>
 
 struct Motor {
@@ -36,16 +10,14 @@ struct Motor {
 
 constexpr uint8_t MOTOR_COUNT = 4;
 const Motor motors[MOTOR_COUNT] = {
-  // name, R_EN, L_EN, R_PWM, L_PWM    bridge
-  {"FL",    24,   25,    6,     5},  // bridge 2 (top-left)
-  {"FR",    26,   27,    7,     8},  // bridge 3
-  {"RL",    22,   23,    3,     4},  // bridge 1 (bottom-left)
-  {"RR",    28,   29,    9,    10},  // bridge 4 (bottom-right)
+  {"FL",    24,   25,    6,     5},
+  {"FR",    26,   27,    7,     8},
+  {"RL",    22,   23,    3,     4},
+  {"RR",    28,   29,    9,    10},
 };
 
-// -1 = all motors selected; otherwise an index into motors[].
 int8_t selected = 0;
-uint8_t speed = 80;  // safe default — enough to overcome stiction on most gearboxes
+uint8_t speed = 80;
 
 String buffer;
 
@@ -55,13 +27,12 @@ void set_enable(uint8_t idx, bool on) {
 }
 
 void drive_motor(uint8_t idx, int direction) {
-  // direction: +1 forward, -1 backward, 0 stop
   if (direction == 0) {
     analogWrite(motors[idx].rpwm, 0);
     analogWrite(motors[idx].lpwm, 0);
     return;
   }
-  set_enable(idx, true);  // auto-enable on motion
+  set_enable(idx, true);
   if (direction > 0) {
     analogWrite(motors[idx].rpwm, speed);
     analogWrite(motors[idx].lpwm, 0);
@@ -184,7 +155,7 @@ void setup() {
     pinMode(motors[i].rpwm, OUTPUT);
     pinMode(motors[i].lpwm, OUTPUT);
   }
-  hard_stop_all();  // start fully disabled
+  hard_stop_all();
 
   delay(200);
   Serial.println();
@@ -202,7 +173,7 @@ void loop() {
       buffer = "";
     } else {
       buffer += c;
-      if (buffer.length() > 32) buffer = "";  // overflow guard
+      if (buffer.length() > 32) buffer = "";
     }
   }
 }

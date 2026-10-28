@@ -24,8 +24,6 @@ bool parse_bit(char*& save, uint8_t bit, uint8_t& flags) {
   return true;
 }
 
-// `C <grams> <stable> <lid> <lock> <fault>` becomes one 0x180 frame. A
-// garbled line is dropped: the host would take a wrong digit for a reading.
 void forward(char* line) {
   char* save = nullptr;
   char* tok = strtok_r(line, " ", &save);
@@ -77,14 +75,12 @@ void read_bus() {
   }
 }
 
-}  // namespace
+}
 
 void init(MCP2515& mcp) {
   bus = &mcp;
   Serial2.begin(config::CARGO_BAUD, SERIAL_8N1, config::PIN_CARGO_RX, config::PIN_CARGO_TX);
 
-  // Only the cargo command gets in: the lights frames, sent at the host's
-  // rate, would otherwise fill both receive buffers during a ping cycle.
   mcp.setFilterMask(MCP2515::MASK0, false, 0x7FF);
   mcp.setFilterMask(MCP2515::MASK1, false, 0x7FF);
   const MCP2515::RXF filters[] = {MCP2515::RXF0, MCP2515::RXF1, MCP2515::RXF2,
@@ -100,4 +96,4 @@ void update() {
   read_bus();
 }
 
-}  // namespace cargo_bridge
+}

@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 SONAR_NO_ECHO = 0xFF
 
-# The cargo node reports at 10 Hz: no `C` line for this long means it is not
-# connected (or never was), and the mission runs without the compartment.
 _CARGO_STALE_S = 1.0
 
 
@@ -22,16 +20,11 @@ _CARGO_STALE_S = 1.0
 class SonarReading:
   state: str
   nearest_cm: Optional[int]
-  # Per-sensor distances, left to right, None where nothing echoed. Empty when
-  # the master only sent the nearest value.
   distances: tuple[Optional[int], ...] = ()
 
 
 @dataclass
 class MasterTelemetry:
-  """The master's `T` line: `T <angle_raw> <target_raw> <throttle_pwm>
-  <steer_pwm> <state R|W|E|F> <ms_since_cmd> [fault]`. A trailing field this
-  host does not know about (the steering fault char) is kept, not rejected."""
   angle_raw: int
   target_raw: int
   throttle_pwm: int
@@ -44,8 +37,6 @@ class MasterTelemetry:
 
 @dataclass
 class BatteryReading:
-  """The master's `B` line: `B <millivolts> <percent>`, once a second. The
-  firmware's own smoothed gauge (the LED bar); it reads low under load."""
   volts: float
   percent: int
   received_at: float
@@ -76,7 +67,6 @@ def parse_telemetry(line: str, now: float) -> Optional[MasterTelemetry]:
 
 
 def usb_serial_ports() -> list[str]:
-  """The serial ports behind a USB device: the master's, not Bluetooth's."""
   return [port.device for port in serial.tools.list_ports.comports() if port.vid is not None]
 
 
@@ -144,10 +134,7 @@ class Arduino:
     self._master = _SerialPort(baudrate)
     self._cargo: Optional[CargoReading] = None
     self._cargo_at = float("-inf")
-    # The latest `T` line, parsed in the same drain as the sonar: there is
-    # one reader of the serial port, never two competing for lines.
     self.telemetry: Optional[MasterTelemetry] = None
-    # The latest `B` line; None until firmware that sends it says so.
     self.battery: Optional[BatteryReading] = None
 
   @property
@@ -169,8 +156,6 @@ class Arduino:
     self._master.write("H")
 
   def read_sonar(self) -> Optional[SonarReading]:
-    """The newest `S` line, if any arrived. Reads every waiting line, so it
-    also keeps the newest `C` line for `read_cargo`."""
     latest = None
 
     for line in self._master.read_lines():
@@ -213,15 +198,11 @@ class Arduino:
     return latest
 
   def read_cargo(self, now: float) -> Optional[CargoReading]:
-    """The cargo node's last status, or None when it is not connected."""
     if now - self._cargo_at > _CARGO_STALE_S:
       return None
     return self._cargo
 
   def send_cargo(self, unlock: bool):
-    """Renews (or ends) the unlock lease; the node locks within 300 ms of
-    the last renewal. Only for a node that is reporting: an older master
-    would answer `ERR K` to every line."""
     self._master.write(f"K {int(unlock)}")
 
   def send_lights(self, output: LightsOutput):

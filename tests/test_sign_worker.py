@@ -1,5 +1,3 @@
-"""The snapshot and the overlay, without a thread or a camera."""
-
 import numpy as np
 import pytest
 
@@ -26,7 +24,6 @@ def test_snapshot_age_is_infinite_before_the_first_frame():
 def test_unavailable_snapshot_renders_a_fixed_size_canvas():
     canvas = render_overlay(None, [], detector_available=False, camera_open=False, status="no camera")
     assert canvas.shape == (DEBUG_HEIGHT, DEBUG_WIDTH, 3)
-    # The red banner is there.
     band = canvas[DEBUG_HEIGHT // 2 - 20:DEBUG_HEIGHT // 2 + 20]
     assert (band[..., 2] >= 150).mean() > 0.3
 
@@ -42,7 +39,6 @@ def test_camera_frame_without_a_model_still_shows_the_frame_and_the_banner():
 def test_rejected_track_is_drawn_grey():
     frame = np.zeros((720, 1280, 3), np.uint8)
     canvas = render_overlay(frame, [_track()], detector_available=True, camera_open=True)
-    # Box left edge x=600 in 1280 -> 300 in 640; top y=100 -> 50.
     column = canvas[60:160, 300]
     assert any(pixel.tolist() == list(GREY) for pixel in column)
 

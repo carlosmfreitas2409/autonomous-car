@@ -1,26 +1,5 @@
 #!/usr/bin/env python3
-"""Watch the detector and both crop readers work, one window, no web.
 
-The point of this tool is that a suppressed false positive is *visible as a
-rejection* rather than silently absent: anything that fails structural
-verification is drawn thin and grey with its reason next to it. A detector you
-can only see the survivors of is a detector you cannot debug.
-
-    python3 tools/inspect_signs.py --images 'assets/real/images/**/*.jpg'
-    python3 tools/inspect_signs.py --video clips/light_approach.mp4
-    python3 tools/inspect_signs.py --camera 1
-    python3 tools/inspect_signs.py --images a.jpg --box 400,60,520,340   # no detector at all
-
-`--box` drives the readers with no model involved, which is where this project
-is on any day the detector is broken - and the record says that is most days.
-
-Keys
-    q / ESC   quit              SPACE   pause
-    . / ,     step a frame      f / d   confidence +/- 0.05      0  reset it
-    b         cycle which detections the inspector column shows
-    m         mask overlay on the main pane
-    s         save the canvas   h       this help
-"""
 
 import argparse
 import glob
@@ -60,8 +39,6 @@ GREY = (110, 110, 110)
 
 
 class Reading:
-    """One detection plus whatever its crop reader made of it."""
-
     def __init__(self, detection: Detection, frame: np.ndarray):
         self.detection = detection
         self.light = None
@@ -73,7 +50,6 @@ class Reading:
 
     @property
     def verified(self) -> bool:
-        """Did the crop back the detector up? Unverified is drawn as rejected."""
         if self.light is not None:
             return self.light.verified
         return True
@@ -150,7 +126,6 @@ class Reading:
 
 
 def frames_from(args):
-    """Whatever source was asked for, as a stream of (name, frame)."""
     if args.images:
         paths = []
         for pattern in args.images:
@@ -240,8 +215,7 @@ def render(frame, readings, name, confidence, available, overlay, offset):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--images", nargs="+")
     source.add_argument("--video")
@@ -322,7 +296,8 @@ def main() -> int:
                 saved += 1
                 break
             if key == ord("h"):
-                print(__doc__)
+                print("q/ESC quit  SPACE pause  ./, step  f/d confidence +/-0.05  0 reset\n"
+                      "b cycle detections  m mask overlay  s save  h help")
                 break
             break
 

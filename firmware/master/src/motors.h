@@ -17,4 +17,4 @@ void update();
 
 void emergency_stop();
 
-}  // namespace motors
+}

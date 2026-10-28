@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Which camera index is which.
 
-On a laptop with a built-in camera and a USB one plugged in, the indices move
-around between reboots and between backends. This opens each index in turn,
-reports what it is, and with --show puts a frame on screen so there is no
-guessing.
-
-    python3 tools/list_cameras.py
-    python3 tools/list_cameras.py --show
-"""
 
 import argparse
 
@@ -16,8 +7,7 @@ import cv2 as cv
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--max-index", type=int, default=6)
     parser.add_argument("--show", action="store_true", help="display one frame from each")
     args = parser.parse_args()

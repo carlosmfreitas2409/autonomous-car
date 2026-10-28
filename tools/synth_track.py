@@ -1,47 +1,5 @@
 #!/usr/bin/env python3
-"""Closed-loop synthetic-track harness for the lane tracker and the controller.
 
-The 3d-simulator's SVG track (a stadium loop with two right-hand detours that
-cut across its interior) is rendered from a pin-hole camera riding a kinematic
-bicycle; every frame goes through `LineTracker.process` and `Autonomous.step`
-and the resulting command, after a frame delay and first-order lags, moves
-the bicycle. A scripted operator presses R1 (Detour) at the sign before the
-fork and L1 (home) once the tracker reads a whole lane again after the merge.
-
-This is a go/no-go ranking harness, not a predictor: it says whether a change
-to the tracker or the controller makes the car cross a line, run out its hold
-or come out of a blind stretch pointing the wrong way, relative to the same
-run before the change. Nothing in it is calibrated yet: every physical number
-is a PLACEHOLDER (see `--print-params`) until measured on the car:
-
-    wheelbase, full-lock turning radius, ground speed at throttle 0.375/0.50/0.63,
-    steering and motor time constants, command delay in frames,
-    camera height, pitch, focal length (FOV) and barrel k1,
-    the taped lane width (line centre to centre) on the main road and detours,
-    the fork fillet radius and merge angle as taped.
-
-Usage:
-
-    python tools/synth_track.py                                  # all scenarios, manila camera
-    python tools/synth_track.py --scenario loop-normal --check   # exit 1 on a regression
-    python tools/synth_track.py --scenario detour-easy --camera car --out /tmp/d.mp4
-    python tools/synth_track.py --sweep --camera car             # robustness ranking table
-    python tools/synth_track.py --replay-census assets/road.mov  # sim vs recording census
-    python tools/synth_track.py --fit-widths 0.62,-71.0 --camera car
-    python tools/synth_track.py --print-params
-
-Scenarios: loop-normal, loop-straight, straight-both-forks, detour-easy,
-detour-hard, forgot-L1, early-L1. `--check` fails on any line crossing, a
-LOST run at or over the controller's hold, a heading error at re-acquisition
-over 45 deg, a run that stopped or left the road, and on loop-straight
-drifting from loop-normal by more than 10 px of lateral error or 10 % of
-steering sign-change rate.
-
-`--replay-census` is the gate before any constant is read off this sim: the
-sim's loop-normal must produce the same rows_found / both_rows histograms
-and offset / curvature quantiles as a real recording, within the budgets at
-the top of this file.
-"""
 
 import argparse
 import math
@@ -64,39 +22,36 @@ import input.autonomous as autonomous_mod  # noqa: E402
 from input.autonomous import Autonomous, _PIDController  # noqa: E402
 from path import HOME_PATH, Path, anchor_for, profile_for  # noqa: E402
 
-# --- budgets (go/no-go) -----------------------------------------------------
-_HEADING_REACQ_BUDGET_DEG = 45.0   # heading error when a hold ends
-_STRAIGHT_VS_NORMAL_PX = 10.0      # loop-straight lateral error vs loop-normal
-_STRAIGHT_VS_NORMAL_RATE = 0.10    # steering sign-change rate, relative
-_STRAIGHT_VS_NORMAL_RATE_FLOOR = 0.05  # absolute floor for the rate comparison (1/s)
-_FIT_WIDTH_BUDGET = 0.05           # --fit-widths max relative error
-_CENSUS_ROWS_BUDGET = 0.15         # rows histograms, per bin, fraction
-_CENSUS_OFFSET_BUDGET_PX = 15.0    # offset p50
-_CENSUS_CURVATURE_BUDGET = 0.10    # curvature p50
-_STOP_BUDGET_S = 1.0               # controller stopped this long -> run over
-_OFF_ROAD_M = 1.0                  # lateral error this large -> run over
-_STEER_DEADBAND = 0.05             # |steering| below this has no sign
-_SIGN_AHEAD_M = 1.0                # the sign stands this far before the gap opens
-_TAIL_AFTER_UTURN_M = 0.3          # detour scenarios end this far after the next U-turn
-_STEP_M = 0.02                     # polyline spacing
+_HEADING_REACQ_BUDGET_DEG = 45.0
+_STRAIGHT_VS_NORMAL_PX = 10.0
+_STRAIGHT_VS_NORMAL_RATE = 0.10
+_STRAIGHT_VS_NORMAL_RATE_FLOOR = 0.05
+_FIT_WIDTH_BUDGET = 0.05
+_CENSUS_ROWS_BUDGET = 0.15
+_CENSUS_OFFSET_BUDGET_PX = 15.0
+_CENSUS_CURVATURE_BUDGET = 0.10
+_STOP_BUDGET_S = 1.0
+_OFF_ROAD_M = 1.0
+_STEER_DEADBAND = 0.05
+_SIGN_AHEAD_M = 1.0
+_TAIL_AFTER_UTURN_M = 0.3
+_STEP_M = 0.02
 _GROUND_GREY = 40
 _TAPE_GREY = 235
 
 SCENARIOS = ["loop-normal", "loop-straight", "straight-both-forks", "detour-easy", "detour-hard", "forgot-L1", "early-L1"]
 
 
-# --- camera -------------------------------------------------------------------
-
 @dataclass
 class CameraModel:
     name: str
     width: int
     height: int
-    focal: float        # px, full-resolution frame
-    horizon_row: float  # principal point row: the horizon when pitch is 0
-    height_m: float     # camera above the ground
-    pitch_deg: float    # looking down, positive
-    k1: float           # radial distortion, negative = barrel
+    focal: float
+    horizon_row: float
+    height_m: float
+    pitch_deg: float
+    k1: float
     placeholder: bool = False
 
     @property
@@ -104,9 +59,6 @@ class CameraModel:
         return math.radians(self.pitch_deg)
 
     def project(self, pts, pose, tape_m):
-        """World (x, y) points -> (u, v, line width px, valid). Pose is the
-        camera's (x, y, heading); heading turns the camera right by +heading
-        (y grows downward on the plan, as in the SVG)."""
         pts = np.asarray(pts, float).reshape(-1, 2)
         x0, y0, heading = pose
         cos_h, sin_h = math.cos(heading), math.sin(heading)
@@ -156,29 +108,20 @@ def _draw(frame, pts):
 
 
 CAMERAS = {
-    # The manila open-loop tool's camera, verbatim.
     "manila": CameraModel("manila", 1274, 746, 800.0, 250.0, 0.5, 0.0, 0.0),
-    # PLACEHOLDER: the car's camera. Frame size is real (2700x1536, the
-    # tracker downscales by 2). Focal, pitch, height and k1 are chosen so that
-    # the lane spans ~90 % of the frame at row 0.67*h and the two nearest ROI
-    # rows (>= 0.87*h) see no line, which is what the recordings show. Replace
-    # with measured values (height, pitch, horizontal FOV, k1).
     "car": CameraModel("car", 2700, 1536, 900.0, 768.0, 0.18, 52.0, -0.08, placeholder=True),
 }
 
 
-# --- car ----------------------------------------------------------------------
-
 @dataclass
 class CarModel:
-    # PLACEHOLDER values throughout; see `--print-params`.
     wheelbase_m: float = 0.25
-    r_lock_m: float = 0.60                         # turning radius at full lock
-    speed_table: tuple = ((0.375, 0.45), (0.50, 0.60), (0.63, 0.80))  # (throttle, m/s)
+    r_lock_m: float = 0.60
+    speed_table: tuple = ((0.375, 0.45), (0.50, 0.60), (0.63, 0.80))
     steer_lag_s: float = 0.15
     motor_lag_s: float = 0.30
     delay_frames: int = 2
-    camera_ahead_m: float = 0.15                   # camera in front of the rear axle
+    camera_ahead_m: float = 0.15
 
     @property
     def max_steer(self) -> float:
@@ -194,9 +137,6 @@ class CarModel:
 
 
 class Bicycle:
-    """Kinematic bicycle (3d-simulator's tools/physics.py without its friction
-    hack): heading += v / R * dt, R = wheelbase / tan(delta)."""
-
     def __init__(self, car: CarModel, x: float, y: float, heading: float):
         self.car = car
         self.x, self.y, self.heading = x, y, heading
@@ -224,16 +164,12 @@ class Bicycle:
         self.y += self.speed * math.sin(self.heading) * dt
 
 
-# --- geometry helpers ------------------------------------------------------
-
 def _ease(t: float) -> float:
     t = max(0.0, min(1.0, t))
     return t * t * (3 - 2 * t)
 
 
 def _offset_curve(centre, offset):
-    """Points offset laterally (to the right for +offset) from a polyline.
-    `offset` may be a number or a function of the point's z."""
     out = []
     for i, (x, z) in enumerate(centre):
         x0, z0 = centre[max(i - 1, 0)]
@@ -241,7 +177,6 @@ def _offset_curve(centre, offset):
         dx, dz = x1 - x0, z1 - z0
         n = math.hypot(dx, dz) or 1.0
         o = offset(z) if callable(offset) else offset
-        # right-hand normal of the direction (dx, dz) is (dz, -dx)
         out.append((x + o * dz / n, z - o * dx / n))
     return out
 
@@ -277,9 +212,6 @@ def _point_at(poly, s_vals, s):
 
 
 def _fillet_join(a, b, radius):
-    """Join polyline `a` (ending at the corner) to `b` (starting there) with a
-    tangent-continuous round of the given radius (a quadratic bezier whose
-    control point is the corner; exact circle is not needed for a tape line)."""
     a = np.asarray(a, float)
     b = np.asarray(b, float)
     if radius <= 0:
@@ -326,7 +258,6 @@ def _nearest_index(poly, p):
 
 
 def _rotate_closed(poly, p):
-    """Closed polyline (first == last) re-started at the point nearest `p`."""
     body = poly[:-1]
     i = _nearest_index(body, p)
     rolled = np.roll(body, -i, axis=0)
@@ -334,8 +265,6 @@ def _rotate_closed(poly, p):
 
 
 def _signed_lateral(poly, p, lo=0, hi=None):
-    """(signed distance, segment index): positive when `p` is right of the
-    polyline's direction (y grows downward)."""
     a = poly[lo:hi][:-1]
     b = poly[lo:hi][1:]
     ab = b - a
@@ -350,8 +279,6 @@ def _signed_lateral(poly, p, lo=0, hi=None):
 
 
 class Route:
-    """Open polyline with arclength; the loop routes end where they start."""
-
     def __init__(self, pts):
         self.pts = np.asarray(pts, float)
         self.s = _cumlen(self.pts)
@@ -371,8 +298,6 @@ class Route:
         return float(self.s[_nearest_index(self.pts, p)])
 
 
-# --- track ----------------------------------------------------------------------
-
 _DP1 = (((2345, 3057.5), (2695.09, 2247.6), (2708.21, 1788.7), (2345, 960)),
         ((3056, 3057.5), (3406.09, 2247.6), (3419.21, 1788.7), (3056, 960)))
 _DP2 = (((4873, 3050.5), (5223.09, 2240.6), (5236.21, 1781.7), (4873, 953)),
@@ -381,7 +306,6 @@ _DP2 = (((4873, 3050.5), (5223.09, 2240.6), (5236.21, 1781.7), (4873, 953)),
 
 @dataclass
 class TrackModel:
-    """The 3d-simulator SVG constants (Group 25.svg), in SVG units."""
     outer_radius: float = 1693.0
     inner_radius: float = 1045.25
     outer_left_cx: float = 1704.5
@@ -392,14 +316,14 @@ class TrackModel:
     y_bot_outer: float = 3698.0
     y_top_inner: float = 960.0
     y_bot_inner: float = 3050.5
-    lane_svg: float = 648.0               # line centre to centre on the straights
-    detours: tuple = (_DP1, _DP2)         # (car's right line, car's left line) bezier pairs, bottom->top
-    taped_lane_m: float = 0.50            # PLACEHOLDER: measured taped lane width
-    tape_m: float = 0.05                  # PLACEHOLDER: tape width
-    fork_fillet_m: float = 0.5            # PLACEHOLDER: radius taped at the fork / merge corners
-    merge_angle_deg: Optional[float] = None  # None = the bezier's own (~66 deg)
-    width_factor: float = 1.0             # detour width relative to the SVG pair
-    start_x_svg: float = 6000.0           # start on the bottom straight, heading west
+    lane_svg: float = 648.0
+    detours: tuple = (_DP1, _DP2)
+    taped_lane_m: float = 0.50
+    tape_m: float = 0.05
+    fork_fillet_m: float = 0.5
+    merge_angle_deg: Optional[float] = None
+    width_factor: float = 1.0
+    start_x_svg: float = 6000.0
 
     @property
     def scale(self) -> float:
@@ -409,9 +333,9 @@ class TrackModel:
 @dataclass
 class Detour:
     name: str
-    right_line: np.ndarray     # car's right line, fork -> merge (filleted), metres
-    island_line: np.ndarray    # car's left line, wedge top -> wedge bottom
-    centre: np.ndarray         # pointwise mid of the raw pair, top -> bottom
+    right_line: np.ndarray
+    island_line: np.ndarray
+    centre: np.ndarray
     x_fork: float
     x_wedge: float
 
@@ -447,8 +371,6 @@ class Track:
         centre_svg = capsule((m.outer_left_cx + m.inner_left_cx) / 2, (m.outer_right_cx + m.inner_right_cx) / 2,
                              yt_c, yb_c, (m.outer_radius + m.inner_radius) / 2)
 
-        # Detours: pair sorted by x, snapped onto the inner line, width-scaled,
-        # merge angle applied, travelled top -> bottom.
         dets = []
         for pair in m.detours:
             a, b = sorted(pair, key=lambda ctrl: ctrl[0][0])
@@ -470,8 +392,6 @@ class Track:
             dets.append((r_pts, i_pts, mid))
         dets.sort(key=lambda d: d[0][0, 0])
 
-        # Inner line pieces: between consecutive detours the inner line, the
-        # next detour's right line and the previous detour's island form a loop.
         n = len(dets)
         loops = []
         fillet = m.fork_fillet_m / S
@@ -501,7 +421,6 @@ class Track:
         self.inner = _rotate_closed(inner_svg * S, self.start[:2])
         self.centre = _rotate_closed(centre_svg * S, self.start[:2])
 
-        # Name detours by how far their merge is from the next U-turn.
         infos = []
         for r_pts, i_pts, mid in dets:
             x_fork = r_pts[0, 0]
@@ -523,15 +442,10 @@ class Track:
     def detour(self, name: str) -> Detour:
         return next(d for d in self.detours if d.name == name)
 
-    # --- routes --------------------------------------------------------------
-
     def main_route(self) -> Route:
         return Route(self.centre)
 
     def detour_route(self, det: Detour):
-        """Open route: main from the start to the fork, the detour, main from
-        the merge onward until the fork is reached again. Returns the route
-        and the arclengths where it leaves and rejoins the main centreline."""
         main = self.centre
         yt_c = (self.y_top_outer + self.y_top_inner) / 2
         yb_c = (self.y_bot_outer + self.y_bot_inner) / 2
@@ -565,8 +479,6 @@ class Track:
                           [[det.x_wedge, self.y_bot_outer]], outer[o_w:]])
         return _resample(left, _STEP_M), _resample(right, _STEP_M)
 
-    # --- phases ------------------------------------------------------------------
-
     def phase_of(self, pose) -> str:
         x, y = pose[0], pose[1]
         margin = 0.5 * self.lane_m
@@ -593,12 +505,7 @@ class Track:
         return "straight"
 
 
-# --- truth ---------------------------------------------------------------------
-
 def truth_offset(route: Route, idx: int, pose, camera: CameraModel, params: Config) -> Optional[float]:
-    """Where the route's own centreline sits in the frame, measured the way
-    the tracker measures: the median over the scan rows of the centreline's
-    column at each row's depth, minus the ROI centre, in downscaled pixels."""
     ratio = params.downscale_ratio
     height = round(camera.height / ratio)
     width = round(camera.width / ratio)
@@ -625,8 +532,6 @@ def truth_offset(route: Route, idx: int, pose, camera: CameraModel, params: Conf
         return None
     return float(np.median(columns)) - roi_center_x
 
-
-# --- metrics --------------------------------------------------------------------
 
 @dataclass
 class PhaseMetrics:
@@ -667,9 +572,6 @@ def _wrap(a):
 
 
 class _NoSeedPID(_PIDController):
-    """Sweep only: a PID whose `_prev_error` cannot be seeded from outside, so
-    the hold-exit seed and `seed_derivative()` become no-ops."""
-
     def __init__(self, *args, **kwargs):
         self._pe = 0.0
         super().__init__(*args, **kwargs)
@@ -704,7 +606,6 @@ def run_closed_loop(scenario: str, camera: CameraModel, car: CarModel, track: Tr
         target = track.detour("easy" if scenario == "detour-easy" else "hard")
         route, s_fork, s_merge = track.detour_route(target)
         left_b, right_b = track.detour_boundaries(target)
-        # end a little after the U-turn that follows the merge
         i_m = route.index_of_s(s_merge)
         s_end = route.length - 0.1
         for i in range(i_m, len(route.pts)):
@@ -757,7 +658,6 @@ def run_closed_loop(scenario: str, camera: CameraModel, car: CarModel, track: Tr
         prev_s = s
         phase = track.phase_of(pose)
 
-        # scripted operator
         if target is not None:
             if not pressed_r1 and phase == f"approach:{target.name}":
                 pressed_r1 = True
@@ -790,7 +690,6 @@ def run_closed_loop(scenario: str, camera: CameraModel, car: CarModel, track: Tr
         if writer is not None:
             writer.write(np.hstack([res.display_frame, res.debug_frame]))
 
-        # metrics
         rec = phases.setdefault(phase, PhaseMetrics())
         rec.n += 1
         rec.seconds += dt
@@ -862,8 +761,6 @@ def run_closed_loop(scenario: str, camera: CameraModel, car: CarModel, track: Tr
                      max(reacq) if reacq else 0.0, census)
 
 
-# --- report / check -------------------------------------------------------------
-
 def report(result: RunResult):
     print(f"scenario {result.scenario}: {result.frames} frames ({result.seconds:.1f} s), {result.outcome}; "
           f"longest LOST {result.lost_run_s:.2f} s, longest hold {result.hold_run_s:.2f} s, crossings {result.crossings}, "
@@ -915,11 +812,7 @@ def check(results: dict) -> list:
     return failures
 
 
-# --- --fit-widths ----------------------------------------------------------------
-
 def measure_widths(camera: CameraModel, track: Track, params: Config):
-    """(row, width) in downscaled px of the lane on a straight, lane centre,
-    from the band top to the bottom of the ROI, plus the frame."""
     ratio = params.downscale_ratio
     bike = Bicycle(CarModel(), *track.start)
     frame = camera.render(track.lines, bike.camera_pose(), track.model.tape_m)
@@ -967,8 +860,6 @@ def fit_widths(camera: CameraModel, track: Track, params: Config, recorded: Opti
                   f"(sim {worst[1]} px, recorded {a * worst[0] + b:.0f} px) -> {'PASS' if ok else 'FAIL'} (budget {_FIT_WIDTH_BUDGET:.0%})")
     return ok
 
-
-# --- --replay-census -------------------------------------------------------------
 
 def census_of_recording(path: str, params: Config, limit: int):
     cap = cv.VideoCapture(path)
@@ -1024,8 +915,6 @@ def replay_census(recording: str, camera: CameraModel, car: CarModel, track: Tra
     return ok
 
 
-# --- --sweep ----------------------------------------------------------------------
-
 def sweep(scenarios, camera: CameraModel, car: CarModel, model: TrackModel, params: Config, fps: float, limit: int):
     hold0, slew0 = autonomous_mod._DETOUR_HOLD_S, autonomous_mod._DETOUR_STEER_RATE
     variants = [
@@ -1074,8 +963,6 @@ def sweep(scenarios, camera: CameraModel, car: CarModel, model: TrackModel, para
         print(f"  {name:14s} " + " | ".join(cells))
 
 
-# --- params ---------------------------------------------------------------------
-
 def print_params(camera: CameraModel, car: CarModel, model: TrackModel, fps: float):
     print("camera", camera.name, "(PLACEHOLDER, measure)" if camera.placeholder else "(manila tool values)")
     for k, v in camera.__dict__.items():
@@ -1092,10 +979,8 @@ def print_params(camera: CameraModel, car: CarModel, model: TrackModel, fps: flo
     print(f"  fps {fps}, command delay {car.delay_frames} frames = {car.delay_frames / fps:.3f} s")
 
 
-# --- main --------------------------------------------------------------------------
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", default=",".join(SCENARIOS), help="comma-separated list")
     parser.add_argument("--camera", choices=sorted(CAMERAS), default="manila")
     parser.add_argument("--fps", type=float, default=28.3)

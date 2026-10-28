@@ -15,7 +15,6 @@ uint32_t last_change_ms = 0;
 }
 
 void init() {
-  // External pull-down: no internal pull.
   pinMode(config::PIN_LID, INPUT);
   last_raw = stable_closed = digitalRead(config::PIN_LID) == HIGH;
   last_change_ms = millis();
@@ -35,4 +34,4 @@ bool closed() {
   return stable_closed;
 }
 
-}  // namespace lid
+}

@@ -1,6 +1,3 @@
-"""The tuner's "Open compartment": only e-stopped, until the lid is lifted or
-the time runs out, and never once the car may move."""
-
 from cargo import _OPEN_S, CargoReading, ManualOpen
 
 
@@ -14,7 +11,6 @@ def test_opens_until_the_lid_is_lifted():
     opener.request(0.0)
     assert opener.update(1.0, cargo(), stopped=True)
     assert not opener.update(1.1, cargo(lid=False), stopped=True)
-    # Shut again, it stays locked: the request was used.
     assert not opener.update(1.2, cargo(), stopped=True)
 
 

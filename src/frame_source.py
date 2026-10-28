@@ -1,6 +1,3 @@
-"""The drive camera's frames, read on a thread of their own (live) or in
-order (a recording)."""
-
 import logging
 import threading
 import time
@@ -9,18 +6,6 @@ logger = logging.getLogger(__name__)
 
 
 class FrameSource:
-    """The newest camera frame, read on its own thread.
-
-    The camera delivers 30 fps and the control loop runs slower, so a frame
-    read in the loop is the oldest one in the driver's buffer: several frames
-    (100-170 ms) stale, on top of the loop period itself. On the straight-lap
-    recording of 2026-10-01 the car weaved with a 2.5-3 s period and the
-    wheel at full lock half the time, the signature of a bang-bang loop with
-    too much delay. Reading on a thread keeps the loop fed with the latest
-    frame and takes the read's own cost out of the loop. Video replay stays
-    sequential so a recording replays frame for frame.
-    """
-
     def __init__(self, cap, live: bool):
         self._cap = cap
         self._live = live
@@ -50,7 +35,6 @@ class FrameSource:
                 time.sleep(0.01)
 
     def read(self, timeout: float = 0.5):
-        """(ok, frame): the newest frame not yet handed out."""
         if not self._live:
             return self._cap.read()
         with self._lock:
@@ -67,11 +51,6 @@ class FrameSource:
             return True, self._frame
 
     def close(self):
-        """Stop reading, then release the camera. Never the other way round:
-        releasing a capture while the reader thread is inside `read()` frees
-        the decoder under it and the process segfaults on the way out
-        (crash report of 2026-10-23). A reader stuck in a read that never
-        returns keeps its capture; the process exit takes it."""
         if self._closed:
             return
         self._closed = True

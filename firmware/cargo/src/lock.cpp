@@ -21,7 +21,6 @@ void power(bool on) {
 }
 
 void init() {
-  // Level first, then output: the pin never drives the unlocked level.
   digitalWrite(config::PIN_LOCK, config::LOCK_OFF);
   pinMode(config::PIN_LOCK, OUTPUT);
   power(false);
@@ -50,4 +49,4 @@ bool unlocked() {
   return powered;
 }
 
-}  // namespace lock
+}

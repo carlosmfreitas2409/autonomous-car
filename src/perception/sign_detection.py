@@ -1,21 +1,3 @@
-"""YOLO sign detection through onnxruntime.
-
-Runtime is ONNX rather than ultralytics: ~30 MB against ~2.5 GB, no torch
-import on startup, and the same artefact runs unchanged wherever this lands.
-Training and export stay offline in tools/ on the machine with the GPU.
-
-The detector is synchronous and owns no camera and no thread, so a test or an
-offline eval can call it directly. If the model file or onnxruntime is missing
-it reports itself unavailable and returns nothing, which keeps a fresh clone
-runnable with no model trained.
-
-Four classes, deliberately. The three delivery variants (pentagon B, hexagon A,
-heptagon C) collapse into one `delivery_sign`, and the light's state is not a
-class either - both are read from the crop by traffic_light.py and
-delivery_variant.py. One extra polygon side at 30 px is not something a
-detector head should be asked to bet a routing decision on.
-"""
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -28,24 +10,14 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-# Square input the model is exported at. 640 is not negotiable: at 320 the
-# traffic light was missed outright, which is the one thing that must not
-# happen.
 INPUT_SIZE = 640
 
-# Grey letterbox padding, the value ultralytics trains against.
 PAD_VALUE = 114
 
 NMS_IOU = 0.45
 
-# Everything downstream knows how to act on. Anything else the model emits is
-# dropped here. These names match the directory names under
-# assets/sign_cutouts/ and the class order written by tools/synthesize_dataset.py.
 KNOWN_LABELS = ("delivery_sign", "detour", "stop", "traffic_light")
 
-# A stock COCO model names two of these differently. Mapping them means the
-# bootstrap weights and a fine-tuned model take the same code path, which is
-# what lets the inspector run before anything has been trained.
 _LABEL_ALIASES = {
     "stop sign": "stop",
     "traffic light": "traffic_light",
@@ -57,7 +29,7 @@ _PREFERRED_PROVIDERS = ("CoreMLExecutionProvider", "CUDAExecutionProvider", "CPU
 @dataclass
 class Detection:
     label: str
-    bbox: tuple[int, int, int, int]  # x0, y0, x1, y1 in source-frame pixels
+    bbox: tuple[int, int, int, int]
     confidence: float
 
     @property
@@ -69,11 +41,6 @@ class Detection:
         return self.bbox[3] - self.bbox[1]
 
     def crop(self, frame: np.ndarray, margin: float = 0.0) -> np.ndarray:
-        """The pixels this box covers, optionally with a margin around it.
-
-        The traffic light reader needs margin: the colour it reads lives in the
-        halo, which spills outside the housing.
-        """
         height, width = frame.shape[:2]
         pad_x = int(round(self.width * margin))
         pad_y = int(round(self.height * margin))
@@ -137,7 +104,6 @@ class SignDetector:
         self._session = session
         model_input = session.get_inputs()[0]
         self._input_name = model_input.name
-        # A fixed-shape export pins the input size; a dynamic one leaves it to us.
         if isinstance(model_input.shape[2], int):
             self._input_size = model_input.shape[2]
         self._labels = _read_labels(session, model_path)
@@ -154,7 +120,6 @@ class SignDetector:
         return np.ascontiguousarray(blob), scale, pad_x, pad_y
 
     def _decode(self, output: np.ndarray, scale: float, pad_x: int, pad_y: int, frame_shape) -> list[Detection]:
-        # Ultralytics emits (1, 4 + num_classes, num_boxes).
         predictions = output[0].T
         if predictions.shape[1] <= 4:
             return []
@@ -171,7 +136,6 @@ class SignDetector:
         confidences = confidences[keep]
         class_ids = class_ids[keep]
 
-        # Undo the letterbox so boxes land back in source-frame pixels.
         boxes[:, [0, 2]] = (boxes[:, [0, 2]] - pad_x) / scale
         boxes[:, [1, 3]] = (boxes[:, [1, 3]] - pad_y) / scale
 
@@ -195,11 +159,6 @@ class SignDetector:
 
 
 def letterbox(frame: np.ndarray, width: int, height: int, pad_value: int = PAD_VALUE):
-    """Fit a frame into a canvas without distorting it.
-
-    Returns the canvas plus the scale and offsets needed to map coordinates
-    back and forth, so the model input and any debug view agree.
-    """
     source_h, source_w = frame.shape[:2]
     scale = min(width / source_w, height / source_h)
     new_w, new_h = max(1, int(round(source_w * scale))), max(1, int(round(source_h * scale)))
@@ -221,11 +180,6 @@ def xywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
 
 
 def non_max_suppression(boxes: np.ndarray, scores: np.ndarray, iou_threshold: float) -> list[int]:
-    """Class-agnostic NMS.
-
-    Hand-rolled rather than cv.dnn.NMSBoxes: the dnn module is being reworked
-    in OpenCV 5, and this is twelve lines that will not move under us.
-    """
     x0, y0, x1, y1 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
     areas = (x1 - x0).clip(0) * (y1 - y0).clip(0)
     order = scores.argsort()[::-1]
@@ -248,7 +202,6 @@ def non_max_suppression(boxes: np.ndarray, scores: np.ndarray, iou_threshold: fl
 
 
 def _read_labels(session, model_path: Path) -> dict[int, str]:
-    """Class names from the ONNX metadata, or a sidecar .names file."""
     metadata = session.get_modelmeta().custom_metadata_map or {}
     if "names" in metadata:
         try:

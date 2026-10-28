@@ -1,19 +1,5 @@
 #!/usr/bin/env python3
-"""Find the labels worth looking at again, instead of looking at all of them.
 
-Every number this project reports rests on these boxes, and they have never
-been audited. Some were drawn by hand and some were *derived* - 33 of the 38
-venue boxes share an identical 2.36 aspect ratio because they were computed
-from fitted lamp geometry rather than drawn on the pixels.
-
-Nothing here decides a label is wrong. It ranks them by how surprising they
-are, so that ten minutes in tools/label_boxes.py is spent on the ten that
-deserve it. Every check is a property of the physical object or of the frame,
-never of the model's opinion - except the last one, which is clearly marked.
-
-    python3 tools/check_labels.py --dataset assets/real
-    python3 tools/check_labels.py --dataset assets/real_train --model models/signs.onnx
-"""
 
 import argparse
 import sys
@@ -26,9 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from perception.sign_detection import KNOWN_LABELS, SignDetector  # noqa: E402
 
-# Height over width the physical object can plausibly have, allowing for
-# viewing angle and a few pixels of box jitter. A housing measures 2.2-2.45;
-# the printed signs are as wide as they are tall.
 PLAUSIBLE_ASPECT = {
     "traffic_light": (1.6, 3.2),
     "stop": (0.6, 1.6),
@@ -36,8 +19,6 @@ PLAUSIBLE_ASPECT = {
     "delivery_sign": (0.6, 1.6),
 }
 
-# Below this the object is too small to have been labelled accurately, and too
-# small for either crop reader to say anything about.
 SMALL_PX = 18
 
 
@@ -77,8 +58,7 @@ def iou(a, b) -> float:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="assets/real")
     parser.add_argument("--model", help="optional: also report where a model disagrees")
     parser.add_argument("--confidence", type=float, default=0.60,
@@ -90,7 +70,6 @@ def main() -> int:
     args = parser.parse_args()
 
     dataset = Path(args.dataset)
-    # Named after the dataset so two runs cannot overwrite each other's sheet.
     sheet = Path(args.sheet) if args.sheet else Path(f".context/labels_{dataset.name}.png")
     detector = None
     if args.model:

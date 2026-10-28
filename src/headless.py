@@ -1,15 +1,3 @@
-"""The tuner's stand-in for a run without the window (`--no-gui`).
-
-The tuner is for tuning: on the track the window only costs the loop time
-(two float textures and a render per frame). This answers every call the loop
-makes of `TunerGUI` the way an untouched tuner would: no clicks, and the
-sliders at their defaults. The PS5 and the dashboard still drive the car.
-
-DearPyGui keeps a float slider as a 32-bit float, so the tuner hands the
-tracker 0.550000011920929 for a 0.55 default. The same rounding is applied
-here: the tracker sees exactly the numbers it sees with the window open.
-"""
-
 import logging
 import signal
 import time
@@ -20,7 +8,6 @@ from config import Config
 
 logger = logging.getLogger("headless")
 
-# How often the loop's FPS goes to the log, in place of the window's counter.
 _FPS_LOG_PERIOD_S = 5.0
 
 
@@ -43,8 +30,6 @@ class HeadlessGUI:
         )
         self._running = True
         self._fps_logged_at = time.monotonic()
-        # Ctrl+C ends the loop like closing the window does, so the car gets
-        # its e-stop and lights-off on the way out. A second one interrupts.
         signal.signal(signal.SIGINT, self._stop)
 
     def _stop(self, _signum, _frame):

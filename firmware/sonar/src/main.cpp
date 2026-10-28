@@ -22,7 +22,7 @@ void send_distances() {
   mcp.sendMessage(&frame);
 }
 
-}  // namespace
+}
 
 void setup() {
   Serial.begin(config::SERIAL_BAUD);

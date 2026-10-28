@@ -1,22 +1,5 @@
 #!/usr/bin/env python3
-"""Precision and recall on the real photos, and the latency that picks n or s.
 
-The previous model reported mAP50 0.97 on a validation split its own compositor
-generated, from its own cutouts, and found six of twenty-eight real photos. So
-this never scores a model on synthetic data. It scores it on `assets/real`,
-which is hand-labelled, and it reports:
-
-  * an F1 sweep over the confidence threshold, so the runtime threshold is
-    measured rather than guessed;
-  * recall bucketed by apparent size, because a model that is excellent at
-    120 px and blind at 500 px passes an averaged score and drives through the
-    light;
-  * inference latency on this machine, which is the number that decides
-    whether the `s` variant's extra capacity is affordable.
-
-    python3 tools/eval_signs.py --model models/signs_n.onnx
-    python3 tools/eval_signs.py --model models/signs_s.onnx --dataset assets/real
-"""
 
 import argparse
 import sys
@@ -38,7 +21,7 @@ SIZE_BUCKETS = ((0, 40), (40, 90), (90, 180), (180, 320), (320, 10000))
 
 def load_truth(label_path: Path, shape):
     if not label_path.exists():
-        return None                      # not labelled at all - skip the image
+        return None
     height, width = shape[:2]
     boxes = []
     for line in label_path.read_text().splitlines():
@@ -50,7 +33,7 @@ def load_truth(label_path: Path, shape):
         boxes.append((KNOWN_LABELS[index],
                       ((cx - w / 2) * width, (cy - h / 2) * height,
                        (cx + w / 2) * width, (cy + h / 2) * height)))
-    return boxes                         # may be empty: that is a negative
+    return boxes
 
 
 def iou(a, b) -> float:
@@ -72,8 +55,7 @@ def bucket_of(height: float) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="models/signs.onnx")
     parser.add_argument("--dataset", default="assets/real")
     parser.add_argument("--confidence", type=float, default=0.05,
@@ -91,7 +73,6 @@ def main() -> int:
         print(f"no usable model at {args.model}")
         return 2
 
-    # Collect every detection once at the floor, then sweep offline.
     collected = []
     truths = []
     latencies = []
@@ -139,7 +120,6 @@ def main() -> int:
 
 
 def _match(detections, truth, threshold):
-    """Greedy highest-confidence-first matching at IoU 0.5, same class."""
     kept = sorted([d for d in detections if d.confidence >= threshold],
                   key=lambda d: -d.confidence)
     unmatched = list(truth)

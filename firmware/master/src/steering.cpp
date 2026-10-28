@@ -7,13 +7,8 @@
 namespace steering {
 
 namespace {
-
-// Position is read from a 10k linear potentiometer on the Mega's 10-bit ADC, so
-// every "raw"/"angle" value here lives in the 0..1023 range and is linear (no
-// wrap), unlike the 0..4095 circular AS5600 this replaced.
 constexpr int16_t POT_RAW_MAX = 1023;
 
-// Median-of-N sampling to knock down ADC jitter on the analog read.
 constexpr uint8_t POT_SAMPLES = 9;
 
 int16_t left_span = 0;
@@ -28,7 +23,6 @@ int16_t last_output_pwm = 0;
 uint16_t prev_measurement = config::STEER_CENTER_RAW;
 uint32_t prev_micros = 0;
 
-// Folds any int back into the 0..1023 pot ADC range.
 uint16_t clamp_raw(int32_t v) {
   if (v < 0) return 0;
   if (v > POT_RAW_MAX) return (uint16_t)POT_RAW_MAX;
@@ -36,8 +30,6 @@ uint16_t clamp_raw(int32_t v) {
 }
 
 void drive_pwm(int16_t signed_pwm) {
-  // Map the loop's logical direction (positive = raise raw angle) onto the
-  // physical H-bridge wiring for this build.
   if (config::STEER_INVERT_PWM) signed_pwm = -signed_pwm;
 
   if (signed_pwm > config::STEER_MAX_PWM) signed_pwm = config::STEER_MAX_PWM;
@@ -67,8 +59,6 @@ uint16_t read_angle() {
   for (uint8_t i = 0; i < POT_SAMPLES; ++i) {
     samples[i] = (uint16_t)analogRead(config::PIN_STEER_POT);
   }
-  // Insertion sort, then take the middle element — a median rejects the
-  // occasional ADC spike without the lag of an averaging filter.
   for (uint8_t i = 1; i < POT_SAMPLES; ++i) {
     uint16_t key = samples[i];
     int8_t j = (int8_t)i - 1;
@@ -81,7 +71,7 @@ uint16_t read_angle() {
   return samples[POT_SAMPLES / 2];
 }
 
-}  // namespace
+}
 
 bool init() {
   pinMode(config::PIN_STEER_POT, INPUT);
@@ -96,9 +86,6 @@ bool init() {
   analogWrite(config::PIN_STEER_RPWM, 0);
   analogWrite(config::PIN_STEER_LPWM, 0);
 
-  // A railed reading means the pot wiper or an outer leg is disconnected. Refuse
-  // to close the loop on a dead sensor — the motor would drive blindly into a
-  // mechanical stop.
   uint16_t a = read_angle();
   if (a == 0 || a >= (uint16_t)POT_RAW_MAX) return false;
 
@@ -160,8 +147,6 @@ void update() {
   if (dt_s <= 0.0f || dt_s > 0.05f) dt_s = 1.0f / config::CONTROL_LOOP_HZ;
   prev_micros = now;
 
-  // Derivative on measurement, not error: avoids a derivative kick when the host
-  // jumps the setpoint (e.g. M 0 -255 → M 0 255).
   int16_t dmeas = (int16_t)current_angle - (int16_t)prev_measurement;
   prev_measurement = current_angle;
   float dmeas_per_sec = (float)dmeas / dt_s;
@@ -178,8 +163,6 @@ void update() {
 
   int16_t output = (int16_t)output_f;
 
-  // Below STEER_MIN_MOVE_PWM the steering motor can't break static friction;
-  // bump small non-zero outputs up so we either move decisively or not at all.
   if (output != 0) {
     if (output > 0 && output < config::STEER_MIN_MOVE_PWM) output = config::STEER_MIN_MOVE_PWM;
     if (output < 0 && output > -(int16_t)config::STEER_MIN_MOVE_PWM) {
@@ -187,11 +170,6 @@ void update() {
     }
   }
 
-  // Soft limits: refuse to drive past the configured mechanical stop, but
-  // always allow recovery in the opposite direction. The raw spans may be
-  // either sign depending on how the pot couples to the linkage, so derive
-  // numeric upper/lower bounds instead of assuming right is the positive
-  // direction.
   int16_t cur_offset = (int16_t)current_angle - (int16_t)config::STEER_CENTER_RAW;
   int16_t upper_offset = max(left_span, right_span);
   int16_t lower_offset = min(left_span, right_span);
@@ -206,22 +184,19 @@ uint16_t target_raw() { return target_angle; }
 int16_t last_pwm() { return last_output_pwm; }
 
 float normalized_position() {
-  // left_span / right_span carry the wiring's sign (either may be positive),
-  // so identify the steered side by which span's sign matches the offset, then
-  // divide by that span — same signs give a positive magnitude in [0, 1].
   const int16_t offset = (int16_t)current_angle - (int16_t)config::STEER_CENTER_RAW;
   if (offset == 0) return 0.0f;
   if (left_span != 0 && (offset > 0) == (left_span > 0)) {
     float v = (float)offset / (float)left_span;
     if (v > 1.0f) v = 1.0f;
-    return v;  // positive = left
+    return v;
   }
   if (right_span != 0) {
     float v = (float)offset / (float)right_span;
     if (v > 1.0f) v = 1.0f;
-    return -v;  // negative = right
+    return -v;
   }
   return 0.0f;
 }
 
-}  // namespace steering
+}

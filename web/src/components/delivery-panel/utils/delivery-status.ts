@@ -36,9 +36,7 @@ export function deliveryStatus(state: CartState): DeliveryStatus {
   const route = mission.pickup && mission.delivery ? `${mission.pickup} → ${mission.delivery}` : '';
   const isSet = mission.stage !== 'idle';
   const isDone = mission.stage === 'done';
-  // Docked, even at the start of an order, the delivery is under way.
   const isFresh = isSet && !isDone && mission.step === 0 && !mission.dock;
-  // Parked after a delivery, the next order is given where it stands.
   const isParked = mission.parked_at !== null && !mission.dock;
   const isPicking = (isStopped && (!isSet || isFresh)) || isParked;
   const isRunning = isSet && !isFresh;

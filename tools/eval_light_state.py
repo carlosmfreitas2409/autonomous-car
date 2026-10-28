@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Grade the traffic-light state reader on the real venue photos.
 
-Ground truth is free: every photo says what was lit in its own filename
-(`red_l20.jpg`), and the one folder that came off the camera with timestamps
-carries a `states.txt` beside it. An `off_*` photo is correct only when the
-reader answers UNKNOWN - an unlit housing that reads RED is the failure that
-mattered most in the previous attempt, and it has to cost a point here.
-
-Box sourcing is detector first, hand label as fallback, and every row records
-which one it used. Mixing them silently would hide a detector regression behind
-a good reader score, which is exactly the trap this phase exists to avoid.
-
-    python3 tools/eval_light_state.py                      # detector where it can
-    python3 tools/eval_light_state.py --confidence 1.1     # hand boxes only
-    python3 tools/eval_light_state.py --annotate out/      # a panel per failure
-"""
 
 import argparse
 import sys
@@ -34,7 +19,6 @@ COLUMNS = STATES + ("NO-BOX",)
 
 
 def ground_truth(image_path: Path) -> str:
-    """What was lit, from the filename or from the folder's states.txt."""
     sidecar = image_path.parent / "states.txt"
     if sidecar.exists():
         for line in sidecar.read_text().splitlines():
@@ -50,7 +34,6 @@ def ground_truth(image_path: Path) -> str:
 
 
 def hand_box(image_path: Path, images_root: Path, labels_root: Path, shape):
-    """The hand-drawn box for this image, in pixels, if there is one."""
     label = labels_root / image_path.relative_to(images_root).with_suffix(".txt")
     if not label.exists():
         return None
@@ -81,8 +64,7 @@ def yaw_of(name: str) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", default="assets/real")
     parser.add_argument("--model", default="models/signs.onnx")
     parser.add_argument("--confidence", type=float, default=0.5,
@@ -154,8 +136,6 @@ def main() -> int:
                 _write_panel(annotate_dir, path, reading)
 
     _report(matrix, by_bucket, by_yaw, box_source, detector_hits, failures, len(images))
-    # A report, not a gate: it exits 0 whenever it managed to measure something.
-    # tools/probe_signs.py is the one that fails a build.
     return 0
 
 

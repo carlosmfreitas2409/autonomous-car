@@ -1,5 +1,3 @@
-"""`--no-gui` must hand the loop exactly what an untouched tuner does."""
-
 from pathlib import Path
 
 import dearpygui.dearpygui as dpg
@@ -15,7 +13,6 @@ ROOT = Path(__file__).resolve().parent.parent
 
 @pytest.fixture
 def tuner(monkeypatch):
-    """The real tuner, built without opening its window."""
     monkeypatch.chdir(ROOT)
     for name in ("create_viewport", "setup_dearpygui", "show_viewport"):
         monkeypatch.setattr(gui.dpg, name, lambda *args, **kwargs: None)

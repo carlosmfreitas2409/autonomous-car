@@ -1,5 +1,3 @@
-"""The drive camera's reader thread is stopped before the capture is released."""
-
 import threading
 import time
 
@@ -7,9 +5,6 @@ from frame_source import FrameSource
 
 
 class FakeCapture:
-    """A camera whose read takes a frame's time; releasing it during a read
-    is what segfaulted the real one."""
-
     def __init__(self):
         self._reading = threading.Lock()
         self.released_during_read = False
